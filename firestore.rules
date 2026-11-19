@@ -1,0 +1,242 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Reusable Hardened Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (
+          request.auth.token.email == 'www.mdnafiulislam@gmail.com' &&
+          request.auth.token.email_verified == true
+        )
+      );
+    }
+
+    // 3. Entity Validation Helpers
+    function isValidCurriculumManifest(data) {
+      return data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.versionCode is int && data.versionCode >= 1 && data.versionCode <= 1000000 &&
+             data.versionTag is string && data.versionTag.size() >= 1 && data.versionTag.size() <= 64 &&
+             data.publishedTimestamp is int && data.publishedTimestamp >= 0 &&
+             data.publishedBy is string && data.publishedBy.size() >= 1 && data.publishedBy.size() <= 200 &&
+             data.releaseNotes is string && data.releaseNotes.size() <= 4000 &&
+             (!('announcement' in data) || data.announcement == null || (data.announcement is string && data.announcement.size() <= 2000)) &&
+             data.minSupportedAppVersion is int && data.minSupportedAppVersion >= 1 && data.minSupportedAppVersion <= 100000 &&
+             data.latestApkVersionCode is int && data.latestApkVersionCode >= 1 && data.latestApkVersionCode <= 100000 &&
+             data.latestApkVersionName is string && data.latestApkVersionName.size() >= 1 && data.latestApkVersionName.size() <= 64 &&
+             data.apkDownloadUrl is string && data.apkDownloadUrl.size() <= 1000 &&
+             (!('apkReleaseNotes' in data) || data.apkReleaseNotes == null || (data.apkReleaseNotes is string && data.apkReleaseNotes.size() <= 4000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCurriculumCatalog(data) {
+      return data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.versionCode is int && data.versionCode >= 1 && data.versionCode <= 1000000 &&
+             data.modules is list && data.modules.size() <= 50 && (data.modules.size() == 0 || data.modules[0] is map) &&
+             data.classes is list && data.classes.size() <= 200 && (data.classes.size() == 0 || data.classes[0] is map) &&
+             data.settings is map &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidStudentProgress(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.classId is string && data.classId.size() >= 1 && data.classId.size() <= 128 &&
+             data.status is string && data.status in ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'LOCKED'] &&
+             data.activeLearningSeconds is int && data.activeLearningSeconds >= 0 && data.activeLearningSeconds <= 10000000 &&
+             data.maxPlaybackPercent is number && data.maxPlaybackPercent >= 0 && data.maxPlaybackPercent <= 100 &&
+             data.isPdfConfirmed is bool &&
+             data.pdfReadingSeconds is int && data.pdfReadingSeconds >= 0 && data.pdfReadingSeconds <= 10000000 &&
+             (!('quizScore' in data) || data.quizScore == null || (data.quizScore is int && data.quizScore >= 0 && data.quizScore <= 100)) &&
+             data.quizPassed is bool &&
+             (!('completionTimestamp' in data) || data.completionTimestamp == null || (data.completionTimestamp is int && data.completionTimestamp >= 0)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 4. Collection Rules
+
+    // Shared Live Curriculum Manifest (Single-doc get by signed-in users; write by verified Admin only)
+    match /curriculum_manifests/{manifestId} {
+      allow get: if isSignedIn() && isValidId(manifestId);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(manifestId) &&
+                       isAdmin() &&
+                       incoming().authorUid == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'authorUid', 'versionCode', 'versionTag', 'publishedTimestamp',
+                         'publishedBy', 'releaseNotes', 'minSupportedAppVersion',
+                         'latestApkVersionCode', 'latestApkVersionName', 'apkDownloadUrl',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'authorUid', 'versionCode', 'versionTag', 'publishedTimestamp',
+                         'publishedBy', 'releaseNotes', 'announcement', 'minSupportedAppVersion',
+                         'latestApkVersionCode', 'latestApkVersionName', 'apkDownloadUrl',
+                         'apkReleaseNotes', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidCurriculumManifest(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(manifestId) &&
+                       isAdmin() &&
+                       isValidCurriculumManifest(incoming()) &&
+                       incoming().authorUid == existing().authorUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'versionCode', 'versionTag', 'publishedTimestamp', 'publishedBy',
+                         'releaseNotes', 'announcement', 'minSupportedAppVersion',
+                         'latestApkVersionCode', 'latestApkVersionName', 'apkDownloadUrl',
+                         'apkReleaseNotes', 'updatedAt'
+                       ]);
+
+      allow delete: if false;
+    }
+
+    // Shared Live Curriculum Catalog (Single-doc get by signed-in users; write by verified Admin only)
+    match /curriculum_catalogs/{catalogId} {
+      allow get: if isSignedIn() && isValidId(catalogId);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(catalogId) &&
+                       isAdmin() &&
+                       incoming().authorUid == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'authorUid', 'versionCode', 'modules', 'classes', 'settings',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'authorUid', 'versionCode', 'modules', 'classes', 'settings',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidCurriculumCatalog(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(catalogId) &&
+                       isAdmin() &&
+                       isValidCurriculumCatalog(incoming()) &&
+                       incoming().authorUid == existing().authorUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'versionCode', 'modules', 'classes', 'settings', 'updatedAt'
+                       ]);
+
+      allow delete: if false;
+    }
+
+    // Per-User Student Progress Subcollection (Strict User Isolation)
+    match /users/{userId}/progress/{classId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(classId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(classId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().classId == classId &&
+                       incoming().keys().hasAll([
+                         'userId', 'classId', 'status', 'activeLearningSeconds',
+                         'maxPlaybackPercent', 'isPdfConfirmed', 'pdfReadingSeconds',
+                         'quizPassed', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'classId', 'status', 'activeLearningSeconds',
+                         'maxPlaybackPercent', 'isPdfConfirmed', 'pdfReadingSeconds',
+                         'quizScore', 'quizPassed', 'completionTimestamp', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidStudentProgress(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(classId) &&
+                       isValidStudentProgress(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().classId == existing().classId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'activeLearningSeconds', 'maxPlaybackPercent',
+                         'isPdfConfirmed', 'pdfReadingSeconds', 'quizScore',
+                         'quizPassed', 'completionTimestamp', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(classId);
+    }
+
+    function isValidLessonFileChunk(data) {
+      return data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
+             data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex <= 50 &&
+             data.totalChunks is int && data.totalChunks >= 1 && data.totalChunks <= 50 &&
+             data.chunkIndex < data.totalChunks &&
+             data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 600000 &&
+             data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Chunked Class Media Payloads (Single-doc get by signed-in users; create/update/delete by verified Admin only)
+    match /lesson_files/{chunkId} {
+      allow get: if isSignedIn() && isValidId(chunkId);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(chunkId) &&
+                       isAdmin() &&
+                       incoming().authorUid == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'fileId', 'chunkIndex', 'totalChunks', 'dataBase64',
+                         'authorUid', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'fileId', 'chunkIndex', 'totalChunks', 'dataBase64',
+                         'authorUid', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLessonFileChunk(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(chunkId) &&
+                       isAdmin() &&
+                       isValidLessonFileChunk(incoming()) &&
+                       incoming().authorUid == existing().authorUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().fileId == existing().fileId &&
+                       incoming().chunkIndex == existing().chunkIndex &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'totalChunks', 'dataBase64', 'updatedAt'
+                       ]);
+
+      allow delete: if isAdmin() && isValidId(chunkId);
+    }
+
+    // Admin Registry (Read-only to self; no client self-promotion)
+    match /admins/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list, create, update, delete: if false;
+    }
+  }
+}

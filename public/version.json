@@ -1,0 +1,20 @@
+{
+  "appId": "com.aistudio.supplychain.scm",
+  "appName": "ISCEB",
+  "versionName": "1.6",
+  "versionCode": 7,
+  "releaseDate": "2026-11-18",
+  "apkUrl": "https://gen-lang-client-0901479759.web.app/downloads/ISCEB-latest.apk",
+  "downloadPageUrl": "https://gen-lang-client-0901479759.web.app/",
+  "desktopPortalUrl": "https://gen-lang-client-0901479759.web.app/desktop/",
+  "apkFileName": "ISCEB-latest.apk",
+  "sha256": "58b65efde62bdd47815de771c5410393231e48fcdba26196aad35eebd568672f",
+  "fileSizeBytes": 18482686,
+  "minSupportedVersionCode": 1,
+  "releaseNotes": "ISCEB v1.6: Universal v1/v2/v3 APK signing compatibility, pre-update workspace backup, QR web download portal & automated release sync.",
+  "versionTag": "v1.6.0",
+  "latestApkVersionCode": 7,
+  "latestApkVersionName": "1.6",
+  "apkDownloadUrl": "https://gen-lang-client-0901479759.web.app/downloads/ISCEB-latest.apk",
+  "apkReleaseNotes": "ISCEB v1.6: Universal v1/v2/v3 APK signing compatibility, pre-update workspace backup, QR web download portal & automated release sync."
+}

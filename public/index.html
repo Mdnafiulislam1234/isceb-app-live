@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>ISCEB — Official Android App Download</title>
+  <style>
+    :root {
+      --navy-dark: #041022;
+      --navy: #071A33;
+      --navy-mid: #102B4C;
+      --gold: #D4AF37;
+      --gold-soft: #F4E2A3;
+      --bg: #F5F7FA;
+      --card: #FFFFFF;
+      --text: #1E293B;
+      --muted: #5A6E85;
+      --ok: #15803D;
+      --warn: #B45309;
+      --err: #B91C1C;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .hero {
+      background: linear-gradient(135deg, var(--navy-dark), var(--navy-mid));
+      color: #fff;
+      padding: 28px 18px 34px;
+      text-align: center;
+      border-bottom: 3px solid var(--gold);
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(212, 175, 55, 0.16);
+      border: 1px solid var(--gold);
+      color: var(--gold-soft);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 6px 0 4px;
+      font-size: 26px;
+      letter-spacing: 0.3px;
+    }
+    .subtitle {
+      margin: 0;
+      color: #CBD5E1;
+      font-size: 14px;
+    }
+    .container {
+      max-width: 680px;
+      margin: -18px auto 36px;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(7, 26, 51, 0.08);
+      border: 1px solid #E2E8F0;
+      margin-bottom: 16px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .meta-box {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .meta-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .meta-val {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      background: var(--navy);
+      color: var(--gold);
+      border: 2px solid var(--gold);
+      border-radius: 12px;
+      padding: 14px 18px;
+      font-size: 16px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 0.12s ease, opacity 0.12s ease;
+    }
+    .btn-download:hover { opacity: 0.94; }
+    .btn-download[aria-disabled="true"] {
+      opacity: 0.55;
+      pointer-events: none;
+    }
+    .status-pill {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .status-ok { background: #DCFCE7; color: var(--ok); }
+    .status-warn { background: #FEF3C7; color: var(--warn); }
+    .status-err { background: #FEE2E2; color: var(--err); }
+    .checksum-row {
+      background: #F1F5F9;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+      word-break: break-all;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .copy-btn {
+      flex-shrink: 0;
+      background: var(--navy);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: var(--navy);
+    }
+    ol {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: #334155;
+      font-size: 14px;
+    }
+    li { margin-bottom: 6px; }
+    .footer-note {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="badge">ISCEB • Official Android Distribution</div>
+    <h1>ISCEB Supply Chain App</h1>
+    <p class="subtitle">Connect. learn. Achieve. — Post Graduate Diploma (PGD) in SCM</p>
+  </header>
+
+  <main class="container">
+    <section class="card" aria-live="polite">
+      <div id="statusPill" class="status-pill status-warn">Checking latest release...</div>
+      <div class="meta-grid">
+        <div class="meta-box">
+          <div class="meta-label">Latest Version</div>
+          <div id="verText" class="meta-val">—</div>
+        </div>
+        <div class="meta-box">
+          <div class="meta-label">Release Date</div>
+          <div id="dateText" class="meta-val">—</div>
+        </div>
+        <div class="meta-box">
+          <div class="meta-label">Package File Size</div>
+          <div id="sizeText" class="meta-val">—</div>
+        </div>
+        <div class="meta-box">
+          <div class="meta-label">Android Support</div>
+          <div class="meta-val">Android 7.0+ (API 24+)</div>
+        </div>
+      </div>
+
+      <a id="downloadBtn" class="btn-download" href="./downloads/ISCEB-latest.apk" download="ISCEB-latest.apk" aria-disabled="true">
+        Download Latest APK
+      </a>
+
+      <div style="margin-top: 14px;">
+        <div class="meta-label" style="margin-bottom: 4px;">Release Notes</div>
+        <p id="notesText" style="margin: 0; font-size: 14px; color: #334155;">Loading release details...</p>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <div class="meta-label" style="margin-bottom: 4px;">SHA-256 Verification Checksum</div>
+        <div class="checksum-row">
+          <span id="shaText">Loading checksum...</span>
+          <button id="copyShaBtn" class="copy-btn" type="button">Copy</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="display: grid; grid-template-columns: 185px 1fr; gap: 16px; align-items: center;">
+      <div id="qrBox" style="background: #fff; border: 2px solid #E2E8F0; border-radius: 12px; padding: 6px; text-align: center; min-height: 180px; display: flex; align-items: center; justify-content: center;">
+        <span style="font-size: 12px; color: #5A6E85;">Generating QR...</span>
+      </div>
+      <div>
+        <h2>Scan QR Code from Any Phone</h2>
+        <p style="margin: 0 0 8px; font-size: 13.5px; color: #334155;">
+          Point any Android phone camera or QR scanner here to open this permanent download page directly—no USB cable required.
+        </p>
+        <div style="font-size: 12px; color: #5A6E85; word-break: break-all;">
+          <strong>Live URL:</strong> <span id="qrUrlLabel"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>How to Install or Update on Android (No USB Required)</h2>
+      <ol>
+        <li>Tap <strong>Download Latest APK</strong> above to save <code>ISCEB-latest.apk</code> directly to your phone (prefer Chrome / browser download over WhatsApp forwarding).</li>
+        <li>Open the downloaded file from your browser Downloads or notification bar.</li>
+        <li>If Android prompts for security permission, enable <strong>Allow from this source</strong> for Chrome / Files / ISCEB app.</li>
+        <li>Tap <strong>Update</strong> (or Install). Your login state, course progress, uploaded materials, and certificates remain safely preserved.</li>
+      </ol>
+      <div style="margin-top: 12px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px; font-size: 13px; color: #78350F;">
+        <strong>If Android shows &ldquo;App not installed&rdquo;:</strong>
+        <ul style="margin: 6px 0 0; padding-left: 18px;">
+          <li>If an older build from a different source/key is already installed on the phone: open <strong>Profile &rarr; Export Backup</strong> inside the old app first to save your <code>.json</code> data, then uninstall the old build, install this APK, and tap <strong>Restore Backup</strong>.</li>
+          <li>Always open the APK from <strong>Chrome Downloads / Files</strong> rather than directly inside WhatsApp if WhatsApp blocks package installation.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card" style="background: linear-gradient(135deg, #041022, #102B4C); color: #fff; border-color: #D4AF37;">
+      <div class="badge" style="margin-bottom: 6px;">PC / Windows / Mac / Tablet</div>
+      <h2 style="color: #fff; margin-bottom: 6px;">Use ISCEB on Your Computer (Desktop Version)</h2>
+      <p style="margin: 0 0 14px; font-size: 13.5px; color: #CBD5E1;">
+        Access all 12 SCM modules, 48 lectures, interactive quizzes, timed 100-mark exams, official printable PGD certificates, and Admin cloud sync directly in your desktop browser or install as a standalone PC app.
+      </p>
+      <a class="btn-download" href="./desktop/" style="background: #D4AF37; color: #041022; border-color: #F4E2A3;">
+        Open PC / Desktop Web Portal
+      </a>
+    </section>
+
+    <p class="footer-note">
+      Permanent Package ID: <code>com.aistudio.supplychain.scm</code> • Manifest: <a href="./version.json" style="color: #071A33;">version.json</a> • <a href="./desktop/" style="color: #071A33; font-weight: 700;">PC / Desktop Portal</a>
+    </p>
+  </main>
+
+  <script type="module">
+    import { renderQrSvg } from "./qr.js";
+
+    const qrBox = document.getElementById("qrBox");
+    const qrUrlLabel = document.getElementById("qrUrlLabel");
+    const targetUrl = window.location.href.split("#")[0].split("?")[0];
+    if (qrUrlLabel) qrUrlLabel.textContent = targetUrl;
+    try {
+      if (qrBox) qrBox.innerHTML = renderQrSvg(targetUrl, 168);
+    } catch (e) {
+      if (qrBox) qrBox.textContent = "QR unavailable";
+    }
+
+    (async function init() {
+      const statusPill = document.getElementById("statusPill");
+      const verText = document.getElementById("verText");
+      const dateText = document.getElementById("dateText");
+      const sizeText = document.getElementById("sizeText");
+      const notesText = document.getElementById("notesText");
+      const shaText = document.getElementById("shaText");
+      const downloadBtn = document.getElementById("downloadBtn");
+      const copyShaBtn = document.getElementById("copyShaBtn");
+
+      function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return "—";
+        const mb = bytes / (1024 * 1024);
+        return mb >= 1 ? mb.toFixed(1) + " MB" : (bytes / 1024).toFixed(0) + " KB";
+      }
+
+      try {
+        const res = await fetch("./version.json?t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) throw new Error("Manifest HTTP " + res.status);
+        const data = await res.json();
+
+        const vName = data.versionName || data.latestApkVersionName || "—";
+        const vCode = data.versionCode || data.latestApkVersionCode || "—";
+        verText.textContent = "v" + vName + " (Build " + vCode + ")";
+        dateText.textContent = data.releaseDate || "—";
+        sizeText.textContent = formatBytes(data.fileSizeBytes);
+        notesText.textContent = data.releaseNotes || data.apkReleaseNotes || "Latest ISCEB Android release.";
+        shaText.textContent = data.sha256 || "Not specified";
+
+        const apkHref = "./downloads/ISCEB-latest.apk";
+        downloadBtn.href = apkHref;
+
+        let apkReachable = false;
+        try {
+          const headRes = await fetch(apkHref + "?t=" + Date.now(), { method: "HEAD", cache: "no-store" });
+          apkReachable = headRes.ok;
+        } catch (_) {
+          apkReachable = false;
+        }
+
+        if (apkReachable) {
+          statusPill.className = "status-pill status-ok";
+          statusPill.textContent = "Verified Latest Release Ready";
+          downloadBtn.setAttribute("aria-disabled", "false");
+        } else {
+          statusPill.className = "status-pill status-err";
+          statusPill.textContent = "APK binary not reachable on server yet";
+          downloadBtn.setAttribute("aria-disabled", "true");
+        }
+      } catch (err) {
+        statusPill.className = "status-pill status-err";
+        statusPill.textContent = "Unable to load version manifest: " + err.message;
+        notesText.textContent = "Please try refreshing this page in a moment.";
+      }
+
+      copyShaBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(shaText.textContent.trim());
+          copyShaBtn.textContent = "Copied";
+          setTimeout(() => { copyShaBtn.textContent = "Copy"; }, 1800);
+        } catch (_) {}
+      });
+    })();
+  </script>
+</body>
+</html>

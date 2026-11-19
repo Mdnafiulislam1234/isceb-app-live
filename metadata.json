@@ -1,0 +1,6 @@
+{
+  "name": "ISCEB",
+  "description": "ISCEB - Connect. learn. Achieve. Professional Post Graduate Diploma (PGD) in Supply Chain Management with 12 modules, 48 classes, examinations, and official certification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

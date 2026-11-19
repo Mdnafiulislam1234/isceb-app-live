@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#071A33" />
+  <title>ISCEB Supply Chain Management — PC & Desktop Portal</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./isceb-icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary Desktop Navigation">
+      <div>
+        <div class="brand-card">
+          <img src="./isceb-logo.webp" alt="ISCEB - Connect. learn. Achieve." />
+          <div class="brand-caption">PGD IN SUPPLY CHAIN MANAGEMENT</div>
+        </div>
+
+        <div class="nav-section-label">Workspace</div>
+        <nav class="nav-list" id="navList">
+          <button type="button" class="nav-item active" data-view="dashboard">
+            <span>Dashboard</span>
+            <span class="nav-pill" id="navDashProgress">0%</span>
+          </button>
+          <button type="button" class="nav-item" data-view="courses">
+            <span>Courses & Lectures</span>
+            <span class="nav-pill">12 / 48</span>
+          </button>
+          <button type="button" class="nav-item" data-view="exams">
+            <span>Exams & Assignments</span>
+            <span class="nav-pill">5 / 4</span>
+          </button>
+          <button type="button" class="nav-item" data-view="learning">
+            <span>My Learning & Certificate</span>
+            <span class="nav-pill" id="navCertStatus">PGD</span>
+          </button>
+          <button type="button" class="nav-item" data-view="directory">
+            <span>ISCEB Directory & Team</span>
+            <span class="nav-pill" id="navMembersCount">1</span>
+          </button>
+          <button type="button" class="nav-item" data-view="admin" id="navAdminBtn">
+            <span>Admin Governance</span>
+            <span class="nav-pill" id="navAdminRoleBadge">Student</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="sync-card">
+          <div style="font-weight: 700; margin-bottom: 4px;">
+            <span id="syncDot" class="sync-dot"></span>
+            <span id="syncStatusLabel">Cloud Ready</span>
+          </div>
+          <div id="sidebarCurriculumVer" style="color: #CBD5E1; font-size: 11px;">Curriculum: v1.5.0</div>
+          <div id="sidebarApkVer" style="color: #F4E2A3; font-size: 11px; margin-top: 2px;">Latest APK: Checking...</div>
+        </div>
+
+        <button type="button" id="installPwaBtn" class="btn btn-gold" style="display: none; width: 100%;">
+          Install PC Desktop App
+        </button>
+        <a href="../index.html" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.08); color: #F4E2A3; border-color: rgba(212,175,55,0.4);">
+          Android APK Portal
+        </a>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar">
+        <div class="topbar-title-group">
+          <h1 id="pageTitle">Executive SCM Dashboard</h1>
+          <p id="pageSubtitle">International Supply Chain Education Board (ISCEB) — Desktop Workspace</p>
+        </div>
+
+        <div class="topbar-actions">
+          <label for="accountSwitcher" style="font-size: 12px; font-weight: 700; color: var(--muted);">Active Account:</label>
+          <select id="accountSwitcher" class="select" style="width: auto; min-width: 230px;"></select>
+          <button type="button" id="googleSignInBtn" class="btn btn-outline btn-sm">Google Cloud Sync</button>
+          <button type="button" id="syncNowBtn" class="btn btn-primary btn-sm">Sync Cloud Now</button>
+        </div>
+      </header>
+
+      <main class="content" id="mainContent">
+        <div class="card">
+          <strong>Loading ISCEB Desktop Workspace...</strong>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modal Container -->
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+        <h2 id="modalTitle" style="margin: 0; font-size: 18px; color: var(--navy);">Modal</h2>
+        <button type="button" id="modalCloseBtn" class="btn btn-outline btn-sm">Close</button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

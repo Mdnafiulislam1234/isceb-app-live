@@ -1,0 +1,137 @@
+name: ISCEB Build, Test & Auto-Release APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages-and-release"
+  cancel-in-progress: true
+
+jobs:
+  build_and_publish:
+    name: Build, Verify & Publish ISCEB APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Configure Android SDK & Accept Licenses
+        shell: bash
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=${SDK_DIR}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK_DIR}" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "${SDK_DIR}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1 || true)"
+          if [[ -n "$SDKMANAGER" ]]; then
+            set +o pipefail
+            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          fi
+          echo "Using Android SDK at: ${SDK_DIR}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+
+      - name: Restore signing keystore & build environment
+        shell: bash
+        run: |
+          if [[ ! -f debug.keystore && -f debug.keystore.base64 ]]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+            echo "Restored debug.keystore from debug.keystore.base64"
+          fi
+          if [[ ! -f .env.example ]]; then
+            touch .env.example
+            echo "Created placeholder .env.example for secrets-gradle-plugin"
+          fi
+
+      - name: Determine Permanent Public Hosting URL & Auto Build Number
+        id: meta
+        shell: bash
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+          if [[ "${REPO,,}" == "${OWNER,,}.github.io" ]]; then
+            PAGES_URL="https://${OWNER,,}.github.io"
+          else
+            PAGES_URL="https://${OWNER,,}.github.io/${REPO}"
+          fi
+          BASE_CODE=$(grep -E '^\s*versionCode\s*=' app/build.gradle.kts | head -n1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          AUTO_CODE=$((BASE_CODE + GITHUB_RUN_NUMBER))
+          VERSION_NAME=$(grep -E '^\s*versionName\s*=' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          COMMIT_MSG=$(git log -1 --pretty=%s | tr '"' "'" | head -c 180)
+          echo "pages_url=${PAGES_URL}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${AUTO_CODE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "commit_msg=${COMMIT_MSG}" >> "$GITHUB_OUTPUT"
+
+      - name: Run Desktop Portal & QR Unit Tests
+        run: node --test scripts/test_desktop_portal.mjs
+
+      - name: Run Android Unit & Robolectric Tests
+        run: |
+          gradle :app:testDebugUnitTest \
+            --tests "com.example.ExampleRobolectricTest" \
+            --tests "com.example.ExampleUnitTest" \
+            --tests "com.example.UpdateSyncMechanismTest" \
+            --tests "com.example.SecurityAndFixVerificationTest"
+
+      - name: Build, Zipalign, Sign (v1+v2+v3) & Generate version.json
+        env:
+          ISCEB_HOSTING_BASE_URL: ${{ steps.meta.outputs.pages_url }}
+          SKIP_FIREBASE_DEPLOY: "1"
+        run: |
+          chmod +x scripts/release_apk.sh
+          bash scripts/release_apk.sh \
+            "ISCEB v${{ steps.meta.outputs.version_name }} (Build ${{ steps.meta.outputs.version_code }}): ${{ steps.meta.outputs.commit_msg }}" \
+            "${{ steps.meta.outputs.version_code }}"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload GitHub Pages Artifact (Download Portal + QR + APK + Desktop App)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy Public Portal to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Publish Permanent GitHub Release (ISCEB-latest.apk)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "ISCEB Supply Chain Management (v${{ steps.meta.outputs.version_name }} Build ${{ steps.meta.outputs.version_code }})"
+          body: |
+            Official ISCEB Android App & Auto-Update Release
+
+            - Permanent Web Download Page & QR Code: ${{ steps.meta.outputs.pages_url }}/
+            - Direct APK URL: ${{ steps.meta.outputs.pages_url }}/downloads/ISCEB-latest.apk
+            - PC / Desktop Web Portal: ${{ steps.meta.outputs.pages_url }}/desktop/
+            - Latest Update Notes: ${{ steps.meta.outputs.commit_msg }}
+          files: |
+            public/downloads/ISCEB-latest.apk
+            public/version.json
+          make_latest: true

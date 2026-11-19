@@ -15,6 +15,7 @@ import com.example.model.UserRole
 import com.example.util.ApkDownloadOutcome
 import com.example.util.ApkUpdateManager
 import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -43,7 +44,14 @@ class UpdateSyncMechanismTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         if (FirebaseApp.getApps(context).isEmpty()) {
-            FirebaseApp.initializeApp(context)
+            FirebaseApp.initializeApp(context) ?: FirebaseApp.initializeApp(
+                context,
+                FirebaseOptions.Builder()
+                    .setApplicationId("1:716564070468:android:3261c62c73ca52a383bc11")
+                    .setProjectId("gen-lang-client-0901479759")
+                    .setApiKey("fake-api-key-for-unit-test")
+                    .build()
+            )
         }
         context.getSharedPreferences("supply_chain_masterclass_prefs", Context.MODE_PRIVATE)
             .edit().clear().commit()

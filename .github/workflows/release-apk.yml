@@ -54,10 +54,33 @@ jobs:
 
       - name: Restore signing keystore & build environment
         shell: bash
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          if [[ ! -f debug.keystore && -f debug.keystore.base64 ]]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-            echo "Restored debug.keystore from debug.keystore.base64"
+          if [[ ! -f debug.keystore ]]; then
+            if [[ -f debug.keystore.base64 ]]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+              echo "Restored debug.keystore from debug.keystore.base64"
+            elif [[ -n "$DEBUG_KEYSTORE_BASE64" ]]; then
+              echo "$DEBUG_KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > debug.keystore
+              echo "Restored debug.keystore from GitHub secret DEBUG_KEYSTORE_BASE64"
+            else
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+              echo "Generated fallback debug.keystore for CI build"
+            fi
+          fi
+          if [[ ! -f app/google-services.json && -n "$GOOGLE_SERVICES_JSON" ]]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Restored app/google-services.json from GitHub secret GOOGLE_SERVICES_JSON"
           fi
           if [[ ! -f .env.example ]]; then
             touch .env.example

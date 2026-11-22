@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -65,6 +66,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import com.example.R
 import com.example.model.CertificateRecord
 import com.example.model.CertificateStatus
@@ -77,6 +80,42 @@ import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.NavySurface
 import com.example.ui.theme.SuccessGreen
+import com.example.util.CertificatePdfGenerator
+import com.example.util.QrCodeGenerator
+
+@Composable
+fun QrCodeImage(
+    data: String,
+    modifier: Modifier = Modifier,
+    darkColor: Color = NavyPrimary,
+    lightColor: Color = Color.White
+) {
+    val matrix = remember(data) { QrCodeGenerator.generateQrMatrix(data) }
+    Box(
+        modifier = modifier
+            .background(lightColor, RoundedCornerShape(6.dp))
+            .border(1.dp, GoldMetallic.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+            .padding(4.dp)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val n = matrix.size
+            if (n <= 0) return@Canvas
+            val cell = minOf(size.width, size.height) / n.toFloat()
+            drawRect(color = lightColor)
+            for (r in 0 until n) {
+                for (c in 0 until n) {
+                    if (matrix[r][c]) {
+                        drawRect(
+                            color = darkColor,
+                            topLeft = Offset(c * cell, r * cell),
+                            size = Size(cell + 0.5f, cell + 0.5f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ======================= CERTIFICATE PREVIEW CARD =======================
 @Composable
@@ -84,10 +123,24 @@ fun CertificatePreviewCard(
     record: CertificateRecord,
     modifier: Modifier = Modifier
 ) {
+    val institutionDisplay = remember(record.institutionName) {
+        CertificatePdfGenerator.formatInstitutionDisplayName(record.institutionName)
+    }
+    val leftSigner = remember(record) {
+        CertificatePdfGenerator.resolveLeftSignatory()
+    }
+    val rightSigner = remember(record.authorizedSigner) {
+        CertificatePdfGenerator.resolveRightSignatory(record)
+    }
+    val isDemoCert = remember(record.certificateId) {
+        CertificatePdfGenerator.isDemoCertificate(record)
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(RoundedCornerShape(12.dp))
+            .testTag("card_certificate_preview"),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFCFCFD)),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
@@ -109,22 +162,46 @@ fun CertificatePreviewCard(
                     contentDescription = "ISCEB - Connect. learn. Achieve.",
                     modifier = Modifier
                         .width(92.dp)
-                        .height(68.dp),
+                        .height(64.dp),
                     contentScale = ContentScale.Fit
                 )
 
+                if (isDemoCert) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(GoldSoft)
+                            .border(1.dp, GoldMetallic, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "DEMO CERTIFICATE PREVIEW",
+                            color = NavyPrimary,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 8.5.sp,
+                            letterSpacing = 0.6.sp
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Institution Name
+                // Institution Official Full Name
                 Text(
-                    text = record.institutionName.uppercase(),
+                    text = institutionDisplay.uppercase(),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         color = NavyPrimary,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp
-                    )
+                        fontSize = 10.sp,
+                        letterSpacing = 0.6.sp,
+                        lineHeight = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    ),
+                    modifier = Modifier.testTag("text_cert_institution_name")
                 )
+
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
                     text = "POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT (SCM)",
@@ -132,7 +209,8 @@ fun CertificatePreviewCard(
                         color = GoldDark,
                         fontWeight = FontWeight.Bold,
                         fontSize = 8.sp,
-                        letterSpacing = 0.8.sp
+                        letterSpacing = 0.6.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 )
 
@@ -179,7 +257,18 @@ fun CertificatePreviewCard(
                         .background(GoldMetallic)
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                if (record.studentCode.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Student ID: ${record.studentCode}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF475569)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = "for verified mastery of all 12 Specialization Modules and 48 Executive Lessons in Global Supply Chain Operations, Logistics Strategy, Trade Finance, and Risk Architecture.",
@@ -193,39 +282,119 @@ fun CertificatePreviewCard(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Seal and signatures
+                // Seal, Date, and QR Verification Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Seal
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(NavyPrimary)
                             .border(1.5.dp, GoldMetallic, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(imageVector = Icons.Default.Shield, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(16.dp))
-                            Text("VERIFIED", color = GoldSoft, fontSize = 6.sp, fontWeight = FontWeight.Bold)
+                            Icon(imageVector = Icons.Default.Shield, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(14.dp))
+                            Text(if (isDemoCert) "DEMO" else "VERIFIED", color = GoldSoft, fontSize = 5.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
                     // Date
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(text = record.issueDate, fontWeight = FontWeight.Bold, color = NavyPrimary, fontSize = 9.sp)
-                        Box(modifier = Modifier.width(70.dp).height(1.dp).background(Color.LightGray))
-                        Text(text = "DATE OF ISSUANCE", color = Color.Gray, fontSize = 7.sp)
+                        Box(modifier = Modifier.width(72.dp).height(1.dp).background(Color.LightGray))
+                        Text(text = "ISSUED DATE", color = Color.Gray, fontSize = 6.5.sp)
                     }
 
-                    // Signer
+                    // QR Verification badge
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = record.authorizedSigner.take(24), fontWeight = FontWeight.Bold, color = NavyPrimary, fontSize = 9.sp)
-                        Box(modifier = Modifier.width(90.dp).height(1.dp).background(Color.LightGray))
-                        Text(text = "AUTHORIZED SIGNER", color = Color.Gray, fontSize = 7.sp)
+                        QrCodeImage(
+                            data = record.verificationUrl.ifBlank { "https://www.isceb.org/verify/${record.certificateId}" },
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(text = "SCAN QR", color = Color.Gray, fontSize = 6.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Symmetrical Two-Signatory Row (Left: Hasina Khan | Right: Amirul Islam, Founder of ISCEB)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    // Left Signatory (clean space above hairline for authorized signature)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("cert_left_signatory"),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .height(1.dp)
+                                .background(Color(0xFF94A3B8))
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = leftSigner.name,
+                            fontWeight = FontWeight.Bold,
+                            color = NavyPrimary,
+                            fontSize = 10.sp,
+                            maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        if (leftSigner.title.isNotBlank()) {
+                            Text(
+                                text = leftSigner.title,
+                                color = Color(0xFF64748B),
+                                fontSize = 7.5.sp,
+                                maxLines = 2,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+
+                    // Right Signatory (Amirul Islam, Founder of ISCEB)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("cert_right_signatory"),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .height(1.dp)
+                                .background(Color(0xFF94A3B8))
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = rightSigner.name,
+                            fontWeight = FontWeight.Bold,
+                            color = NavyPrimary,
+                            fontSize = 10.sp,
+                            maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = rightSigner.title,
+                            color = GoldDark,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 7.5.sp,
+                            maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
                     }
                 }
 
@@ -241,15 +410,16 @@ fun CertificatePreviewCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val footerStatus = if (isDemoCert) "DEMO PREVIEW" else record.status.name
                         Text(
-                            text = "ID: ${record.certificateId}   •   STATUS: ${record.status.name}",
+                            text = "ID: ${record.certificateId}   •   STATUS: $footerStatus",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 8.5.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (record.status == CertificateStatus.VALID) SuccessGreen else DangerRed
+                            color = if (isDemoCert) GoldDark else if (record.status == CertificateStatus.VALID) SuccessGreen else DangerRed
                         )
                         Text(
-                            text = "Registry: ${record.officialWebsite}",
+                            text = "Verify: ${record.verificationUrl.ifBlank { record.officialWebsite }}",
                             fontSize = 7.5.sp,
                             color = Color.Gray
                         )
@@ -266,15 +436,23 @@ fun CertificatePreviewDialog(
     record: CertificateRecord,
     onDismiss: () -> Unit,
     onOpenPdf: () -> Unit,
-    onVerifyClick: (String) -> Unit
+    onVerifyClick: (String) -> Unit,
+    onDownloadPdf: () -> Unit = onOpenPdf
 ) {
+    val isDemoCert = remember(record.certificateId) {
+        CertificatePdfGenerator.isDemoCertificate(record)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(imageVector = Icons.Default.Verified, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(24.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Executive Diploma Certificate", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = NavyPrimary))
+                Text(
+                    text = if (isDemoCert) "Demo Executive Diploma" else "Executive Diploma Certificate",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = NavyPrimary)
+                )
             }
         },
         text = {
@@ -287,7 +465,11 @@ fun CertificatePreviewDialog(
                 CertificatePreviewCard(record = record)
 
                 Text(
-                    text = "This certificate was generated on demand in high-resolution vector PDF format. It carries a unique non-guessable hash ID verified against the institutional registry.",
+                    text = if (isDemoCert) {
+                        "Preview of the official PGD Diploma template from ${CertificatePdfGenerator.OFFICIAL_INSTITUTION_FULL_NAME} (ISCEB). Save or open as Landscape A4 PDF."
+                    } else {
+                        "This certificate was generated on demand in high-resolution vector PDF format. It carries a unique non-guessable hash ID verified against the institutional registry."
+                    },
                     style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF64748B), fontSize = 11.sp)
                 )
 
@@ -296,23 +478,35 @@ fun CertificatePreviewDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = onOpenPdf,
-                        modifier = Modifier.weight(1f).testTag("btn_open_pdf_cert"),
-                        colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic)
+                        onClick = onDownloadPdf,
+                        modifier = Modifier.weight(1f).testTag("btn_download_pdf_cert"),
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyPrimary)
                     ) {
-                        Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Open PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Download PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
 
                     OutlinedButton(
+                        onClick = onOpenPdf,
+                        modifier = Modifier.weight(1f).testTag("btn_open_pdf_cert"),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary)
+                    ) {
+                        Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Open PDF", fontSize = 11.5.sp, maxLines = 1, softWrap = false)
+                    }
+                }
+
+                if (!isDemoCert) {
+                    OutlinedButton(
                         onClick = { onVerifyClick(record.certificateId) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary)
                     ) {
                         Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Verify ID", fontSize = 12.sp)
+                        Text("Verify Certificate ID", fontSize = 12.sp)
                     }
                 }
             }
@@ -510,14 +704,36 @@ fun CertificateVerificationScreen(
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            // Detail Rows
-                            VerificationDetailRow("Student Name:", cert.studentName)
-                            VerificationDetailRow("Course Title:", cert.courseTitle)
-                            VerificationDetailRow("Certificate ID:", cert.certificateId)
-                            VerificationDetailRow("Issue Date:", cert.issueDate)
-                            VerificationDetailRow("Completed Classes:", "${cert.completedClassesCount} of ${cert.totalRequiredClasses} Classes (100% Curricular Mastery)")
-                            VerificationDetailRow("Institution:", cert.institutionName)
-                            VerificationDetailRow("Authorized Signer:", cert.authorizedSigner)
+                            // Detail Rows + QR Verification Badge
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    VerificationDetailRow("Student Name:", cert.studentName)
+                                    if (cert.studentCode.isNotBlank()) {
+                                        VerificationDetailRow("Student ID:", cert.studentCode)
+                                    }
+                                    VerificationDetailRow("Course Title:", cert.courseTitle)
+                                    VerificationDetailRow("Certificate ID:", cert.certificateId)
+                                    VerificationDetailRow("Issue Date:", cert.issueDate)
+                                    VerificationDetailRow("Completed Classes:", "${cert.completedClassesCount} of ${cert.totalRequiredClasses} Classes (100% Curricular Mastery)")
+                                    VerificationDetailRow("Institution:", CertificatePdfGenerator.formatInstitutionDisplayName(cert.institutionName))
+                                    val rightSig = CertificatePdfGenerator.resolveRightSignatory(cert)
+                                    val leftSig = CertificatePdfGenerator.resolveLeftSignatory()
+                                    VerificationDetailRow("Signatories:", "${leftSig.name} (Left) • ${rightSig.name}, ${rightSig.title} (Right)")
+                                    VerificationDetailRow("Verification URL:", cert.verificationUrl.ifBlank { "https://www.isceb.org/verify/${cert.certificateId}" })
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    QrCodeImage(
+                                        data = cert.verificationUrl.ifBlank { "https://www.isceb.org/verify/${cert.certificateId}" },
+                                        modifier = Modifier.size(74.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("QR Verify", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B))
+                                }
+                            }
 
                             Spacer(modifier = Modifier.height(14.dp))
 

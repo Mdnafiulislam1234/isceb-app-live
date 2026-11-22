@@ -190,6 +190,10 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test assignment submission and grading workflow`() {
+        val student = repository.signInOrRegisterStudentAccount(
+            fullName = "Nadia Rahman",
+            email = "nadia.rahman@isceb.org"
+        )
         val assignment = repository.moduleAssignments.value.find { it.id == "asg-1" }!!
         val submission = repository.submitAssignment(
             assignmentId = assignment.id,
@@ -198,7 +202,7 @@ class ExampleRobolectricTest {
         )
 
         assertNotNull(submission)
-        assertEquals("student-1", submission.studentId)
+        assertEquals(student.id, submission.studentId)
         assertFalse(submission.isGraded)
 
         // Faculty grading
@@ -262,29 +266,47 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test multi-user progress isolation across logout and switch`() {
-        assertEquals("student-1", repository.currentUser.value.id)
+        val student1 = repository.signInOrRegisterStudentAccount(
+            fullName = "Nadia Rahman",
+            email = "nadia@isceb.org"
+        )
+        assertEquals(student1.id, repository.currentUser.value.id)
         repository.recordActiveLearningTime("class-1", 70L, 100f)
         repository.submitQuiz("class-1", 100)
         assertTrue(repository.classes.value.find { it.id == "class-1" }!!.isCompleted)
 
-        // Switch to User 2
-        repository.switchUser("student-2")
-        assertEquals("student-2", repository.currentUser.value.id)
+        // Sign out and register Student 2
+        repository.signOutAccount()
+        assertEquals("guest-unauthenticated", repository.currentUser.value.id)
 
-        val alexClass1 = repository.classes.value.find { it.id == "class-1" }!!
-        assertFalse("Alex's class should not be completed", alexClass1.isCompleted)
-        assertEquals(ClassStatus.NOT_STARTED, alexClass1.status)
+        val student2 = repository.signInOrRegisterStudentAccount(
+            fullName = "Tariq Hasan",
+            email = "tariq@isceb.org"
+        )
+        assertEquals(student2.id, repository.currentUser.value.id)
 
-        // Switch back to User 1: progress restored
-        repository.switchUser("student-1")
-        assertEquals("student-1", repository.currentUser.value.id)
-        val sarahClass1 = repository.classes.value.find { it.id == "class-1" }!!
-        assertTrue("Sarah's completed class must be restored", sarahClass1.isCompleted)
-        assertEquals(ClassStatus.COMPLETED, sarahClass1.status)
+        val secondClass1 = repository.classes.value.find { it.id == "class-1" }!!
+        assertFalse("Second student's class should not be completed", secondClass1.isCompleted)
+        assertEquals(ClassStatus.NOT_STARTED, secondClass1.status)
+
+        // Sign back into Student 1: progress restored
+        repository.signInOrRegisterStudentAccount(
+            fullName = "Nadia Rahman",
+            email = "nadia@isceb.org"
+        )
+        assertEquals(student1.id, repository.currentUser.value.id)
+        val restoredClass1 = repository.classes.value.find { it.id == "class-1" }!!
+        assertTrue("First student's completed class must be restored", restoredClass1.isCompleted)
+        assertEquals(ClassStatus.COMPLETED, restoredClass1.status)
     }
 
     @Test
     fun `test certificate generation for SCM Global PGD and verification`() {
+        repository.signInOrRegisterStudentAccount(
+            fullName = "Farhana Akter",
+            email = "farhana@isceb.org"
+        )
+
         // Initially ineligible
         val eligibilityInitial = repository.evaluateCertificateEligibility()
         assertFalse("Incomplete student should not be eligible", eligibilityInitial.isEligible)
@@ -342,7 +364,7 @@ class ExampleRobolectricTest {
         assertFalse(repository.switchUser("admin-1"))
         assertFalse(repository.switchUser("admin-2"))
         assertFalse(repository.isAdminLoggedIn.value)
-        assertEquals("student-1", repository.currentUser.value.id)
+        assertEquals("guest-unauthenticated", repository.currentUser.value.id)
 
         // Proper per-admin cryptographic setup & verification: Amirul 1st, then single-use invite for Nafiul
         val setupAmirul = repository.adminAuthManager.setupInitialPassword(
@@ -476,18 +498,54 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `verify ISCEB members directory zero fabrication initial state and full CRUD with reorder`() {
-        val initialMembers = repository.iscebMembers.value
-        assertEquals(1, initialMembers.size)
-        val founderEntry = initialMembers.first()
+    fun `verify ISCEB members directory exact 8-member official roster and full CRUD with reorder`() {
+        val initialMembers = repository.iscebMembers.value.sortedBy { it.displayOrder }
+        assertEquals(8, initialMembers.size)
+
+        val expectedIds = listOf(
+            "member-founder-amirul",
+            "member-hasina-khan",
+            "member-masudur-rahman",
+            "member-asif-mahmud",
+            "member-mashiur-rahman",
+            "member-shajibul-hasan",
+            "member-tonmoy-khan",
+            "member-developer-nafiul"
+        )
+        assertEquals(expectedIds, initialMembers.map { it.id })
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8), initialMembers.map { it.displayOrder })
+        assertEquals(
+            listOf("amirul", "hasina", "masudur", "asif", "mashiur", "shajibul", "tonmoy", "nafiul"),
+            initialMembers.map { it.builtInPhotoKey }
+        )
+
+        val founderEntry = initialMembers[0]
         assertEquals("Md. Amirul Islam", founderEntry.fullName)
         assertEquals("Founder of ISCEB", founderEntry.designation)
-        assertEquals("Head of Supply Chain Management at BRB Group", founderEntry.professionalIdentity)
-        assertEquals("BRB Group", founderEntry.currentOrganization)
-        assertEquals("", founderEntry.educationalQualification)
-        assertEquals("amirul", founderEntry.builtInPhotoKey)
+        assertTrue(founderEntry.biography.contains("Connect. Learn. Achieve."))
+        assertEquals("Hasina Akter Khan", initialMembers[1].fullName)
+        assertEquals("MD. MASUDUR RAHMAN", initialMembers[2].fullName)
+        assertEquals("Shah Mohammad Asif Mahmud", initialMembers[3].fullName)
+        assertEquals("Mr. Md. Mashiur Rahman", initialMembers[4].fullName)
+        assertEquals("Shajibul Hasan", initialMembers[5].fullName)
+        assertEquals("Tonmoy Khan", initialMembers[6].fullName)
+        assertEquals("Developer Mohammad Nafiul Islam", initialMembers[7].fullName)
 
-        // Admin adds a new member with complete 11-field record
+        // Verify all 6 new member portrait drawables are valid resources
+        listOf(
+            R.drawable.img_member_hasina,
+            R.drawable.img_member_masudur,
+            R.drawable.img_member_asif,
+            R.drawable.img_member_mashiur,
+            R.drawable.img_member_shajibul,
+            R.drawable.img_member_tonmoy
+        ).forEach { resId ->
+            val d = context.resources.getDrawable(resId, null)
+            assertNotNull("Member drawable must load", d)
+            assertTrue("Member drawable must have intrinsic dimensions", d.intrinsicWidth > 0 && d.intrinsicHeight > 0)
+        }
+
+        // Admin adds a 9th custom member
         val newMember = com.example.model.IscebMember(
             id = "member-custom-1",
             fullName = "Md. Tariqul Islam",
@@ -500,24 +558,24 @@ class ExampleRobolectricTest {
             roleInIsceb = "Faculty Member",
             contactInformation = "tariqul@example.org",
             biography = "Seasoned international trade and port logistics practitioner.",
-            displayOrder = 2
+            displayOrder = 9
         )
         repository.addOrUpdateMember(newMember)
-        assertEquals(2, repository.iscebMembers.value.size)
+        assertEquals(9, repository.iscebMembers.value.size)
 
-        // Move custom member up
+        // Move custom member up one slot
         repository.moveMemberOrder("member-custom-1", moveUp = true)
         val reordered = repository.iscebMembers.value.sortedBy { it.displayOrder }
-        assertEquals("member-custom-1", reordered.first().id)
+        assertEquals("member-custom-1", reordered[7].id)
 
         // Persist across reload
         val reloaded = SupplyChainRepository(context)
-        assertEquals(2, reloaded.iscebMembers.value.size)
-        assertEquals("Md. Tariqul Islam", reloaded.iscebMembers.value.first().fullName)
+        assertEquals(9, reloaded.iscebMembers.value.size)
+        assertEquals("Md. Tariqul Islam", reloaded.iscebMembers.value.sortedBy { it.displayOrder }[7].fullName)
 
-        // Delete member
+        // Delete custom member restores 8 official members
         reloaded.deleteMember("member-custom-1")
-        assertEquals(1, reloaded.iscebMembers.value.size)
+        assertEquals(8, reloaded.iscebMembers.value.size)
         assertEquals("Md. Amirul Islam", reloaded.iscebMembers.value.first().fullName)
     }
 
@@ -584,6 +642,41 @@ class ExampleRobolectricTest {
         assertNotNull(studentProgressAfter)
         assertEquals(studentProgressBefore?.activeLearningSeconds, studentProgressAfter?.activeLearningSeconds)
     }
+
+    @Test
+    fun `verify 18MB Firestore chunk math and plain text document preview helpers`() {
+        assertEquals(18L * 1024L * 1024L, com.example.data.CloudSyncRepository.MAX_CLOUD_FILE_BYTES)
+        val maxBytes = com.example.data.CloudSyncRepository.MAX_CLOUD_FILE_BYTES
+        val chunkRaw = com.example.data.CloudSyncRepository.CHUNK_RAW_BYTES
+        val totalChunks = ((maxBytes + chunkRaw - 1) / chunkRaw).toInt()
+        assertTrue("18 MB file must fit inside firestore.rules max 50 chunks (was $totalChunks)", totalChunks <= 50)
+        val worstBase64Chars = ((chunkRaw + 2) / 3) * 4
+        assertTrue("Base64 chunk must fit inside firestore.rules 600k char limit (was $worstBase64Chars)", worstBase64Chars <= 600_000)
+
+        val txtMedia = com.example.model.LessonMedia(
+            type = com.example.model.MediaType.DOCUMENT,
+            fileName = "scm_syllabus_notes.txt",
+            fileSizeFormatted = "1.2 KB",
+            fileSizeBytes = 1200L,
+            mimeType = "text/plain"
+        )
+        assertTrue(com.example.util.MediaFileManager.isPlainTextDocument(txtMedia))
+
+        val docxMedia = txtMedia.copy(
+            fileName = "Assignment_Template.docx",
+            mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        assertFalse(com.example.util.MediaFileManager.isPlainTextDocument(docxMedia))
+
+        val tmpFile = java.io.File(context.cacheDir, "test_preview_doc.txt").apply {
+            writeText("ISCEB Supply Chain Management\nModule 01 Overview")
+        }
+        try {
+            val preview = com.example.util.MediaFileManager.readTextPreview(tmpFile, maxChars = 1000)
+            assertNotNull(preview)
+            assertTrue(preview!!.contains("ISCEB Supply Chain Management"))
+        } finally {
+            tmpFile.delete()
+        }
+    }
 }
-
-

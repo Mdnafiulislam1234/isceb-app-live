@@ -2,15 +2,19 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.annotation.VisibleForTesting
 import com.example.BuildConfig
 import com.example.auth.AdminAuthManager
+import com.example.model.AccountStatus
 import com.example.model.AdminCompletionSettings
 import com.example.model.AppUpdateConfig
 import com.example.model.AppUpdateInfo
 import com.example.model.AssignmentSubmission
+import com.example.model.AuditLogEntry
 import com.example.model.CertificateEligibility
 import com.example.model.CertificateRecord
 import com.example.model.CertificateStatus
+import com.example.model.CertificationEligibilityStatus
 import com.example.model.ClassStatus
 import com.example.model.CourseClass
 import com.example.model.CourseModule
@@ -28,6 +32,7 @@ import com.example.model.ModuleAssignment
 import com.example.model.ModuleExam
 import com.example.model.QuizQuestion
 import com.example.model.StudentClassProgress
+import com.example.model.SubmissionStatus
 import com.example.model.SyncStatus
 import com.example.model.UserProfile
 import com.example.model.UserProgress
@@ -44,6 +49,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -67,12 +73,25 @@ class SupplyChainRepository(
     }
 
     private val CURRENT_SYLLABUS_VERSION = "v8_isceb_exact_syllabus_48"
+    private val CURRENT_MEMBERS_ROSTER_VERSION = 2
 
-    // User Management
+    private val DEMO_ACCOUNT_IDS = setOf("student-1", "student-2", "student-3")
+    private val DEMO_ACCOUNT_NAMES = setOf("Sarah Jenkins", "Alex Rivera", "Tanvir Ahmed")
+
+    private val guestProfile = UserProfile(
+        id = "guest-unauthenticated",
+        fullName = "ISCEB Learner",
+        email = "",
+        role = UserRole.STUDENT,
+        organization = "Institute of Supply Chain Excellence Bangladesh",
+        designation = "Sign in to sync learning progress",
+        enrolledProgram = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+        accountStatus = AccountStatus.PENDING_VERIFICATION,
+        isVerified = false
+    )
+
+    // Administrative Accounts (Demo student accounts removed for production LMS)
     val availableUsers = listOf(
-        UserProfile("student-1", "Sarah Jenkins", "sarah.jenkins@isceb.org", UserRole.STUDENT, "ISCEB PGD Candidate"),
-        UserProfile("student-2", "Alex Rivera", "alex.rivera@freightcorp.com", UserRole.STUDENT, "Pacific Maritime Forwarding"),
-        UserProfile("student-3", "Tanvir Ahmed", "tanvir.ahmed@dhakalogistics.com", UserRole.STUDENT, "Apex SCM Bangladesh"),
         UserProfile(
             id = "admin-2",
             fullName = "Md. Amirul Islam",
@@ -81,7 +100,8 @@ class SupplyChainRepository(
             organization = "Head of Supply Chain Management at BRB Group",
             designation = "Founder of ISCEB",
             additionalRole = "Lead Trainer of ISCEB",
-            mobileNumber = "01715-282905"
+            mobileNumber = "01715-282905",
+            isVerified = true
         ),
         UserProfile(
             id = "admin-1",
@@ -89,11 +109,21 @@ class SupplyChainRepository(
             email = "www.mdnafiulislam@gmail.com",
             role = UserRole.ADMIN,
             organization = "ISCEB App Engineering",
-            designation = "Developer of ISCEB App"
+            designation = "Developer of ISCEB App",
+            isVerified = true
         )
     )
 
-    private val _currentUser = MutableStateFlow(availableUsers[0])
+    private val _registeredAccounts = MutableStateFlow<List<UserProfile>>(emptyList())
+    val registeredAccounts: StateFlow<List<UserProfile>> = _registeredAccounts.asStateFlow()
+
+    private val _hasSignedInAccount = MutableStateFlow(false)
+    val hasSignedInAccount: StateFlow<Boolean> = _hasSignedInAccount.asStateFlow()
+
+    private val _auditLogs = MutableStateFlow<List<AuditLogEntry>>(emptyList())
+    val auditLogs: StateFlow<List<AuditLogEntry>> = _auditLogs.asStateFlow()
+
+    private val _currentUser = MutableStateFlow(guestProfile)
     val currentUser: StateFlow<UserProfile> = _currentUser.asStateFlow()
 
     private val _developerProfile = MutableStateFlow(DeveloperProfile())
@@ -210,19 +240,36 @@ class SupplyChainRepository(
         } else {
             AdminCompletionSettings()
         }
+        val cleanLeftSigner = existingSettings.leftSignerName
+            .takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) && !it.contains("Amirul", ignoreCase = true) }
+            ?: "Hasina Khan"
+        val cleanRightSigner = existingSettings.authorizedSignerName
+            .let {
+                if (it.isBlank() || it.contains("Nafiul", ignoreCase = true) || it.contains("Academic", ignoreCase = true) || it.contains("Developer", ignoreCase = true) || it.contains("Hasina", ignoreCase = true)) {
+                    "Amirul Islam"
+                } else if (it.startsWith("Md. Amirul Islam", ignoreCase = true)) {
+                    "Amirul Islam"
+                } else {
+                    it.substringBefore(",").trim()
+                }
+            }
+        val cleanRightTitle = existingSettings.authorizedSignerTitle
+            .takeIf {
+                it.isNotBlank() &&
+                    !it.contains("SCM Global", ignoreCase = true) &&
+                    !it.contains("Developer", ignoreCase = true) &&
+                    !it.contains("Academic Directorate", ignoreCase = true) &&
+                    !it.contains("Lead Trainer", ignoreCase = true)
+            } ?: "Founder of ISCEB"
         val migratedSettings = existingSettings.copy(
-            institutionName = if (existingSettings.institutionName.contains("SCM Global", ignoreCase = true) || existingSettings.institutionName.isBlank()) "ISCEB" else existingSettings.institutionName,
+            institutionName = if (existingSettings.institutionName.contains("SCM Global", ignoreCase = true) ||
+                existingSettings.institutionName.contains("International Supply Chain", ignoreCase = true) ||
+                existingSettings.institutionName.isBlank()
+            ) "ISCEB" else existingSettings.institutionName,
             officialWebsite = existingSettings.officialWebsite.ifBlank { "www.isceb.org" },
-            authorizedSignerName = existingSettings.authorizedSignerName
-                .replace("Academic Detector", "Developer of ISCEB App")
-                .replace("Academic Director", "Developer of ISCEB App")
-                .replace("Founder & Developer of ISCEB", "Developer of ISCEB App")
-                .replace("MD. Nafiul", "Md. Nafiul"),
-            authorizedSignerTitle = if (existingSettings.authorizedSignerTitle.contains("SCM Global", ignoreCase = true) || existingSettings.authorizedSignerTitle.isBlank()) {
-                "ISCEB Academic Directorate"
-            } else {
-                existingSettings.authorizedSignerTitle
-            },
+            leftSignerName = cleanLeftSigner,
+            authorizedSignerName = cleanRightSigner,
+            authorizedSignerTitle = cleanRightTitle,
             remoteSyncManifestUrl = existingSettings.remoteSyncManifestUrl.ifBlank { AppUpdateConfig.DEFAULT_VERSION_JSON_URL },
             apkDownloadUrl = existingSettings.apkDownloadUrl
                 .takeIf { it.isNotBlank() && it != "https://www.isceb.org/app/releases/latest" }
@@ -234,6 +281,14 @@ class SupplyChainRepository(
         }
 
         if (isFirstOrMismatch) {
+            // Capture an immutable pre-LMS migration backup snapshot once before altering stored records
+            val hasPriorData = prefs.contains("classes_json") ||
+                prefs.contains("issued_certificates_json") ||
+                prefs.contains("student_progress_student-1")
+            if (hasPriorData && !prefs.contains("pre_lms_migration_backup_json")) {
+                prefs.edit().putString("pre_lms_migration_backup_json", exportWorkspaceBackupJson()).apply()
+            }
+
             // Non-destructive upgrade to exact ISCEB 12 modules & 48 lectures:
             // preserve any previously uploaded media attached to classes by classId.
             val prevClassesById = try {
@@ -251,12 +306,30 @@ class SupplyChainRepository(
                         pdfMedia = prev.pdfMedia,
                         audioMedia = prev.audioMedia,
                         videoMedia = prev.videoMedia,
-                        attachments = prev.attachments
+                        attachments = prev.attachments,
+                        minStudySecondsOverride = prev.minStudySecondsOverride,
+                        allowMediaDownload = prev.allowMediaDownload
                     )
                 } else fresh
             }
-            val initialExams = getInitialModuleExams()
-            val initialAssignments = getInitialModuleAssignments()
+
+            val existingExams = try {
+                val json = prefs.getString("exams_json", null)
+                if (!json.isNullOrBlank()) deserializeExams(json) else emptyList()
+            } catch (_: Exception) { emptyList() }
+            val existingExamsById = existingExams.associateBy { it.id }
+            val initialExams = getInitialModuleExams().map { def ->
+                existingExamsById[def.id] ?: def
+            } + existingExams.filter { e -> getInitialModuleExams().none { it.id == e.id } }
+
+            val existingAssignments = try {
+                val json = prefs.getString("assignments_json", null)
+                if (!json.isNullOrBlank()) deserializeAssignments(json) else emptyList()
+            } catch (_: Exception) { emptyList() }
+            val existingAsgById = existingAssignments.associateBy { it.id }
+            val initialAssignments = getInitialModuleAssignments().map { def ->
+                existingAsgById[def.id] ?: def
+            } + existingAssignments.filter { a -> getInitialModuleAssignments().none { it.id == a.id } }
 
             _modules.value = initialMods
             _classes.value = initialCls
@@ -305,47 +378,100 @@ class SupplyChainRepository(
 
         // Load Founder Profile
         val founderProfileJson = prefs.getString("founder_profile_json", null)
-        _founderProfile.value = try {
+        val loadedFounder = try {
             if (!founderProfileJson.isNullOrBlank()) deserializeFounderProfile(founderProfileJson) else FounderProfile()
         } catch (_: Exception) {
             FounderProfile()
         }
+        val savedRosterVersion = prefs.getInt("isceb_members_roster_version", 1)
+        val effectiveFounder = if (savedRosterVersion < CURRENT_MEMBERS_ROSTER_VERSION && loadedFounder.educationBackground.isBlank()) {
+            val defaults = FounderProfile()
+            val upgraded = loadedFounder.copy(
+                educationBackground = defaults.educationBackground,
+                professionalExperience = defaults.professionalExperience,
+                biography = defaults.biography,
+                skillsAndExpertise = defaults.skillsAndExpertise
+            )
+            prefs.edit().putString("founder_profile_json", serializeFounderProfile(upgraded)).apply()
+            upgraded
+        } else {
+            loadedFounder
+        }
+        _founderProfile.value = effectiveFounder
 
-        // Load ISCEB Members Directory
+        // Load ISCEB Members Directory (always honoring exact 1..8 official order when upgrading roster v1 -> v2)
         val membersJson = prefs.getString("isceb_members_json", null)
-        _iscebMembers.value = try {
+        val loadedMembers = try {
             if (!membersJson.isNullOrBlank()) {
                 deserializeMembers(membersJson).sortedBy { it.displayOrder }
             } else {
-                val initialMembers = getInitialMembers()
-                persistMembers(initialMembers)
-                initialMembers
+                emptyList()
             }
         } catch (_: Exception) {
-            getInitialMembers()
+            emptyList()
+        }
+        _iscebMembers.value = if (loadedMembers.isEmpty() || savedRosterVersion < CURRENT_MEMBERS_ROSTER_VERSION) {
+            val officialRoster = getInitialMembers()
+            val officialIds = officialRoster.map { it.id }.toSet()
+            val customExtras = loadedMembers
+                .filterNot { it.id in officialIds }
+                .mapIndexed { idx, m -> m.copy(displayOrder = officialRoster.size + idx + 1) }
+            val mergedRoster = officialRoster + customExtras
+            persistMembers(mergedRoster)
+            prefs.edit().putInt("isceb_members_roster_version", CURRENT_MEMBERS_ROSTER_VERSION).apply()
+            mergedRoster
+        } else {
+            loadedMembers
+        }
+
+        // Load Real Registered LMS Accounts (purging any legacy demo profiles)
+        val accountsJson = prefs.getString("lms_user_accounts_json", null)
+        val loadedAccounts = try {
+            if (!accountsJson.isNullOrBlank()) {
+                deserializeUserAccounts(accountsJson).filterNot {
+                    DEMO_ACCOUNT_IDS.contains(it.id) || DEMO_ACCOUNT_NAMES.contains(it.fullName)
+                }
+            } else {
+                emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        _registeredAccounts.value = loadedAccounts
+        if (accountsJson != null) {
+            persistUserAccounts(loadedAccounts)
         }
 
         // Load Active User with strict cryptographic session validation for admin mode
         val validatedSessionAdminId = adminAuthManager.getValidatedSessionAdminId()
-        val savedUserId = prefs.getString("current_user_id", availableUsers[0].id)
-        val defaultStudent = availableUsers.first { it.role == UserRole.STUDENT }
-        val activeUser = if (validatedSessionAdminId != null) {
-            availableUsers.find { it.id == validatedSessionAdminId && it.role == UserRole.ADMIN }
-                ?: defaultStudent
-        } else {
-            availableUsers.find { it.id == savedUserId && it.role == UserRole.STUDENT }
-                ?: defaultStudent
+        val savedAccountId = prefs.getString("active_account_id", null)
+        val activeUser: UserProfile = when {
+            validatedSessionAdminId != null -> {
+                availableUsers.find { it.id == validatedSessionAdminId && it.role == UserRole.ADMIN }
+                    ?: guestProfile
+            }
+            !savedAccountId.isNullOrBlank() -> {
+                loadedAccounts.find { it.id == savedAccountId && it.role != UserRole.ADMIN && it.accountStatus != AccountStatus.SUSPENDED }
+                    ?: guestProfile
+            }
+            else -> guestProfile
         }
         _currentUser.value = activeUser
+        _hasSignedInAccount.value = activeUser.id != guestProfile.id && !DEMO_ACCOUNT_IDS.contains(activeUser.id)
+
         if (activeUser.role == UserRole.ADMIN && validatedSessionAdminId != null) {
             setAdminLoggedIn(true)
         } else {
             adminAuthManager.clearSession()
-            prefs.edit().putString("current_user_id", activeUser.id).apply()
+            if (activeUser.id != guestProfile.id) {
+                prefs.edit().putString("active_account_id", activeUser.id).apply()
+            } else {
+                prefs.edit().remove("active_account_id").remove("current_user_id").apply()
+            }
             setAdminLoggedIn(false)
         }
 
-        // Load Certificates Registry
+        // Load Certificates Registry (keep all existing records, excluding nothing legitimate)
         val certsJson = prefs.getString("issued_certificates_json", null)
         _issuedCertificates.value = try {
             if (!certsJson.isNullOrBlank()) deserializeCertificates(certsJson) else emptyList()
@@ -353,7 +479,7 @@ class SupplyChainRepository(
             emptyList()
         }
 
-        // Load Exam Attempts & Assignment Submissions
+        // Load Exam Attempts & Assignment Submissions & Audit Logs
         val attemptsJson = prefs.getString("exam_attempts_json", null)
         _examAttempts.value = try {
             if (!attemptsJson.isNullOrBlank()) deserializeExamAttempts(attemptsJson) else emptyList()
@@ -364,6 +490,13 @@ class SupplyChainRepository(
         val submissionsJson = prefs.getString("assignment_submissions_json", null)
         _assignmentSubmissions.value = try {
             if (!submissionsJson.isNullOrBlank()) deserializeAssignmentSubmissions(submissionsJson) else emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val auditJson = prefs.getString("audit_logs_json", null)
+        _auditLogs.value = try {
+            if (!auditJson.isNullOrBlank()) deserializeAuditLogs(auditJson) else emptyList()
         } catch (_: Exception) {
             emptyList()
         }
@@ -398,22 +531,244 @@ class SupplyChainRepository(
         _lastSyncTimestamp.value = prefs.getLong("last_sync_timestamp", System.currentTimeMillis())
     }
 
+    private fun generateUniqueStudentId(existingAccounts: List<UserProfile>): String {
+        val year = Calendar.getInstance().get(Calendar.YEAR)
+        val prefix = "ISCEB-PGD-$year-"
+        val maxNum = existingAccounts
+            .mapNotNull { acc ->
+                acc.studentId.takeIf { it.startsWith(prefix) }
+                    ?.removePrefix(prefix)
+                    ?.toIntOrNull()
+            }
+            .maxOrNull() ?: 0
+        return "$prefix${String.format(Locale.US, "%04d", maxNum + 1)}"
+    }
+
+    fun signInOrRegisterStudentAccount(
+        fullName: String,
+        email: String,
+        authUid: String = "",
+        organization: String = "ISCEB Enrolled Professional",
+        designation: String = "PGD Candidate",
+        mobileNumber: String = "",
+        enrolledProgram: String = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+        photoUrl: String = ""
+    ): UserProfile {
+        val cleanEmail = email.trim()
+        val cleanName = fullName.trim().ifBlank { cleanEmail.substringBefore("@").ifBlank { "ISCEB Learner" } }
+        val currentList = _registeredAccounts.value.toMutableList()
+        val existingIdx = currentList.indexOfFirst {
+            (authUid.isNotBlank() && (it.authUid == authUid || it.id == authUid)) ||
+                (cleanEmail.isNotBlank() && it.email.equals(cleanEmail, ignoreCase = true))
+        }
+        val now = System.currentTimeMillis()
+        val account = if (existingIdx >= 0) {
+            val prev = currentList[existingIdx]
+            prev.copy(
+                id = if (authUid.isNotBlank()) authUid else prev.id,
+                authUid = authUid.ifBlank { prev.authUid },
+                fullName = cleanName.ifBlank { prev.fullName },
+                email = cleanEmail.ifBlank { prev.email },
+                photoUrl = photoUrl.ifBlank { prev.photoUrl },
+                organization = organization.ifBlank { prev.organization },
+                designation = designation.ifBlank { prev.designation },
+                mobileNumber = mobileNumber.ifBlank { prev.mobileNumber },
+                enrolledProgram = enrolledProgram.ifBlank { prev.enrolledProgram },
+                studentId = prev.studentId.ifBlank { generateUniqueStudentId(currentList) },
+                updatedAtMs = now
+            ).also { currentList[existingIdx] = it }
+        } else {
+            val newId = authUid.ifBlank { "stu-${UUID.randomUUID().toString().take(8)}" }
+            UserProfile(
+                id = newId,
+                fullName = cleanName,
+                email = cleanEmail,
+                role = UserRole.STUDENT,
+                organization = organization.ifBlank { "ISCEB Enrolled Professional" },
+                designation = designation.ifBlank { "PGD Candidate" },
+                mobileNumber = mobileNumber.trim(),
+                studentId = generateUniqueStudentId(currentList),
+                photoUrl = photoUrl,
+                enrolledProgram = enrolledProgram.ifBlank { "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)" },
+                accountStatus = AccountStatus.ACTIVE,
+                isVerified = authUid.isNotBlank(),
+                assignedModuleIds = emptySet(),
+                authUid = authUid,
+                createdAtMs = now,
+                updatedAtMs = now
+            ).also { currentList.add(it) }
+        }
+
+        _registeredAccounts.value = currentList
+        persistUserAccounts(currentList)
+        adminAuthManager.clearSession()
+        setAdminLoggedIn(false)
+        _currentUser.value = account
+        _hasSignedInAccount.value = true
+        prefs.edit().putString("active_account_id", account.id).apply()
+        loadStudentProgress(account.id)
+        return account
+    }
+
+    fun updateStudentOwnProfile(
+        fullName: String,
+        organization: String,
+        designation: String,
+        mobileNumber: String,
+        enrolledProgram: String,
+        photoUrl: String? = null
+    ): UserProfile? {
+        val current = _currentUser.value
+        if (current.id == guestProfile.id || current.role == UserRole.ADMIN) return null
+        val updated = current.copy(
+            fullName = fullName.trim().ifBlank { current.fullName },
+            organization = organization.trim().ifBlank { current.organization },
+            designation = designation.trim(),
+            mobileNumber = mobileNumber.trim(),
+            enrolledProgram = enrolledProgram.trim().ifBlank { current.enrolledProgram },
+            photoUrl = photoUrl ?: current.photoUrl,
+            updatedAtMs = System.currentTimeMillis()
+        )
+        val updatedList = _registeredAccounts.value.map { if (it.id == current.id) updated else it }
+        _registeredAccounts.value = updatedList
+        persistUserAccounts(updatedList)
+        _currentUser.value = updated
+        return updated
+    }
+
+    fun createOrUpdateTeacherAccount(
+        fullName: String,
+        email: String,
+        designation: String,
+        organization: String,
+        assignedModuleIds: Set<String>,
+        authUid: String = ""
+    ): UserProfile {
+        val cleanEmail = email.trim()
+        val currentList = _registeredAccounts.value.toMutableList()
+        val idx = currentList.indexOfFirst {
+            (authUid.isNotBlank() && (it.authUid == authUid || it.id == authUid)) ||
+                (cleanEmail.isNotBlank() && it.email.equals(cleanEmail, ignoreCase = true))
+        }
+        val now = System.currentTimeMillis()
+        val teacher = if (idx >= 0) {
+            val prev = currentList[idx]
+            prev.copy(
+                fullName = fullName.trim().ifBlank { prev.fullName },
+                email = cleanEmail.ifBlank { prev.email },
+                role = UserRole.TEACHER,
+                designation = designation.trim().ifBlank { "Faculty Instructor" },
+                organization = organization.trim().ifBlank { "ISCEB Faculty" },
+                accountStatus = AccountStatus.ACTIVE,
+                isVerified = true,
+                assignedModuleIds = assignedModuleIds,
+                authUid = authUid.ifBlank { prev.authUid },
+                updatedAtMs = now
+            ).also { currentList[idx] = it }
+        } else {
+            val newId = authUid.ifBlank { "tch-${UUID.randomUUID().toString().take(8)}" }
+            val count = currentList.count { it.role == UserRole.TEACHER } + 1
+            UserProfile(
+                id = newId,
+                fullName = fullName.trim(),
+                email = cleanEmail,
+                role = UserRole.TEACHER,
+                organization = organization.trim().ifBlank { "ISCEB Faculty" },
+                designation = designation.trim().ifBlank { "Faculty Instructor" },
+                studentId = "ISCEB-FAC-${String.format(Locale.US, "%04d", count)}",
+                enrolledProgram = "ISCEB PGD Faculty",
+                accountStatus = AccountStatus.ACTIVE,
+                isVerified = true,
+                assignedModuleIds = assignedModuleIds,
+                authUid = authUid,
+                createdAtMs = now,
+                updatedAtMs = now
+            ).also { currentList.add(it) }
+        }
+        _registeredAccounts.value = currentList
+        persistUserAccounts(currentList)
+        return teacher
+    }
+
+    fun adminUpdateUserAccess(
+        userId: String,
+        role: UserRole,
+        accountStatus: AccountStatus,
+        isVerified: Boolean,
+        assignedModuleIds: Set<String>
+    ): UserProfile? {
+        if (role == UserRole.ADMIN) return null // Cannot promote arbitrary users to hardcoded dual-admin lock here
+        var updatedUser: UserProfile? = null
+        val updatedList = _registeredAccounts.value.map { acc ->
+            if (acc.id == userId) {
+                acc.copy(
+                    role = role,
+                    accountStatus = accountStatus,
+                    isVerified = isVerified,
+                    assignedModuleIds = if (role == UserRole.TEACHER) assignedModuleIds else emptySet(),
+                    updatedAtMs = System.currentTimeMillis()
+                ).also { updatedUser = it }
+            } else acc
+        }
+        if (updatedUser == null) return null
+        _registeredAccounts.value = updatedList
+        persistUserAccounts(updatedList)
+        if (_currentUser.value.id == userId) {
+            if (accountStatus == AccountStatus.SUSPENDED) {
+                signOutAccount()
+            } else {
+                _currentUser.value = updatedUser!!
+            }
+        }
+        return updatedUser
+    }
+
+    fun activateTeacherSession(userId: String): Boolean {
+        val teacher = _registeredAccounts.value.find {
+            it.id == userId && it.role == UserRole.TEACHER && it.accountStatus == AccountStatus.ACTIVE
+        } ?: return false
+        adminAuthManager.clearSession()
+        setAdminLoggedIn(false)
+        _currentUser.value = teacher
+        _hasSignedInAccount.value = true
+        prefs.edit().putString("active_account_id", teacher.id).apply()
+        loadStudentProgress(teacher.id)
+        return true
+    }
+
+    fun signOutAccount() {
+        adminAuthManager.clearSession()
+        setAdminLoggedIn(false)
+        _currentUser.value = guestProfile
+        _hasSignedInAccount.value = false
+        prefs.edit().remove("active_account_id").remove("current_user_id").apply()
+        loadStudentProgress(guestProfile.id)
+    }
+
     fun switchUser(userId: String): Boolean {
-        val user = availableUsers.find { it.id == userId && it.role == UserRole.STUDENT } ?: return false
+        if (availableUsers.any { it.id == userId && it.role == UserRole.ADMIN }) return false
+        val user = _registeredAccounts.value.find {
+            it.id == userId && it.role != UserRole.ADMIN && it.accountStatus != AccountStatus.SUSPENDED
+        } ?: return false
         adminAuthManager.clearSession()
         _currentUser.value = user
-        prefs.edit().putString("current_user_id", user.id).apply()
+        _hasSignedInAccount.value = true
+        prefs.edit().putString("active_account_id", user.id).apply()
         setAdminLoggedIn(false)
         loadStudentProgress(user.id)
         return true
     }
+
+    @VisibleForTesting
+    fun switchAccountForTesting(userId: String): Boolean = switchUser(userId)
 
     fun activateVerifiedAdminSession(adminId: String): UserProfile? {
         val validatedId = adminAuthManager.getValidatedSessionAdminId() ?: return null
         if (validatedId != adminId) return null
         val adminUser = availableUsers.find { it.id == adminId && it.role == UserRole.ADMIN } ?: return null
         _currentUser.value = adminUser
-        prefs.edit().putString("current_user_id", adminUser.id).apply()
+        _hasSignedInAccount.value = true
+        prefs.edit().putString("active_account_id", adminUser.id).apply()
         setAdminLoggedIn(true)
         loadStudentProgress(adminUser.id)
         return adminUser
@@ -421,11 +776,39 @@ class SupplyChainRepository(
 
     fun deactivateAdminSession() {
         adminAuthManager.clearSession()
-        val defaultStudent = availableUsers.first { it.role == UserRole.STUDENT }
-        _currentUser.value = defaultStudent
-        prefs.edit().putString("current_user_id", defaultStudent.id).apply()
         setAdminLoggedIn(false)
-        loadStudentProgress(defaultStudent.id)
+        val prevStudent = _registeredAccounts.value.firstOrNull {
+            it.role == UserRole.STUDENT && it.accountStatus == AccountStatus.ACTIVE
+        }
+        if (prevStudent != null) {
+            _currentUser.value = prevStudent
+            _hasSignedInAccount.value = true
+            prefs.edit().putString("active_account_id", prevStudent.id).apply()
+            loadStudentProgress(prevStudent.id)
+        } else {
+            _currentUser.value = guestProfile
+            _hasSignedInAccount.value = false
+            prefs.edit().remove("active_account_id").remove("current_user_id").apply()
+            loadStudentProgress(guestProfile.id)
+        }
+    }
+
+    private fun readProgressMapForStudent(studentId: String): Map<String, StudentClassProgress> {
+        if (studentId == _currentUser.value.id && _studentProgressMap.value.isNotEmpty()) {
+            return _studentProgressMap.value
+        }
+        val json = prefs.getString("student_progress_$studentId", null) ?: return emptyMap()
+        return try {
+            val map = mutableMapOf<String, StudentClassProgress>()
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val prog = deserializeStudentProgress(arr.getJSONObject(i))
+                map[prog.classId] = prog
+            }
+            map
+        } catch (_: Exception) {
+            emptyMap()
+        }
     }
 
     private fun loadStudentProgress(studentId: String) {
@@ -463,18 +846,33 @@ class SupplyChainRepository(
             )
         }
 
+        val lastActiveClass = progressMap.values
+            .filter { it.status != ClassStatus.NOT_STARTED }
+            .maxByOrNull { it.lastActiveTimeMs }
+            ?.classId
+            ?.let { cid -> updatedClasses.find { it.id == cid } }
+            ?: updatedClasses.firstOrNull { !it.isCompleted && it.isPublished }
+            ?: updatedClasses.firstOrNull()
+
         _classes.value = updatedClasses
         _progress.value = UserProgress(
             completedClassIds = completedIds,
             bookmarkedClassIds = savedBookmarks,
-            currentModuleId = _modules.value.firstOrNull()?.id ?: "mod-1",
-            currentClassId = updatedClasses.firstOrNull()?.id ?: "class-1",
+            currentModuleId = lastActiveClass?.moduleId ?: _modules.value.firstOrNull()?.id ?: "mod-1",
+            currentClassId = lastActiveClass?.id ?: updatedClasses.firstOrNull()?.id ?: "class-1",
+            studyStreakDays = 0,
             totalActiveLearningSeconds = totalActiveSec
         )
     }
 
-    // Record Active Learning Time (paused or background does not advance)
-    fun recordActiveLearningTime(classId: String, secondsToAdd: Long, playbackPercent: Float? = null) {
+    // Record Active Learning Time (paused or background does not advance; idle time excluded separately)
+    fun recordActiveLearningTime(
+        classId: String,
+        secondsToAdd: Long,
+        playbackPercent: Float? = null,
+        playbackPositionMs: Long? = null,
+        idleExcludedSecondsToAdd: Long = 0L
+    ) {
         val studentId = _currentUser.value.id
         val currentProg = _studentProgressMap.value[classId] ?: StudentClassProgress(
             classId = classId,
@@ -483,27 +881,49 @@ class SupplyChainRepository(
             startTimeMs = System.currentTimeMillis()
         )
 
-        val newActiveSec = currentProg.activeLearningSeconds + secondsToAdd
+        val safeAdd = secondsToAdd.coerceAtLeast(0L)
+        val newActiveSec = currentProg.activeLearningSeconds + safeAdd
         val newMaxPlayback = playbackPercent?.let { maxOf(currentProg.maxPlaybackPercent, it) } ?: currentProg.maxPlaybackPercent
         val newStatus = if (currentProg.status == ClassStatus.COMPLETED) ClassStatus.COMPLETED else ClassStatus.IN_PROGRESS
 
         val updatedProg = currentProg.copy(
             status = newStatus,
+            startTimeMs = if (currentProg.startTimeMs > 0L) currentProg.startTimeMs else System.currentTimeMillis(),
             lastActiveTimeMs = System.currentTimeMillis(),
             activeLearningSeconds = newActiveSec,
-            maxPlaybackPercent = newMaxPlayback
+            maxPlaybackPercent = newMaxPlayback,
+            lastPlaybackPositionMs = playbackPositionMs?.coerceAtLeast(0L) ?: currentProg.lastPlaybackPositionMs,
+            idleExcludedSeconds = currentProg.idleExcludedSeconds + idleExcludedSecondsToAdd.coerceAtLeast(0L)
         )
 
         val updatedMap = _studentProgressMap.value.toMutableMap()
         updatedMap[classId] = updatedProg
         _studentProgressMap.value = updatedMap
 
+        val totalSec = updatedMap.values.sumOf { it.activeLearningSeconds }
+        val targetCls = _classes.value.find { it.id == classId }
+        _progress.value = _progress.value.copy(
+            totalActiveLearningSeconds = totalSec,
+            currentClassId = classId,
+            currentModuleId = targetCls?.moduleId ?: _progress.value.currentModuleId
+        )
+        _classes.value = _classes.value.map { cls ->
+            if (cls.id == classId) cls.copy(status = updatedProg.status, activeLearningSeconds = updatedProg.activeLearningSeconds) else cls
+        }
+
         persistStudentProgress(studentId, updatedMap.values.toList())
         evaluateAndRecordClassCompletion(classId)
     }
 
-    // Record PDF reading confirmation
-    fun recordPdfReading(classId: String, secondsReading: Long, explicitConfirm: Boolean = false) {
+    // Record multi-page PDF reading telemetry & explicit completion acknowledgement
+    fun recordPdfPageStudy(
+        classId: String,
+        currentPage: Int,
+        totalPages: Int,
+        secondsReading: Long,
+        explicitConfirm: Boolean = false,
+        idleExcludedSecondsToAdd: Long = 0L
+    ) {
         val studentId = _currentUser.value.id
         val currentProg = _studentProgressMap.value[classId] ?: StudentClassProgress(
             classId = classId,
@@ -511,20 +931,48 @@ class SupplyChainRepository(
             status = ClassStatus.IN_PROGRESS,
             startTimeMs = System.currentTimeMillis()
         )
-
+        val mergedPages = if (currentPage > 0) currentProg.visitedPdfPages + currentPage else currentProg.visitedPdfPages
+        val newStatus = if (currentProg.status == ClassStatus.COMPLETED) ClassStatus.COMPLETED else ClassStatus.IN_PROGRESS
         val updatedProg = currentProg.copy(
-            pdfReadingSeconds = currentProg.pdfReadingSeconds + secondsReading,
-            activeLearningSeconds = currentProg.activeLearningSeconds + secondsReading,
+            status = newStatus,
+            startTimeMs = if (currentProg.startTimeMs > 0L) currentProg.startTimeMs else System.currentTimeMillis(),
+            lastActiveTimeMs = System.currentTimeMillis(),
+            pdfReadingSeconds = currentProg.pdfReadingSeconds + secondsReading.coerceAtLeast(0L),
+            activeLearningSeconds = currentProg.activeLearningSeconds + secondsReading.coerceAtLeast(0L),
             isPdfConfirmed = explicitConfirm || currentProg.isPdfConfirmed,
-            lastActiveTimeMs = System.currentTimeMillis()
+            lastPdfPage = if (currentPage > 0) currentPage else currentProg.lastPdfPage,
+            totalPdfPages = if (totalPages > 0) totalPages else currentProg.totalPdfPages,
+            visitedPdfPages = mergedPages,
+            idleExcludedSeconds = currentProg.idleExcludedSeconds + idleExcludedSecondsToAdd.coerceAtLeast(0L)
         )
 
         val updatedMap = _studentProgressMap.value.toMutableMap()
         updatedMap[classId] = updatedProg
         _studentProgressMap.value = updatedMap
 
+        _progress.value = _progress.value.copy(
+            totalActiveLearningSeconds = updatedMap.values.sumOf { it.activeLearningSeconds },
+            currentClassId = classId,
+            currentModuleId = _classes.value.find { it.id == classId }?.moduleId ?: _progress.value.currentModuleId
+        )
+        _classes.value = _classes.value.map { cls ->
+            if (cls.id == classId) cls.copy(status = updatedProg.status, activeLearningSeconds = updatedProg.activeLearningSeconds) else cls
+        }
+
         persistStudentProgress(studentId, updatedMap.values.toList())
         evaluateAndRecordClassCompletion(classId)
+    }
+
+    // Record PDF reading confirmation (backward-compatible helper)
+    fun recordPdfReading(classId: String, secondsReading: Long, explicitConfirm: Boolean = false) {
+        val currentProg = _studentProgressMap.value[classId]
+        recordPdfPageStudy(
+            classId = classId,
+            currentPage = currentProg?.lastPdfPage ?: 1,
+            totalPages = currentProg?.totalPdfPages ?: 1,
+            secondsReading = secondsReading,
+            explicitConfirm = explicitConfirm
+        )
     }
 
     // Submit Quiz for a Class
@@ -542,13 +990,17 @@ class SupplyChainRepository(
 
         val updatedProg = currentProg.copy(
             quizScore = scorePercent,
-            quizPassed = passed,
+            quizPassed = passed || currentProg.quizPassed,
             lastActiveTimeMs = System.currentTimeMillis()
         )
 
         val updatedMap = _studentProgressMap.value.toMutableMap()
         updatedMap[classId] = updatedProg
         _studentProgressMap.value = updatedMap
+
+        _classes.value = _classes.value.map { cls ->
+            if (cls.id == classId) cls.copy(quizPassed = updatedProg.quizPassed) else cls
+        }
 
         persistStudentProgress(studentId, updatedMap.values.toList())
         evaluateAndRecordClassCompletion(classId)
@@ -564,14 +1016,20 @@ class SupplyChainRepository(
 
         if (prog.status == ClassStatus.COMPLETED) return true
 
-        val timeMet = prog.activeLearningSeconds >= settings.minLearningTimeSeconds
+        val requiredTimeSec = targetClass.minStudySecondsOverride ?: settings.minLearningTimeSeconds
+        val timeMet = prog.activeLearningSeconds >= requiredTimeSec
         val hasPdfOrDoc = targetClass.pdfMedia != null || targetClass.attachments.any {
             it.type == MediaType.PDF || it.type == MediaType.DOCUMENT
+        }
+        val allPagesVisited = if (settings.requirePdfAllPagesVisited && targetClass.pdfMedia != null && prog.totalPdfPages > 0) {
+            (1..prog.totalPdfPages).all { prog.visitedPdfPages.contains(it) }
+        } else {
+            true
         }
         val playbackMet = when {
             targetClass.videoMedia != null -> prog.maxPlaybackPercent >= settings.minPlaybackPercent
             targetClass.audioMedia != null -> prog.maxPlaybackPercent >= settings.minPlaybackPercent
-            hasPdfOrDoc -> prog.isPdfConfirmed || (prog.pdfReadingSeconds >= settings.minPdfReadingSeconds)
+            hasPdfOrDoc -> (prog.isPdfConfirmed || prog.pdfReadingSeconds >= settings.minPdfReadingSeconds) && allPagesVisited
             else -> true
         }
 
@@ -598,6 +1056,7 @@ class SupplyChainRepository(
             }
             _classes.value = updatedClasses
 
+            autoIssueCertificateIfEligible(studentId)
             return true
         }
         return false
@@ -654,6 +1113,49 @@ class SupplyChainRepository(
 
     // ================= EXAM ASSESSMENT SYSTEM =================
 
+    fun getStudentExamAttemptsCount(examId: String, studentId: String = _currentUser.value.id): Int {
+        return _examAttempts.value.count { it.examId == examId && it.studentId == studentId }
+    }
+
+    fun canStudentStartExam(
+        examId: String,
+        studentId: String = _currentUser.value.id,
+        nowMs: Long = System.currentTimeMillis()
+    ): Pair<Boolean, String?> {
+        val exam = _moduleExams.value.find { it.id == examId } ?: return false to "Exam not found."
+        val openFrom = exam.openFromMs
+        if (openFrom != null && nowMs < openFrom) {
+            val df = SimpleDateFormat("MMM dd, yyyy h:mm a", Locale.US)
+            return false to "This examination opens on ${df.format(Date(openFrom))}."
+        }
+        val openUntil = exam.openUntilMs
+        if (openUntil != null && nowMs > openUntil) {
+            val df = SimpleDateFormat("MMM dd, yyyy h:mm a", Locale.US)
+            return false to "The submission window for this examination closed on ${df.format(Date(openUntil))}."
+        }
+        val attemptsUsed = getStudentExamAttemptsCount(examId, studentId)
+        if (attemptsUsed >= exam.maxAttempts) {
+            return false to "Maximum allowed attempts ($attemptsUsed/${exam.maxAttempts}) have been used."
+        }
+        return true to null
+    }
+
+    fun createOrUpdateExam(exam: ModuleExam): ModuleExam {
+        val existingIdx = _moduleExams.value.indexOfFirst { it.id == exam.id }
+        val normalized = if (exam.totalMarks <= 0 && exam.questions.isNotEmpty()) {
+            exam.copy(totalMarks = exam.questions.sumOf { it.marks })
+        } else exam
+        val updated = _moduleExams.value.toMutableList()
+        if (existingIdx >= 0) {
+            updated[existingIdx] = normalized
+        } else {
+            updated.add(normalized)
+        }
+        _moduleExams.value = updated
+        persistExams(updated)
+        return normalized
+    }
+
     fun submitExamAttempt(
         examId: String,
         studentAnswers: Map<String, Int>,
@@ -670,7 +1172,8 @@ class SupplyChainRepository(
             }
         }
 
-        val percentage = if (exam.totalMarks > 0) (earnedMarks * 100) / exam.totalMarks else 0
+        val effectiveTotal = if (exam.totalMarks > 0) exam.totalMarks else exam.questions.sumOf { it.marks }.coerceAtLeast(1)
+        val percentage = ((earnedMarks * 100) / effectiveTotal).coerceIn(0, 100)
         val isPassed = percentage >= exam.passingPercentage
 
         val attempt = ExamAttempt(
@@ -679,17 +1182,21 @@ class SupplyChainRepository(
             studentId = studentId,
             studentAnswers = studentAnswers,
             scoreMarks = earnedMarks,
-            totalMarks = exam.totalMarks,
+            totalMarks = effectiveTotal,
             percentage = percentage,
             isPassed = isPassed,
-            startTimeMs = System.currentTimeMillis() - 15 * 60 * 1000L,
+            startTimeMs = System.currentTimeMillis() - (exam.durationMinutes.coerceAtLeast(1) * 60_000L / 2),
             submittedTimeMs = System.currentTimeMillis(),
-            isAutoSubmittedOnTimeout = isAutoSubmittedOnTimeout
+            isAutoSubmittedOnTimeout = isAutoSubmittedOnTimeout,
+            moduleId = exam.moduleId
         )
 
         val updatedList = _examAttempts.value + attempt
         _examAttempts.value = updatedList
         persistExamAttempts(updatedList)
+        if (isPassed) {
+            autoIssueCertificateIfEligible(studentId)
+        }
         return attempt
     }
 
@@ -701,54 +1208,89 @@ class SupplyChainRepository(
 
     // ================= ASSIGNMENT & PROJECT SYSTEM =================
 
+    fun createOrUpdateAssignment(assignment: ModuleAssignment): ModuleAssignment {
+        val updated = _moduleAssignments.value.toMutableList()
+        val idx = updated.indexOfFirst { it.id == assignment.id }
+        if (idx >= 0) {
+            updated[idx] = assignment
+        } else {
+            updated.add(assignment)
+        }
+        _moduleAssignments.value = updated
+        persistAssignments(updated)
+        return assignment
+    }
+
     fun submitAssignment(
         assignmentId: String,
         submissionText: String,
         attachedFileName: String? = null
     ): AssignmentSubmission {
         val student = _currentUser.value
+        val existing = _assignmentSubmissions.value.find { it.assignmentId == assignmentId && it.studentId == student.id }
+        if (existing != null && existing.isGraded) {
+            return existing
+        }
+        val targetAsg = _moduleAssignments.value.find { it.id == assignmentId }
+        val safeSubId = existing?.submissionId ?: "sub_${assignmentId}_${student.id}".replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val submission = AssignmentSubmission(
-            submissionId = "sub-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(4)}",
+            submissionId = safeSubId,
             assignmentId = assignmentId,
             studentId = student.id,
             studentName = student.fullName,
             submissionText = submissionText,
             attachedFileName = attachedFileName,
-            submissionTimestamp = System.currentTimeMillis()
+            submissionTimestamp = System.currentTimeMillis(),
+            moduleId = targetAsg?.moduleId ?: existing?.moduleId ?: "",
+            status = SubmissionStatus.SUBMITTED
         )
 
         val updatedList = _assignmentSubmissions.value.filterNot { it.assignmentId == assignmentId && it.studentId == student.id } + submission
         _assignmentSubmissions.value = updatedList
         persistAssignmentSubmissions(updatedList)
+        autoIssueCertificateIfEligible(student.id)
         return submission
     }
 
-    fun gradeAssignment(submissionId: String, marksAwarded: Int, feedback: String) {
+    fun gradeAssignment(
+        submissionId: String,
+        marksAwarded: Int,
+        feedback: String,
+        graderUid: String = _currentUser.value.id,
+        graderName: String = _currentUser.value.fullName
+    ) {
+        var gradedStudentId: String? = null
         val updatedList = _assignmentSubmissions.value.map { sub ->
             if (sub.submissionId == submissionId) {
+                gradedStudentId = sub.studentId
                 sub.copy(
                     marksAwarded = marksAwarded,
                     feedback = feedback,
-                    isGraded = true
+                    isGraded = true,
+                    status = SubmissionStatus.GRADED,
+                    gradedByUid = graderUid,
+                    gradedByName = graderName.ifBlank { "ISCEB Faculty" },
+                    gradedTimestamp = System.currentTimeMillis()
                 )
             } else sub
         }
         _assignmentSubmissions.value = updatedList
         persistAssignmentSubmissions(updatedList)
+        gradedStudentId?.let { autoIssueCertificateIfEligible(it) }
     }
 
     fun getStudentAssignmentSubmission(assignmentId: String, studentId: String = _currentUser.value.id): AssignmentSubmission? {
         return _assignmentSubmissions.value.find { it.assignmentId == assignmentId && it.studentId == studentId }
     }
 
-    // ================= CERTIFICATE & ELIGIBILITY =================
+    // ================= CERTIFICATE & 5-STATE ELIGIBILITY ENGINE =================
 
     fun evaluateCertificateEligibility(studentId: String = _currentUser.value.id): CertificateEligibility {
         val settings = _adminSettings.value
         val reqModules = settings.requiredModuleIds
         val requiredClasses = _classes.value.filter { reqModules.contains(it.moduleId) }
 
-        val studentProgress = _studentProgressMap.value
+        val studentProgress = readProgressMapForStudent(studentId)
         val completedClasses = requiredClasses.filter {
             studentProgress[it.id]?.status == ClassStatus.COMPLETED
         }
@@ -762,23 +1304,64 @@ class SupplyChainRepository(
             if (settings.isQuizRequired) prog?.quizPassed == true else true
         }
 
-        // Syllabus assessment rules check:
-        // Mandatory exams: Mod 1 (20m), Mod 2 (25m), Mod 3 (30m), Mod 6 (25m), and Final Exam (100m)
-        val mod1Passed = getStudentBestExamAttempt("exam-mod-1", studentId)?.isPassed ?: false
-        val mod2Passed = getStudentBestExamAttempt("exam-mod-2", studentId)?.isPassed ?: false
-        val mod3Passed = getStudentBestExamAttempt("exam-mod-3", studentId)?.isPassed ?: false
-        val mod6Passed = getStudentBestExamAttempt("exam-mod-6", studentId)?.isPassed ?: false
-        val finalExamPassed = getStudentBestExamAttempt("exam-final", studentId)?.isPassed ?: false
+        val reqExamIds = settings.requiredExamIds.ifEmpty {
+            setOf("exam-mod-1", "exam-mod-2", "exam-mod-3", "exam-mod-6", "exam-final")
+        }
+        val missingExams = reqExamIds.filter { examId ->
+            getStudentBestExamAttempt(examId, studentId)?.isPassed != true
+        }
+        val mandatoryExamsPassed = missingExams.isEmpty()
 
-        val mandatoryExamsPassed = mod1Passed && mod2Passed && mod3Passed && mod6Passed && finalExamPassed
+        val reqAssignmentIds = settings.requiredAssignmentIds.ifEmpty {
+            _moduleAssignments.value.filter { it.isFinalProject || it.isRequiredForCertification }.map { it.id }.toSet()
+        }
+        val missingAssignments = reqAssignmentIds.filter { asgId ->
+            val sub = getStudentAssignmentSubmission(asgId, studentId)
+            val needsGrade = settings.requireGradedFinalProject &&
+                (_moduleAssignments.value.find { it.id == asgId }?.isFinalProject == true)
+            sub == null || (needsGrade && !sub.isGraded)
+        }
+        val finalProjectSubmitted = missingAssignments.isEmpty()
 
-        // Final Project submission check:
-        val finalProject = _moduleAssignments.value.find { it.isFinalProject }
-        val finalProjectSub = finalProject?.let { getStudentAssignmentSubmission(it.id, studentId) }
-        val finalProjectSubmitted = finalProjectSub != null
+        val existing = _issuedCertificates.value.find {
+            it.studentId == studentId && it.status == CertificateStatus.VALID
+        }
+        val anyExisting = existing ?: _issuedCertificates.value.find { it.studentId == studentId }
 
-        val isEligible = completedClasses.size == requiredClasses.size && allQuizzesPassed && mandatoryExamsPassed && finalProjectSubmitted
-        val existing = _issuedCertificates.value.find { it.studentId == studentId && it.status == CertificateStatus.VALID }
+        val learningComplete = requiredClasses.isNotEmpty() &&
+            completedClasses.size == requiredClasses.size &&
+            allQuizzesPassed
+        val isEligible = studentId != guestProfile.id &&
+            learningComplete &&
+            mandatoryExamsPassed &&
+            finalProjectSubmitted
+
+        val remaining = buildList {
+            if (missing.isNotEmpty()) {
+                add("${missing.size} required lesson(s) remaining")
+            }
+            if (!allQuizzesPassed && settings.isQuizRequired) {
+                add("Pass remaining lesson quick quizzes (${settings.quizPassingScore}%+)")
+            }
+            if (missingExams.isNotEmpty()) {
+                val titles = missingExams.mapNotNull { id -> _moduleExams.value.find { it.id == id }?.title }
+                add("Pass mandatory exam(s): ${titles.joinToString(", ").ifBlank { missingExams.joinToString(", ") }}")
+            }
+            if (missingAssignments.isNotEmpty()) {
+                val titles = missingAssignments.mapNotNull { id -> _moduleAssignments.value.find { it.id == id }?.title }
+                val verb = if (settings.requireGradedFinalProject) "Submit & await faculty grading for" else "Submit required project"
+                add("$verb: ${titles.joinToString(", ").ifBlank { missingAssignments.joinToString(", ") }}")
+            }
+        }
+
+        val status = when {
+            existing != null -> CertificationEligibilityStatus.CERTIFICATE_ISSUED
+            isEligible -> CertificationEligibilityStatus.ELIGIBLE_FOR_CERTIFICATION
+            completedClasses.isEmpty() && missingExams.size == reqExamIds.size && finalProjectSubmitted.not() ->
+                CertificationEligibilityStatus.NOT_YET_ELIGIBLE
+            !learningComplete -> CertificationEligibilityStatus.LEARNING_REQUIREMENTS_INCOMPLETE
+            else -> CertificationEligibilityStatus.ASSESSMENTS_PENDING
+        }
 
         return CertificateEligibility(
             isEligible = isEligible,
@@ -788,23 +1371,107 @@ class SupplyChainRepository(
             allQuizzesPassed = allQuizzesPassed,
             mandatoryExamsPassed = mandatoryExamsPassed,
             finalProjectSubmitted = finalProjectSubmitted,
-            existingCertificate = existing
+            existingCertificate = anyExisting,
+            status = status,
+            remainingRequirements = remaining
         )
     }
 
-    fun generateCertificateForStudent(studentId: String = _currentUser.value.id): CertificateRecord? {
+    fun autoIssueCertificateIfEligible(studentId: String = _currentUser.value.id): CertificateRecord? {
+        if (studentId == guestProfile.id || DEMO_ACCOUNT_IDS.contains(studentId)) return null
+        val anyExisting = _issuedCertificates.value.find { it.studentId == studentId }
+        if (anyExisting != null) return anyExisting // Strict single issuance (also respects revoked lock)
         val eligibility = evaluateCertificateEligibility(studentId)
-        if (!eligibility.isEligible && eligibility.existingCertificate == null) {
-            return null
-        }
-        if (eligibility.existingCertificate != null) {
-            return eligibility.existingCertificate
-        }
+        if (!eligibility.isEligible) return null
+        return generateCertificateForStudent(studentId)
+    }
 
-        val student = availableUsers.find { it.id == studentId } ?: _currentUser.value
+    fun createDemoCertificateRecord(): CertificateRecord {
         val settings = _adminSettings.value
+        val active = _currentUser.value
+        val dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
+        val certId = CertificatePdfGenerator.DEMO_CERTIFICATE_ID
+        val studentLabel = active.fullName.takeIf { it.isNotBlank() && active.id != guestProfile.id }
+            ?: "Demo Executive Candidate"
+        val rightSignerCombined = "${CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_NAME}, ${CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_TITLE}"
+        val record = CertificateRecord(
+            certificateId = certId,
+            studentId = active.id,
+            studentName = studentLabel,
+            courseTitle = settings.certificateTitle,
+            issueDate = dateFormat.format(Date()),
+            issueTimestamp = System.currentTimeMillis(),
+            institutionName = settings.institutionName,
+            officialWebsite = settings.officialWebsite,
+            authorizedSigner = rightSignerCombined,
+            status = CertificateStatus.VALID,
+            completedClassesCount = 48,
+            totalRequiredClasses = 48,
+            studentCode = active.studentId.ifBlank { "ISCEB-DEMO-001" },
+            verificationUrl = "https://www.isceb.org/verify/$certId"
+        )
+        val file = CertificatePdfGenerator.generateCertificatePdf(context, record)
+        return record.copy(filePath = file.absolutePath)
+    }
+
+    fun generateCertificateForStudent(studentId: String = _currentUser.value.id): CertificateRecord? {
+        if (studentId == guestProfile.id) return null
+        val settings = _adminSettings.value
+        if (!settings.certificatesEnabled) return null
+        val eligibility = evaluateCertificateEligibility(studentId)
+        val alreadyValid = _issuedCertificates.value.find { it.studentId == studentId && it.status == CertificateStatus.VALID }
+        if (alreadyValid != null) return alreadyValid
+        if (!eligibility.isEligible) return null
+
+        val student = _registeredAccounts.value.find { it.id == studentId }
+            ?: availableUsers.find { it.id == studentId }
+            ?: _currentUser.value.takeIf { it.id == studentId }
+            ?: return null
         val certId = "ISCEB-SCM-${SimpleDateFormat("yyyyMM", Locale.US).format(Date())}-${UUID.randomUUID().toString().take(6).uppercase()}"
 
+        val dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
+        val cleanRightName = settings.authorizedSignerName
+            .takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) }
+            ?.substringBefore(",")
+            ?.trim()
+            ?: CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_NAME
+        val cleanRightTitle = settings.authorizedSignerTitle
+            .takeIf { it.isNotBlank() && !it.contains("Developer", ignoreCase = true) }
+            ?: CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_TITLE
+        val record = CertificateRecord(
+            certificateId = certId,
+            studentId = student.id,
+            studentName = student.fullName,
+            courseTitle = settings.certificateTitle,
+            issueDate = dateFormat.format(Date()),
+            issueTimestamp = System.currentTimeMillis(),
+            institutionName = settings.institutionName,
+            officialWebsite = settings.officialWebsite,
+            authorizedSigner = "$cleanRightName, $cleanRightTitle",
+            status = CertificateStatus.VALID,
+            completedClassesCount = eligibility.completedRequiredCount,
+            totalRequiredClasses = eligibility.totalRequiredCount,
+            studentCode = student.studentId,
+            verificationUrl = "https://www.isceb.org/verify/$certId"
+        )
+
+        val file = CertificatePdfGenerator.generateCertificatePdf(context, record)
+        val recordWithFile = record.copy(filePath = file.absolutePath)
+
+        val updatedList = _issuedCertificates.value.filterNot { it.studentId == studentId && it.status == CertificateStatus.VALID } + recordWithFile
+        _issuedCertificates.value = updatedList
+        persistCertificates(updatedList)
+
+        return recordWithFile
+    }
+
+    fun reissueCertificateForStudent(studentId: String, reason: String = "Administrative Re-issuance"): CertificateRecord? {
+        val student = _registeredAccounts.value.find { it.id == studentId }
+            ?: availableUsers.find { it.id == studentId }
+            ?: return null
+        val eligibility = evaluateCertificateEligibility(studentId)
+        val settings = _adminSettings.value
+        val certId = "ISCEB-SCM-${SimpleDateFormat("yyyyMM", Locale.US).format(Date())}-${UUID.randomUUID().toString().take(6).uppercase()}"
         val dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
         val record = CertificateRecord(
             certificateId = certId,
@@ -818,17 +1485,20 @@ class SupplyChainRepository(
             authorizedSigner = "${settings.authorizedSignerName}, ${settings.authorizedSignerTitle}",
             status = CertificateStatus.VALID,
             completedClassesCount = eligibility.completedRequiredCount,
-            totalRequiredClasses = eligibility.totalRequiredCount
+            totalRequiredClasses = eligibility.totalRequiredCount.coerceAtLeast(1),
+            studentCode = student.studentId,
+            verificationUrl = "https://www.isceb.org/verify/$certId"
         )
-
         val file = CertificatePdfGenerator.generateCertificatePdf(context, record)
-        val recordWithFile = record.copy(filePath = file.absolutePath)
-
-        val updatedList = _issuedCertificates.value + recordWithFile
-        _issuedCertificates.value = updatedList
-        persistCertificates(updatedList)
-
-        return recordWithFile
+        val withFile = record.copy(filePath = file.absolutePath)
+        val cleaned = _issuedCertificates.value.map { existing ->
+            if (existing.studentId == studentId && existing.status == CertificateStatus.VALID) {
+                existing.copy(status = CertificateStatus.REVOKED, revocationReason = "Superseded: $reason", revocationTimestamp = System.currentTimeMillis())
+            } else existing
+        } + withFile
+        _issuedCertificates.value = cleaned
+        persistCertificates(cleaned)
+        return withFile
     }
 
     fun verifyCertificateById(certId: String): CertificateRecord? {
@@ -862,6 +1532,134 @@ class SupplyChainRepository(
         _issuedCertificates.value = updatedList
         persistCertificates(updatedList)
         return true
+    }
+
+    // ================= AUDIT LOGGING & CLOUD STATE MERGERS =================
+
+    fun recordAuditLog(
+        actionType: String,
+        targetId: String,
+        summary: String,
+        actor: UserProfile = _currentUser.value
+    ): AuditLogEntry {
+        val roleForLog = if (actor.role == UserRole.TEACHER) UserRole.TEACHER else UserRole.ADMIN
+        val entry = AuditLogEntry(
+            logId = "log-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(4)}",
+            actorUid = actor.authUid.ifBlank { actor.id },
+            actorName = actor.fullName.ifBlank { "ISCEB Staff" },
+            actorRole = roleForLog,
+            actionType = actionType,
+            targetId = targetId,
+            summary = summary,
+            timestampMs = System.currentTimeMillis()
+        )
+        val updated = (listOf(entry) + _auditLogs.value).take(200)
+        _auditLogs.value = updated
+        persistAuditLogs(updated)
+        return entry
+    }
+
+    fun mergeCloudUserAccount(remote: UserProfile) {
+        if (DEMO_ACCOUNT_IDS.contains(remote.id) || DEMO_ACCOUNT_NAMES.contains(remote.fullName)) return
+        val updatedList = _registeredAccounts.value.filterNot {
+            it.id == remote.id || (remote.email.isNotBlank() && it.email.equals(remote.email, ignoreCase = true))
+        } + remote
+        _registeredAccounts.value = updatedList
+        persistUserAccounts(updatedList)
+        if (_currentUser.value.id == remote.id || (_currentUser.value.authUid.isNotBlank() && _currentUser.value.authUid == remote.authUid)) {
+            if (remote.role == UserRole.ADMIN && adminAuthManager.getValidatedSessionAdminId() == null) return
+            _currentUser.value = remote
+            _hasSignedInAccount.value = true
+            prefs.edit().putString("active_account_id", remote.id).apply()
+        }
+    }
+
+    fun mergeCloudAllUsers(remoteUsers: List<UserProfile>) {
+        if (remoteUsers.isEmpty()) return
+        val byId = _registeredAccounts.value.associateBy { it.id }.toMutableMap()
+        remoteUsers.forEach { remote ->
+            if (!DEMO_ACCOUNT_IDS.contains(remote.id) && !DEMO_ACCOUNT_NAMES.contains(remote.fullName)) {
+                byId[remote.id] = remote
+            }
+        }
+        val merged = byId.values.toList()
+        _registeredAccounts.value = merged
+        persistUserAccounts(merged)
+    }
+
+    fun mergeCloudAssignments(remote: List<ModuleAssignment>) {
+        if (remote.isEmpty()) return
+        val byId = _moduleAssignments.value.associateBy { it.id }.toMutableMap()
+        remote.forEach { byId[it.id] = it }
+        val merged = byId.values.toList()
+        _moduleAssignments.value = merged
+        persistAssignments(merged)
+    }
+
+    fun mergeCloudExams(remote: List<ModuleExam>) {
+        if (remote.isEmpty()) return
+        val byId = _moduleExams.value.associateBy { it.id }.toMutableMap()
+        remote.forEach { remoteExam ->
+            val existing = byId[remoteExam.id]
+            byId[remoteExam.id] = if (remoteExam.questions.isEmpty() && existing != null) {
+                remoteExam.copy(questions = existing.questions)
+            } else {
+                remoteExam
+            }
+        }
+        val merged = byId.values.toList()
+        _moduleExams.value = merged
+        persistExams(merged)
+    }
+
+    fun mergeCloudExamAttempts(remote: List<ExamAttempt>) {
+        if (remote.isEmpty()) return
+        val byId = _examAttempts.value.associateBy { it.attemptId }.toMutableMap()
+        remote.forEach { byId[it.attemptId] = it }
+        val merged = byId.values.toList()
+        _examAttempts.value = merged
+        persistExamAttempts(merged)
+    }
+
+    fun mergeCloudSubmissions(remote: List<AssignmentSubmission>) {
+        if (remote.isEmpty()) return
+        val byId = _assignmentSubmissions.value.associateBy { it.submissionId }.toMutableMap()
+        remote.forEach { r ->
+            val l = byId[r.submissionId]
+            byId[r.submissionId] = when {
+                l == null -> r
+                r.isGraded && !l.isGraded -> r
+                l.isGraded && !r.isGraded -> l
+                r.submissionTimestamp >= l.submissionTimestamp -> r
+                else -> l
+            }
+        }
+        val merged = byId.values.toList()
+        _assignmentSubmissions.value = merged
+        persistAssignmentSubmissions(merged)
+    }
+
+    fun mergeCloudCertificates(remote: List<CertificateRecord>) {
+        if (remote.isEmpty()) return
+        val byId = _issuedCertificates.value.associateBy { it.certificateId }.toMutableMap()
+        remote.forEach { r ->
+            val l = byId[r.certificateId]
+            byId[r.certificateId] = if (l != null) {
+                r.copy(filePath = l.filePath)
+            } else r
+        }
+        val merged = byId.values.toList()
+        _issuedCertificates.value = merged
+        persistCertificates(merged)
+    }
+
+    fun mergeCloudAuditLogs(remote: List<AuditLogEntry>) {
+        if (remote.isEmpty()) return
+        val byId = _auditLogs.value.associateBy { it.logId }.toMutableMap()
+        remote.forEach { byId[it.logId] = it }
+        val merged = byId.values.sortedByDescending { it.timestampMs }.take(200)
+        _auditLogs.value = merged
+        persistAuditLogs(merged)
     }
 
     // ================= ADMIN SETTINGS & MANAGEMENT =================
@@ -993,7 +1791,8 @@ class SupplyChainRepository(
             profile.designation
         }
         val safeBio = profile.biography
-            .replace("Founder & Developer of ISCEB (International Supply Chain Education Board)", "App Developer for ISCEB (International Supply Chain Education Board)")
+            .replace("International Supply Chain Education Board", "Institute of Supply Chain Excellence Bangladesh")
+            .replace("Founder & Developer of ISCEB (Institute of Supply Chain Excellence Bangladesh)", "App Developer for ISCEB (Institute of Supply Chain Excellence Bangladesh)")
             .replace("Founder & Developer of ISCEB", "Developer of ISCEB App")
         return profile.copy(
             designation = safeDesignation,
@@ -1003,6 +1802,7 @@ class SupplyChainRepository(
 
     private fun getInitialMembers(): List<IscebMember> {
         return listOf(
+            // 1. Amirul Islam
             IscebMember(
                 id = "member-founder-amirul",
                 photoUri = "",
@@ -1011,18 +1811,186 @@ class SupplyChainRepository(
                 designation = "Founder of ISCEB",
                 professionalIdentity = "Head of Supply Chain Management at BRB Group",
                 currentOrganization = "BRB Group",
-                educationalQualification = "",
-                professionalExperience = "Head of Supply Chain Management at BRB Group; Founder of ISCEB & Lead Trainer of ISCEB.",
+                educationalQualification = "MBA in Finance; M.Com in Marketing; Post Graduate Diploma in Supply Chain Management (ISCEA, USA). Additional professional certifications under TUV SUD South Asia Pvt. Ltd., Business Express, and SELTA Training Associates (risk management, internal auditing, process validation, and international logistics).",
+                professionalExperience = "Over two decades of executive leadership across Bangladesh's top conglomerates. Currently Head of Supply Chain Management at BRB Group overseeing procurement, logistics, warehousing, planning, and supplier relationship management. Previously held key leadership roles at NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. Also serves as Lead Trainer at IECB and Founder & Lead Trainer of ISCEB.",
                 skillsAndExpertise = listOf(
-                    "Supply Chain Leadership",
-                    "Strategic Procurement & Sourcing",
-                    "International Trade & Logistics",
-                    "Executive Training & Mentorship"
+                    "Strategic Sourcing & Vendor Management",
+                    "Bonded Warehouse Operations",
+                    "International Trade Compliance",
+                    "Demand Forecasting & Risk Management",
+                    "Internal Auditing & Process Validation",
+                    "Corporate Training & Mentorship"
                 ),
-                roleInIsceb = "Founder of ISCEB • Lead Trainer of ISCEB",
+                roleInIsceb = "Founder & Lead Trainer • Institute of Supply Chain Excellence Bangladesh (ISCEB)",
                 contactInformation = "Mobile: 01715-282905 • Email: amirul.islam@isceb.org",
-                biography = "Founder of ISCEB and Lead Trainer guiding supply chain management professionals while serving as Head of Supply Chain Management at BRB Group.",
+                biography = "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, where he oversees procurement, logistics, warehousing, planning, and supplier relationship management to drive efficiency, innovation, and sustainable business growth.\n\nThroughout his distinguished career, Mr. Islam has held key leadership positions in reputed organizations such as NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. His deep understanding of both local and international supply chain ecosystems has enabled him to deliver excellence in strategic sourcing, vendor management, bonded warehouse operations, international trade compliance, demand forecasting, and risk management.\n\nBeyond his corporate accomplishments, he serves as Lead Trainer at Industrial Engineering and Consultant Bangladesh (IECB) and Founder of ISCEB, inspiring the next generation of leaders with the vision: \"Connect. Learn. Achieve.\"",
                 displayOrder = 1
+            ),
+            // 2. Hasina Khan
+            IscebMember(
+                id = "member-hasina-khan",
+                photoUri = "",
+                builtInPhotoKey = "hasina",
+                fullName = "Hasina Akter Khan",
+                designation = "Chairman & CEO",
+                professionalIdentity = "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                currentOrganization = "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                educationalQualification = "M.Sc. in Clothing and Textile — University of Dhaka",
+                professionalExperience = "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
+                skillsAndExpertise = listOf(
+                    "Academic Leadership",
+                    "Curriculum & Course Coordination",
+                    "Professional Capacity Building",
+                    "Industrial Education & Training",
+                    "Student Mentorship"
+                ),
+                roleInIsceb = "Chairman & Chief Executive Officer (CEO) • ISCEB",
+                contactInformation = "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+                biography = "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
+                displayOrder = 2
+            ),
+            // 3. Masudur Rahman
+            IscebMember(
+                id = "member-masudur-rahman",
+                photoUri = "",
+                builtInPhotoKey = "masudur",
+                fullName = "MD. MASUDUR RAHMAN",
+                designation = "Manager - Import & Export, Logistics",
+                professionalIdentity = "MD. MASUDUR RAHMAN Dip. SCM℗ (ITC), dCIPS • @ MR DIY Bangladesh",
+                currentOrganization = "MR D.I.Y. (Bangladesh) Limited",
+                educationalQualification = "Dip. SCM℗ (ITC), dCIPS — Supply Chain & International Procurement",
+                professionalExperience = "11+ years of experience in Commercial, Import & Export Operations, International Procurement, Demand Planning, Vendor Management, and Supply Chain across Retail, Automobile, and Pharma industries. Currently Manager, Import & Export (Logistics, Commercial, Customs Clearance & Freight Forwarding) at MR D.I.Y. (Bangladesh) Limited (Malaysian MNC, Tejgaon, Dhaka, Oct 2023 – Present).",
+                skillsAndExpertise = listOf(
+                    "Import & Export Operations",
+                    "Foreign & Local Procurement",
+                    "LC Documentation & Customs Clearance",
+                    "Freight Forwarding & Landed Cost",
+                    "Demand Planning & Market Intelligence",
+                    "Vendor Management",
+                    "ERP & Digital Process Automation"
+                ),
+                roleInIsceb = "ISCEB Supply Chain & Commercial Operations Practitioner",
+                contactInformation = "MR D.I.Y. (Bangladesh) Limited, Tejgaon, Dhaka • www.isceb.org",
+                biography = "MD. MASUDUR RAHMAN (Dip. SCM℗ ITC, dCIPS) is an accomplished Supply Chain Professional with 11+ years of experience in Commercial, Import & Export Operations, International Procurement, Demand Planning, Vendor Management, and Supply Chain across the Retail, Automobile, and Pharma industries.\n\nSince October 2023, he has served as Manager, Import & Export at MR D.I.Y. (Bangladesh) Limited (a Malaysian MNC), managing end-to-end foreign and local raw material procurement, supplier negotiation, LC processing, shipment tracking, customs clearance, freight forwarding, landed cost evaluation, raw material market intelligence, ERP digital automation, and supply chain team mentorship.",
+                displayOrder = 3
+            ),
+            // 4. Shah Mohammad Asif Mahmud
+            IscebMember(
+                id = "member-asif-mahmud",
+                photoUri = "",
+                builtInPhotoKey = "asif",
+                fullName = "Shah Mohammad Asif Mahmud",
+                designation = "Faculty Tutor & SCM Leader",
+                professionalIdentity = "CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM, MBS, PGDSCM, PGDBM",
+                currentOrganization = "Bitopi Group (Oculin Tech BD Ltd) • ISCEB Faculty",
+                educationalQualification = "MBS, PGDSCM, PGDBM; Certified CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM",
+                professionalExperience = "Over 15 years of Supply Chain Management leadership:\n• Senior Manager, Supply Chain Management – Bitopi Group (Oculin Tech BD Ltd)\n• AGM, Supply Chain Management & Commercial – Omega Exim Ltd\n• In-Charge, Commercial & Procurement – ANC Medical Device BD Ltd\n• Assistant Manager, SCM – Summit Communications Ltd\n• Senior Executive (Commercial), Supply Chain – NIPRO JMI Company Ltd\n• Senior Executive, Procurement – Edison Group\n• Executive, Commercial – Spectrum Engineering Consortium Ltd",
+                skillsAndExpertise = listOf(
+                    "Procurement & Strategic Sourcing",
+                    "Commercial Operations (Import & Export)",
+                    "Logistics & Warehouse Management",
+                    "Distribution Network Strategy",
+                    "Vendor Relationship Management",
+                    "Case-Based SCM Instruction"
+                ),
+                roleInIsceb = "Faculty Tutor • Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                contactInformation = "Faculty Tutor, Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+                biography = "With over 15 years of professional experience in Supply Chain Management, Shah Mohammad Asif Mahmud (CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM, MBS, PGDSCM, PGDBM) is a highly accomplished and certified supply chain leader covering Procurement, Strategic Sourcing, Commercial Import & Export Operations, Logistics, Warehouse & Distribution Management, and Vendor Relationship Management.\n\nHaving led SCM teams at Bitopi Group, Omega Exim Ltd, ANC Medical Device BD Ltd, Summit Communications Ltd, NIPRO JMI Company Ltd, Edison Group, and Spectrum Engineering Consortium Ltd, he brings practical industry insights and hands-on case-based learning as a Tutor at ISCEB.",
+                displayOrder = 4
+            ),
+            // 5. Mr. MD. Mashiur Rahman
+            IscebMember(
+                id = "member-mashiur-rahman",
+                photoUri = "",
+                builtInPhotoKey = "mashiur",
+                fullName = "Mr. Md. Mashiur Rahman",
+                designation = "Sr. Consultant – HR",
+                professionalIdentity = "A Visionary Leader Shaping the Future of Human Resources",
+                currentOrganization = "Human Resources Consultancy & National Trainer",
+                educationalQualification = "BBM & MBA (HR); Dhaka Cantonment School & College alumnus; 350+ local and international trainings completed",
+                professionalExperience = "Over 22 years across prestigious international organizations in Hospital, Pharmaceuticals, Diagnostics, Medical Education, Medical Devices, Textiles, Real Estate, and Food & Beverage industries. Facilitated employment and career mentorship for 35,000+ individuals. Honored with a Global Award from the College of American Pathologists (CAP), USA for hospital audit and quality assurance leadership in HR.",
+                skillsAndExpertise = listOf(
+                    "Strategic Human Resource Management",
+                    "People-First Crisis Leadership",
+                    "Corporate Training & Career Coaching",
+                    "Hospital Audit & Quality Assurance",
+                    "Organizational Development",
+                    "Public Speaking & Mentorship"
+                ),
+                roleInIsceb = "Sr. Consultant – HR, Panelist & Corporate Trainer • ISCEB",
+                contactInformation = "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+                biography = "Mr. Md. Mashiur Rahman stands as a distinguished name in Human Resource Management — a visionary corporate professional, researcher, and dynamic leader redefining HR practices for over 22 years across healthcare, pharmaceuticals, diagnostics, medical education, textiles, real estate, and food & beverage.\n\nHe has personally facilitated career opportunities for over 35,000 individuals and earned global recognition, including an award from the College of American Pathologists (CAP), USA for contributions to hospital audit and quality assurance. An accomplished trainer, panelist, career coach, and author of HR columns across national media, he is also an engaging vocalist, stand-up comedian, scriptwriter, and cook.",
+                displayOrder = 5
+            ),
+            // 6. Sajibul Hasan (Shajibul Hasan)
+            IscebMember(
+                id = "member-shajibul-hasan",
+                photoUri = "",
+                builtInPhotoKey = "shajibul",
+                fullName = "Shajibul Hasan",
+                designation = "Database, BI & Data Analysis Expert",
+                professionalIdentity = "Database Management, Business Intelligence & Data Analysis Expert",
+                currentOrganization = "MIS, Business Intelligence & Analytics Consulting",
+                educationalQualification = "Master’s in Applied Statistics and Data Science (Jahangirnagar University); B.Sc. in Computer Science and Engineering (ULAB); PGD on MEAL (Academy of Business Professionals - ABP); PGD on SCM (BIHRM)",
+                professionalExperience = "Over 15 years of experience in Management Information Systems (MIS), software and database consulting, business intelligence, ERP implementation, survey design, and data analytics across UN specialized agencies, international NGOs, software organizations, corporates, and the manufacturing sector.",
+                skillsAndExpertise = listOf(
+                    "Database Management",
+                    "Business Intelligence (BI)",
+                    "Applied Statistics & Data Analytics",
+                    "MIS Reporting & ERP Implementation",
+                    "Survey Design & MEAL Systems",
+                    "Data-Driven Supply Chain Strategy"
+                ),
+                roleInIsceb = "Database Management, BI & Data Analytics Specialist • ISCEB",
+                contactInformation = "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+                biography = "Shajibul Hasan is a dedicated, results-driven Database Management, Business Intelligence, and Data Analysis Expert with over 15 years of experience spanning UN specialized agencies, international NGOs, the software industry, corporate organizations, and manufacturing.\n\nAcademically grounded with a Master’s in Applied Statistics and Data Science (Jahangirnagar University), a B.Sc. in CSE (ULAB), PGD on MEAL (ABP), and PGD on SCM (BIHRM), he specializes in building integrated MIS reporting architectures, ERP solutions, and scalable analytics systems.",
+                displayOrder = 6
+            ),
+            // 7. Tonmoy Khan
+            IscebMember(
+                id = "member-tonmoy-khan",
+                photoUri = "",
+                builtInPhotoKey = "tonmoy",
+                fullName = "Tonmoy Khan",
+                designation = "ISCEB Web Developer",
+                professionalIdentity = "Senior Web Developer & Certified Plugin Developer (DIU CSE Alumnus)",
+                currentOrganization = "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                educationalQualification = "B.Sc. in Computer Science & Engineering (CSE) — Daffodil International University (DIU)",
+                professionalExperience = "4+ years of hands-on experience in core IT environments as a Senior Web Developer and certified plugin developer building scalable, high-performance web applications.",
+                skillsAndExpertise = listOf(
+                    "Full-Stack Web Engineering",
+                    "Certified Plugin Development",
+                    "Scalable Web Architecture",
+                    "Performance Optimization",
+                    "Seamless UI/UX Engineering"
+                ),
+                roleInIsceb = "ISCEB Web Developer",
+                contactInformation = "ISCEB Web Engineering • www.isceb.org",
+                biography = "Tonmoy Khan serves as the ISCEB Web Developer. As a Senior Web Developer and DIU CSE alumnus with 4+ years of hands-on experience in core IT environments and certified plugin development, he specializes in building scalable, high-performance solutions that bridge the gap between complex code and seamless user experiences across the web ecosystem.",
+                displayOrder = 7
+            ),
+            // 8. Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin)
+            IscebMember(
+                id = "member-developer-nafiul",
+                photoUri = "",
+                builtInPhotoKey = "nafiul",
+                fullName = "Developer Mohammad Nafiul Islam",
+                designation = "Developer of ISCEB App",
+                professionalIdentity = "Md. Nafiul Islam Nahin • Lead Android, Web & Cloud LMS Architect",
+                currentOrganization = "ISCEB App Engineering & Cloud Systems",
+                educationalQualification = "Android Systems Engineering (Kotlin / Jetpack Compose) & Cloud-Connected LMS Architecture",
+                professionalExperience = "Lead architect and developer of the ISCEB LMS platform across Android and Web/PC Portals, designing real-time Cloud Firestore synchronization, role-based student/teacher/admin workflows, study telemetry, timed examinations, and QR-verifiable automated PDF executive diploma certification.",
+                skillsAndExpertise = listOf(
+                    "Android Kotlin & Jetpack Compose",
+                    "Cloud Firestore & Security Rules",
+                    "PC/Web PWA Portal Engineering",
+                    "Verifiable Digital Certification",
+                    "EdTech & Supply Chain LMS Architecture"
+                ),
+                roleInIsceb = "App Developer & Chief Systems Architect • ISCEB",
+                contactInformation = "Email: www.mdnafiulislam@gmail.com • Web: https://www.isceb.org • Dhaka, Bangladesh",
+                biography = "Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin) is the Lead App Developer of the Institute of Supply Chain Excellence Bangladesh (ISCEB) LMS. He architected and engineered the unified Android and PC/Web platforms with offline-first persistence, live over-the-air curriculum publishing, role-scoped faculty and student dashboards, and automated QR-verified PGD certification.",
+                displayOrder = 8
             )
         )
     }
@@ -1208,19 +2176,24 @@ class SupplyChainRepository(
         _issuedCertificates.value = emptyList()
         _examAttempts.value = emptyList()
         _assignmentSubmissions.value = emptyList()
+        _auditLogs.value = emptyList()
         _adminSettings.value = AdminCompletionSettings()
         _developerProfile.value = DeveloperProfile()
         _founderProfile.value = FounderProfile()
         _iscebMembers.value = initialMembers
 
         prefs.edit().clear().apply()
-        prefs.edit().putString("schema_version", CURRENT_SYLLABUS_VERSION).apply()
+        prefs.edit()
+            .putString("schema_version", CURRENT_SYLLABUS_VERSION)
+            .putInt("isceb_members_roster_version", CURRENT_MEMBERS_ROSTER_VERSION)
+            .apply()
 
         persistModules(initialMods)
         persistClasses(initialCls)
         persistSettings(_adminSettings.value)
         persistExams(initialExams)
         persistAssignments(initialAssignments)
+        persistUserAccounts(_registeredAccounts.value)
         prefs.edit()
             .putString("developer_profile_json", serializeDeveloperProfile(_developerProfile.value))
             .putString("founder_profile_json", serializeFounderProfile(_founderProfile.value))
@@ -1230,6 +2203,119 @@ class SupplyChainRepository(
     }
 
     // ================= Persistence Helpers =================
+
+    private fun persistUserAccounts(list: List<UserProfile>) {
+        val arr = JSONArray()
+        list.forEach { u ->
+            val obj = JSONObject().apply {
+                put("id", u.id)
+                put("fullName", u.fullName)
+                put("email", u.email)
+                put("role", u.role.name)
+                put("organization", u.organization)
+                put("designation", u.designation)
+                put("additionalRole", u.additionalRole)
+                put("mobileNumber", u.mobileNumber)
+                put("studentId", u.studentId)
+                put("photoUrl", u.photoUrl)
+                put("enrolledProgram", u.enrolledProgram)
+                put("accountStatus", u.accountStatus.name)
+                put("isVerified", u.isVerified)
+                put("assignedModuleIds", JSONArray(u.assignedModuleIds.toList()))
+                put("authUid", u.authUid)
+                put("createdAtMs", u.createdAtMs)
+                put("updatedAtMs", u.updatedAtMs)
+            }
+            arr.put(obj)
+        }
+        prefs.edit().putString("lms_user_accounts_json", arr.toString()).apply()
+    }
+
+    private fun deserializeUserAccounts(json: String): List<UserProfile> {
+        val arr = JSONArray(json)
+        val out = mutableListOf<UserProfile>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val role = try {
+                UserRole.valueOf(obj.optString("role", UserRole.STUDENT.name))
+            } catch (_: Exception) { UserRole.STUDENT }
+            val accStatus = try {
+                AccountStatus.valueOf(obj.optString("accountStatus", AccountStatus.ACTIVE.name))
+            } catch (_: Exception) { AccountStatus.ACTIVE }
+            val modArr = obj.optJSONArray("assignedModuleIds")
+            val assigned = mutableSetOf<String>()
+            if (modArr != null) {
+                for (j in 0 until modArr.length()) {
+                    val m = modArr.optString(j)
+                    if (m.isNotBlank()) assigned.add(m)
+                }
+            }
+            out.add(
+                UserProfile(
+                    id = obj.getString("id"),
+                    fullName = obj.optString("fullName", ""),
+                    email = obj.optString("email", ""),
+                    role = role,
+                    organization = obj.optString("organization", "ISCEB Enrolled Professional"),
+                    designation = obj.optString("designation", ""),
+                    additionalRole = obj.optString("additionalRole", ""),
+                    mobileNumber = obj.optString("mobileNumber", ""),
+                    studentId = obj.optString("studentId", ""),
+                    photoUrl = obj.optString("photoUrl", ""),
+                    enrolledProgram = obj.optString("enrolledProgram", "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)"),
+                    accountStatus = accStatus,
+                    isVerified = obj.optBoolean("isVerified", false),
+                    assignedModuleIds = assigned,
+                    authUid = obj.optString("authUid", ""),
+                    createdAtMs = obj.optLong("createdAtMs", 0L),
+                    updatedAtMs = obj.optLong("updatedAtMs", 0L)
+                )
+            )
+        }
+        return out
+    }
+
+    private fun persistAuditLogs(list: List<AuditLogEntry>) {
+        val arr = JSONArray()
+        list.take(200).forEach { log ->
+            val obj = JSONObject().apply {
+                put("logId", log.logId)
+                put("actorUid", log.actorUid)
+                put("actorName", log.actorName)
+                put("actorRole", log.actorRole.name)
+                put("actionType", log.actionType)
+                put("targetId", log.targetId)
+                put("summary", log.summary)
+                put("timestampMs", log.timestampMs)
+            }
+            arr.put(obj)
+        }
+        prefs.edit().putString("audit_logs_json", arr.toString()).apply()
+    }
+
+    private fun deserializeAuditLogs(json: String): List<AuditLogEntry> {
+        val arr = JSONArray(json)
+        val out = mutableListOf<AuditLogEntry>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val role = try {
+                UserRole.valueOf(obj.optString("actorRole", UserRole.ADMIN.name))
+            } catch (_: Exception) { UserRole.ADMIN }
+            out.add(
+                AuditLogEntry(
+                    logId = obj.optString("logId", UUID.randomUUID().toString()),
+                    actorUid = obj.optString("actorUid", ""),
+                    actorName = obj.optString("actorName", "ISCEB Staff"),
+                    actorRole = role,
+                    actionType = obj.optString("actionType", "UPDATE"),
+                    targetId = obj.optString("targetId", ""),
+                    summary = obj.optString("summary", ""),
+                    timestampMs = obj.optLong("timestampMs", 0L)
+                )
+            )
+        }
+        return out
+    }
 
     private fun persistStudentProgress(studentId: String, list: List<StudentClassProgress>) {
         val arr = JSONArray()
@@ -1247,6 +2333,11 @@ class SupplyChainRepository(
                 prog.quizScore?.let { put("quizScore", it) }
                 put("quizPassed", prog.quizPassed)
                 prog.completionTimestamp?.let { put("completionTimestamp", it) }
+                put("lastPlaybackPositionMs", prog.lastPlaybackPositionMs)
+                put("lastPdfPage", prog.lastPdfPage)
+                put("totalPdfPages", prog.totalPdfPages)
+                put("visitedPdfPages", JSONArray(prog.visitedPdfPages.sorted()))
+                put("idleExcludedSeconds", prog.idleExcludedSeconds)
             }
             arr.put(obj)
         }
@@ -1254,6 +2345,14 @@ class SupplyChainRepository(
     }
 
     private fun deserializeStudentProgress(obj: JSONObject): StudentClassProgress {
+        val pagesArr = obj.optJSONArray("visitedPdfPages")
+        val visitedPages = mutableSetOf<Int>()
+        if (pagesArr != null) {
+            for (i in 0 until pagesArr.length()) {
+                val p = pagesArr.optInt(i, -1)
+                if (p > 0) visitedPages.add(p)
+            }
+        }
         return StudentClassProgress(
             classId = obj.getString("classId"),
             studentId = obj.getString("studentId"),
@@ -1266,7 +2365,12 @@ class SupplyChainRepository(
             pdfReadingSeconds = obj.optLong("pdfReadingSeconds", 0L),
             quizScore = if (obj.has("quizScore")) obj.getInt("quizScore") else null,
             quizPassed = obj.optBoolean("quizPassed", false),
-            completionTimestamp = if (obj.has("completionTimestamp")) obj.getLong("completionTimestamp") else null
+            completionTimestamp = if (obj.has("completionTimestamp")) obj.getLong("completionTimestamp") else null,
+            lastPlaybackPositionMs = obj.optLong("lastPlaybackPositionMs", 0L),
+            lastPdfPage = obj.optInt("lastPdfPage", 0),
+            totalPdfPages = obj.optInt("totalPdfPages", 0),
+            visitedPdfPages = visitedPages,
+            idleExcludedSeconds = obj.optLong("idleExcludedSeconds", 0L)
         )
     }
 
@@ -1278,12 +2382,20 @@ class SupplyChainRepository(
             put("isQuizRequired", settings.isQuizRequired)
             put("quizPassingScore", settings.quizPassingScore)
             put("requiredModuleIds", JSONArray(settings.requiredModuleIds))
+            put("requiredExamIds", JSONArray(settings.requiredExamIds))
+            put("requiredAssignmentIds", JSONArray(settings.requiredAssignmentIds))
+            put("requireGradedFinalProject", settings.requireGradedFinalProject)
+            put("requirePdfAllPagesVisited", settings.requirePdfAllPagesVisited)
             put("institutionName", settings.institutionName)
             put("officialWebsite", settings.officialWebsite)
             put("institutionAccreditation", settings.institutionAccreditation)
+            put("leftSignerName", settings.leftSignerName)
+            put("leftSignerTitle", settings.leftSignerTitle)
             put("authorizedSignerName", settings.authorizedSignerName)
             put("authorizedSignerTitle", settings.authorizedSignerTitle)
             put("certificateTitle", settings.certificateTitle)
+            put("certificatesEnabled", settings.certificatesEnabled)
+            put("demoCertificateEnabled", settings.demoCertificateEnabled)
             put("classTimeWindow", settings.scheduleConfig.classTimeWindow)
             put("timeZoneId", settings.scheduleConfig.timeZoneId)
             put("remoteSyncManifestUrl", settings.remoteSyncManifestUrl)
@@ -1303,6 +2415,43 @@ class SupplyChainRepository(
             reqSet.addAll((1..12).map { "mod-$it" })
         }
 
+        val reqExamArr = obj.optJSONArray("requiredExamIds")
+        val reqExamSet = mutableSetOf<String>()
+        if (reqExamArr != null) {
+            for (i in 0 until reqExamArr.length()) reqExamSet.add(reqExamArr.getString(i))
+        } else {
+            reqExamSet.addAll(setOf("exam-mod-1", "exam-mod-2", "exam-mod-3", "exam-mod-6", "exam-final"))
+        }
+
+        val reqAsgArr = obj.optJSONArray("requiredAssignmentIds")
+        val reqAsgSet = mutableSetOf<String>()
+        if (reqAsgArr != null) {
+            for (i in 0 until reqAsgArr.length()) reqAsgSet.add(reqAsgArr.getString(i))
+        } else {
+            reqAsgSet.add("asg-12-final-project")
+        }
+
+        val rawRightSigner = obj.optString("authorizedSignerName", "Amirul Islam")
+        val safeRightSigner = if (rawRightSigner.contains("Nafiul", ignoreCase = true) || rawRightSigner.isBlank()) {
+            "Amirul Islam"
+        } else if (rawRightSigner.startsWith("Md. Amirul Islam", ignoreCase = true)) {
+            "Amirul Islam"
+        } else {
+            rawRightSigner.substringBefore(",").trim()
+        }
+        val rawLeftSigner = obj.optString("leftSignerName", "Hasina Khan")
+        val safeLeftSigner = if (rawLeftSigner.contains("Nafiul", ignoreCase = true) || rawLeftSigner.isBlank()) {
+            "Hasina Khan"
+        } else {
+            rawLeftSigner
+        }
+        val rawRightTitle = obj.optString("authorizedSignerTitle", "Founder of ISCEB")
+        val safeRightTitle = if (rawRightTitle.contains("Developer", ignoreCase = true) || rawRightTitle.contains("Academic Directorate", ignoreCase = true) || rawRightTitle.isBlank()) {
+            "Founder of ISCEB"
+        } else {
+            rawRightTitle
+        }
+
         return AdminCompletionSettings(
             minLearningTimeSeconds = obj.optLong("minLearningTimeSeconds", 60L),
             minPlaybackPercent = obj.optDouble("minPlaybackPercent", 80.0).toFloat(),
@@ -1310,15 +2459,22 @@ class SupplyChainRepository(
             isQuizRequired = obj.optBoolean("isQuizRequired", true),
             quizPassingScore = obj.optInt("quizPassingScore", 70),
             requiredModuleIds = reqSet,
-            institutionName = obj.optString("institutionName", "ISCEB"),
+            requiredExamIds = reqExamSet,
+            requiredAssignmentIds = reqAsgSet,
+            requireGradedFinalProject = obj.optBoolean("requireGradedFinalProject", false),
+            requirePdfAllPagesVisited = obj.optBoolean("requirePdfAllPagesVisited", false),
+            institutionName = obj.optString("institutionName", "ISCEB").let {
+                if (it.contains("International Supply Chain", ignoreCase = true)) "ISCEB" else it
+            },
             officialWebsite = obj.optString("officialWebsite", "www.isceb.org"),
             institutionAccreditation = obj.optString("institutionAccreditation", "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)"),
-            authorizedSignerName = obj.optString("authorizedSignerName", "Md. Amirul Islam, Founder of ISCEB")
-                .replace("Academic Detector", "Developer of ISCEB App")
-                .replace("Founder & Developer of ISCEB", "Developer of ISCEB App")
-                .replace("MD. Nafiul", "Md. Nafiul"),
-            authorizedSignerTitle = obj.optString("authorizedSignerTitle", "ISCEB Academic Directorate"),
+            leftSignerName = safeLeftSigner,
+            leftSignerTitle = obj.optString("leftSignerTitle", ""),
+            authorizedSignerName = safeRightSigner,
+            authorizedSignerTitle = safeRightTitle,
             certificateTitle = obj.optString("certificateTitle", "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)"),
+            certificatesEnabled = obj.optBoolean("certificatesEnabled", true),
+            demoCertificateEnabled = obj.optBoolean("demoCertificateEnabled", true),
             scheduleConfig = CourseScheduleConfig(
                 classTimeWindow = obj.optString("classTimeWindow", "9:00 PM to 11:00 PM"),
                 timeZoneId = obj.optString("timeZoneId", "Asia/Dhaka")
@@ -1351,6 +2507,8 @@ class SupplyChainRepository(
                 put("completedClassesCount", cert.completedClassesCount)
                 put("totalRequiredClasses", cert.totalRequiredClasses)
                 cert.filePath?.let { put("filePath", it) }
+                put("studentCode", cert.studentCode)
+                put("verificationUrl", cert.verificationUrl)
             }
             arr.put(obj)
         }
@@ -1362,23 +2520,26 @@ class SupplyChainRepository(
         val arr = JSONArray(json)
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
+            val certId = obj.getString("certificateId")
             list.add(
                 CertificateRecord(
-                    certificateId = obj.getString("certificateId"),
+                    certificateId = certId,
                     studentId = obj.getString("studentId"),
                     studentName = obj.getString("studentName"),
                     courseTitle = obj.getString("courseTitle"),
                     issueDate = obj.getString("issueDate"),
                     issueTimestamp = obj.getLong("issueTimestamp"),
                     institutionName = obj.getString("institutionName"),
-                    officialWebsite = obj.optString("officialWebsite", "www.isceb.com"),
+                    officialWebsite = obj.optString("officialWebsite", "www.isceb.org"),
                     authorizedSigner = obj.getString("authorizedSigner"),
                     status = CertificateStatus.valueOf(obj.optString("status", CertificateStatus.VALID.name)),
                     revocationReason = if (obj.has("revocationReason")) obj.getString("revocationReason") else null,
                     revocationTimestamp = if (obj.has("revocationTimestamp")) obj.getLong("revocationTimestamp") else null,
                     completedClassesCount = obj.optInt("completedClassesCount", 48),
                     totalRequiredClasses = obj.optInt("totalRequiredClasses", 48),
-                    filePath = if (obj.has("filePath")) obj.getString("filePath") else null
+                    filePath = if (obj.has("filePath")) obj.getString("filePath") else null,
+                    studentCode = obj.optString("studentCode", ""),
+                    verificationUrl = obj.optString("verificationUrl", "https://www.isceb.org/verify/$certId")
                 )
             )
         }
@@ -1440,6 +2601,8 @@ class SupplyChainRepository(
                 put("durationMinutes", cls.durationMinutes)
                 put("isPublished", cls.isPublished)
                 put("learningObjectives", JSONArray(cls.learningObjectives))
+                cls.minStudySecondsOverride?.let { put("minStudySecondsOverride", it) }
+                put("allowMediaDownload", cls.allowMediaDownload)
 
                 cls.pdfMedia?.let { put("pdfMedia", serializeMedia(it)) }
                 cls.audioMedia?.let { put("audioMedia", serializeMedia(it)) }
@@ -1496,7 +2659,9 @@ class SupplyChainRepository(
                     videoMedia = videoObj?.let { deserializeMedia(it) },
                     quizQuestions = generateClassQuizzes(title),
                     attachments = attachments,
-                    lectureCode = obj.optString("lectureCode", "")
+                    lectureCode = obj.optString("lectureCode", ""),
+                    minStudySecondsOverride = if (obj.has("minStudySecondsOverride")) obj.getLong("minStudySecondsOverride") else null,
+                    allowMediaDownload = obj.optBoolean("allowMediaDownload", true)
                 )
             )
         }
@@ -1717,6 +2882,19 @@ class SupplyChainRepository(
     private fun persistExams(list: List<ModuleExam>) {
         val arr = JSONArray()
         list.forEach { exam ->
+            val qArr = JSONArray()
+            exam.questions.forEach { q ->
+                qArr.put(
+                    JSONObject().apply {
+                        put("id", q.id)
+                        put("question", q.question)
+                        put("options", JSONArray(q.options))
+                        put("correctOptionIndex", q.correctOptionIndex)
+                        put("marks", q.marks)
+                        put("explanation", q.explanation)
+                    }
+                )
+            }
             val obj = JSONObject().apply {
                 put("id", exam.id)
                 put("moduleId", exam.moduleId)
@@ -1726,6 +2904,12 @@ class SupplyChainRepository(
                 put("passingPercentage", exam.passingPercentage)
                 put("durationMinutes", exam.durationMinutes)
                 put("scheduledWindowNote", exam.scheduledWindowNote)
+                put("maxAttempts", exam.maxAttempts)
+                exam.openFromMs?.let { put("openFromMs", it) }
+                exam.openUntilMs?.let { put("openUntilMs", it) }
+                put("isRequiredForCertification", exam.isRequiredForCertification)
+                put("createdByUid", exam.createdByUid)
+                put("questions", qArr)
             }
             arr.put(obj)
         }
@@ -1740,6 +2924,26 @@ class SupplyChainRepository(
             val obj = arr.getJSONObject(i)
             val id = obj.getString("id")
             val defaultExam = defaults[id]
+            val qArr = obj.optJSONArray("questions")
+            val parsedQuestions = mutableListOf<ExamQuestion>()
+            if (qArr != null) {
+                for (qIdx in 0 until qArr.length()) {
+                    val qObj = qArr.optJSONObject(qIdx) ?: continue
+                    val optsArr = qObj.optJSONArray("options") ?: continue
+                    val opts = mutableListOf<String>()
+                    for (oIdx in 0 until optsArr.length()) opts.add(optsArr.optString(oIdx))
+                    parsedQuestions.add(
+                        ExamQuestion(
+                            id = qObj.optString("id", "q-$qIdx"),
+                            question = qObj.optString("question", ""),
+                            options = opts,
+                            correctOptionIndex = qObj.optInt("correctOptionIndex", 0),
+                            marks = qObj.optInt("marks", 1),
+                            explanation = qObj.optString("explanation", "")
+                        )
+                    )
+                }
+            }
             result.add(
                 ModuleExam(
                     id = id,
@@ -1749,8 +2953,13 @@ class SupplyChainRepository(
                     isSyllabusFixedMarks = obj.optBoolean("isSyllabusFixedMarks", false),
                     passingPercentage = obj.optInt("passingPercentage", 60),
                     durationMinutes = obj.optInt("durationMinutes", 30),
-                    questions = defaultExam?.questions ?: emptyList(),
-                    scheduledWindowNote = obj.optString("scheduledWindowNote", "Class hours: 9:00 PM to 11:00 PM (Asia/Dhaka)")
+                    questions = if (parsedQuestions.isNotEmpty()) parsedQuestions else (defaultExam?.questions ?: emptyList()),
+                    scheduledWindowNote = obj.optString("scheduledWindowNote", "Class hours: 9:00 PM to 11:00 PM (Asia/Dhaka)"),
+                    maxAttempts = obj.optInt("maxAttempts", defaultExam?.maxAttempts ?: 3),
+                    openFromMs = if (obj.has("openFromMs")) obj.getLong("openFromMs") else null,
+                    openUntilMs = if (obj.has("openUntilMs")) obj.getLong("openUntilMs") else null,
+                    isRequiredForCertification = obj.optBoolean("isRequiredForCertification", defaultExam?.isRequiredForCertification ?: false),
+                    createdByUid = obj.optString("createdByUid", "system")
                 )
             )
         }
@@ -1771,6 +2980,7 @@ class SupplyChainRepository(
                 put("startTimeMs", att.startTimeMs)
                 put("submittedTimeMs", att.submittedTimeMs)
                 put("isAutoSubmittedOnTimeout", att.isAutoSubmittedOnTimeout)
+                put("moduleId", att.moduleId)
                 val answersObj = JSONObject()
                 att.studentAnswers.forEach { (q, a) -> answersObj.put(q, a) }
                 put("studentAnswers", answersObj)
@@ -1802,7 +3012,8 @@ class SupplyChainRepository(
                     isPassed = obj.getBoolean("isPassed"),
                     startTimeMs = obj.getLong("startTimeMs"),
                     submittedTimeMs = obj.getLong("submittedTimeMs"),
-                    isAutoSubmittedOnTimeout = obj.optBoolean("isAutoSubmittedOnTimeout", false)
+                    isAutoSubmittedOnTimeout = obj.optBoolean("isAutoSubmittedOnTimeout", false),
+                    moduleId = obj.optString("moduleId", "")
                 )
             )
         }
@@ -1820,6 +3031,11 @@ class SupplyChainRepository(
                 put("instructions", asg.instructions)
                 put("maxMarks", asg.maxMarks)
                 put("isFinalProject", asg.isFinalProject)
+                put("isRequiredForCertification", asg.isRequiredForCertification)
+                put("allowFileAttachment", asg.allowFileAttachment)
+                asg.dueDateMs?.let { put("dueDateMs", it) }
+                put("createdByUid", asg.createdByUid)
+                put("createdByName", asg.createdByName)
             }
             arr.put(obj)
         }
@@ -1831,6 +3047,7 @@ class SupplyChainRepository(
         val arr = JSONArray(json)
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
+            val isFinal = obj.optBoolean("isFinalProject", false)
             list.add(
                 ModuleAssignment(
                     id = obj.getString("id"),
@@ -1839,7 +3056,12 @@ class SupplyChainRepository(
                     topicDescription = obj.getString("topicDescription"),
                     instructions = obj.getString("instructions"),
                     maxMarks = obj.optInt("maxMarks", 20),
-                    isFinalProject = obj.optBoolean("isFinalProject", false)
+                    isFinalProject = isFinal,
+                    isRequiredForCertification = obj.optBoolean("isRequiredForCertification", isFinal),
+                    allowFileAttachment = obj.optBoolean("allowFileAttachment", true),
+                    dueDateMs = if (obj.has("dueDateMs")) obj.getLong("dueDateMs") else null,
+                    createdByUid = obj.optString("createdByUid", "system"),
+                    createdByName = obj.optString("createdByName", "ISCEB Faculty")
                 )
             )
         }
@@ -1860,6 +3082,11 @@ class SupplyChainRepository(
                 sub.marksAwarded?.let { put("marksAwarded", it) }
                 sub.feedback?.let { put("feedback", it) }
                 put("isGraded", sub.isGraded)
+                put("moduleId", sub.moduleId)
+                put("status", sub.status.name)
+                sub.gradedByUid?.let { put("gradedByUid", it) }
+                sub.gradedByName?.let { put("gradedByName", it) }
+                sub.gradedTimestamp?.let { put("gradedTimestamp", it) }
             }
             arr.put(obj)
         }
@@ -1871,6 +3098,12 @@ class SupplyChainRepository(
         val arr = JSONArray(json)
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
+            val isGraded = obj.optBoolean("isGraded", false)
+            val status = try {
+                SubmissionStatus.valueOf(obj.optString("status", if (isGraded) SubmissionStatus.GRADED.name else SubmissionStatus.SUBMITTED.name))
+            } catch (_: Exception) {
+                if (isGraded) SubmissionStatus.GRADED else SubmissionStatus.SUBMITTED
+            }
             list.add(
                 AssignmentSubmission(
                     submissionId = obj.getString("submissionId"),
@@ -1882,7 +3115,12 @@ class SupplyChainRepository(
                     submissionTimestamp = obj.getLong("submissionTimestamp"),
                     marksAwarded = if (obj.has("marksAwarded")) obj.getInt("marksAwarded") else null,
                     feedback = if (obj.has("feedback")) obj.getString("feedback") else null,
-                    isGraded = obj.optBoolean("isGraded", false)
+                    isGraded = isGraded,
+                    moduleId = obj.optString("moduleId", ""),
+                    status = status,
+                    gradedByUid = if (obj.has("gradedByUid")) obj.getString("gradedByUid") else null,
+                    gradedByName = if (obj.has("gradedByName")) obj.getString("gradedByName") else null,
+                    gradedTimestamp = if (obj.has("gradedTimestamp")) obj.getLong("gradedTimestamp") else null
                 )
             )
         }
@@ -3403,6 +4641,8 @@ class SupplyChainRepository(
                 put("durationMinutes", cls.durationMinutes)
                 put("isPublished", cls.isPublished)
                 put("learningObjectives", JSONArray(cls.learningObjectives))
+                cls.minStudySecondsOverride?.let { put("minStudySecondsOverride", it) }
+                put("allowMediaDownload", cls.allowMediaDownload)
 
                 cls.pdfMedia?.let { put("pdfMedia", serializeMedia(it)) }
                 cls.audioMedia?.let { put("audioMedia", serializeMedia(it)) }
@@ -3423,13 +4663,21 @@ class SupplyChainRepository(
             put("minPdfReadingSeconds", settings.minPdfReadingSeconds)
             put("isQuizRequired", settings.isQuizRequired)
             put("quizPassingScore", settings.quizPassingScore)
-            put("requiredModuleIds", JSONArray(settings.requiredModuleIds))
+            put("requiredModuleIds", JSONArray(settings.requiredModuleIds.toList()))
+            put("requiredExamIds", JSONArray(settings.requiredExamIds.toList()))
+            put("requiredAssignmentIds", JSONArray(settings.requiredAssignmentIds.toList()))
+            put("requireGradedFinalProject", settings.requireGradedFinalProject)
+            put("requirePdfAllPagesVisited", settings.requirePdfAllPagesVisited)
             put("institutionName", settings.institutionName)
             put("officialWebsite", settings.officialWebsite)
             put("institutionAccreditation", settings.institutionAccreditation)
+            put("leftSignerName", settings.leftSignerName)
+            put("leftSignerTitle", settings.leftSignerTitle)
             put("authorizedSignerName", settings.authorizedSignerName)
             put("authorizedSignerTitle", settings.authorizedSignerTitle)
             put("certificateTitle", settings.certificateTitle)
+            put("certificatesEnabled", settings.certificatesEnabled)
+            put("demoCertificateEnabled", settings.demoCertificateEnabled)
             put("classTimeWindow", settings.scheduleConfig.classTimeWindow)
             put("timeZoneId", settings.scheduleConfig.timeZoneId)
             put("remoteSyncManifestUrl", settings.remoteSyncManifestUrl)

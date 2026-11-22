@@ -114,9 +114,13 @@ fun AdminSettingsDialog(
     var instName by remember { mutableStateOf(initialSettings.institutionName) }
     var officialWebsite by remember { mutableStateOf(initialSettings.officialWebsite) }
     var instAccred by remember { mutableStateOf(initialSettings.institutionAccreditation) }
+    var leftSignerName by remember { mutableStateOf(initialSettings.leftSignerName) }
+    var leftSignerTitle by remember { mutableStateOf(initialSettings.leftSignerTitle) }
     var signerName by remember { mutableStateOf(initialSettings.authorizedSignerName) }
     var signerTitle by remember { mutableStateOf(initialSettings.authorizedSignerTitle) }
     var certTitle by remember { mutableStateOf(initialSettings.certificateTitle) }
+    var certificatesEnabled by remember { mutableStateOf(initialSettings.certificatesEnabled) }
+    var demoCertificateEnabled by remember { mutableStateOf(initialSettings.demoCertificateEnabled) }
     var classTimeWindow by remember { mutableStateOf(initialSettings.scheduleConfig.classTimeWindow) }
     var timeZoneId by remember { mutableStateOf(initialSettings.scheduleConfig.timeZoneId) }
     var remoteSyncUrl by remember { mutableStateOf(initialSettings.remoteSyncManifestUrl) }
@@ -124,6 +128,9 @@ fun AdminSettingsDialog(
     var autoApplyUpdates by remember { mutableStateOf(initialSettings.autoApplyContentUpdates) }
 
     var requiredModules by remember { mutableStateOf(initialSettings.requiredModuleIds.toMutableSet()) }
+    var requiredExams by remember { mutableStateOf(initialSettings.requiredExamIds.toMutableSet()) }
+    var requireFinalProjectGraded by remember { mutableStateOf(initialSettings.requireGradedFinalProject) }
+    var requireAllPdfPages by remember { mutableStateOf(initialSettings.requirePdfAllPagesVisited) }
 
     var nextVersionTag by remember { mutableStateOf("v1.${(currentManifest.versionCode - 100) + 1}.0") }
     var changeNotes by remember { mutableStateOf("Updated lecture objectives, readings, and exam window timings.") }
@@ -773,6 +780,38 @@ fun AdminSettingsDialog(
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = NavyPrimary)
                 )
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Enable Official Certificates", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = NavyPrimary)
+                        Text("Toggle PGD diploma generation across students", fontSize = 10.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = certificatesEnabled,
+                        onCheckedChange = { certificatesEnabled = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = GoldMetallic, checkedTrackColor = NavyPrimary)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Enable Demo Certificate Preview", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = NavyPrimary)
+                        Text("Allow previewing and downloading sample PGD PDF certificate", fontSize = 10.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = demoCertificateEnabled,
+                        onCheckedChange = { demoCertificateEnabled = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = GoldMetallic, checkedTrackColor = NavyPrimary)
+                    )
+                }
+
                 OutlinedTextField(
                     value = certTitle,
                     onValueChange = { certTitle = it },
@@ -785,7 +824,7 @@ fun AdminSettingsDialog(
                 OutlinedTextField(
                     value = instName,
                     onValueChange = { instName = it },
-                    label = { Text("Institution Name") },
+                    label = { Text("Institution Code (Displayed as Institute of Supply Chain Excellence Bangladesh)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
@@ -829,9 +868,27 @@ fun AdminSettingsDialog(
                 )
 
                 OutlinedTextField(
+                    value = leftSignerName,
+                    onValueChange = { leftSignerName = it },
+                    label = { Text("Left Signatory Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                )
+
+                OutlinedTextField(
+                    value = leftSignerTitle,
+                    onValueChange = { leftSignerTitle = it },
+                    label = { Text("Left Signatory Designation (Optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                )
+
+                OutlinedTextField(
                     value = signerName,
                     onValueChange = { signerName = it },
-                    label = { Text("Authorized Signer Name") },
+                    label = { Text("Right Signatory Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
@@ -840,7 +897,7 @@ fun AdminSettingsDialog(
                 OutlinedTextField(
                     value = signerTitle,
                     onValueChange = { signerTitle = it },
-                    label = { Text("Authorized Signer Title") },
+                    label = { Text("Right Signatory Designation") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
@@ -914,6 +971,78 @@ fun AdminSettingsDialog(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "5. Certification Exam & Project Rules",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = NavyPrimary)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Require Graded Capstone Project", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = NavyPrimary)
+                        Text("Diploma requires final project graded, not only submitted", fontSize = 10.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = requireFinalProjectGraded,
+                        onCheckedChange = { requireFinalProjectGraded = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = GoldMetallic, checkedTrackColor = NavyPrimary)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Require All PDF Pages Visited", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = NavyPrimary)
+                        Text("Students must flip through every page before confirming PDF read", fontSize = 10.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = requireAllPdfPages,
+                        onCheckedChange = { requireAllPdfPages = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = GoldMetallic, checkedTrackColor = NavyPrimary)
+                    )
+                }
+
+                listOf(
+                    "exam-mod-1" to "Module 1 Exam (20 Marks)",
+                    "exam-mod-2" to "Module 2 Exam (25 Marks)",
+                    "exam-mod-3" to "Module 3 Exam (30 Marks)",
+                    "exam-mod-6" to "Module 6 Exam (25 Marks)",
+                    "exam-final" to "Final Comprehensive Exam (100 Marks)"
+                ).forEach { (examId, label) ->
+                    val checkedExam = requiredExams.contains(examId)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                requiredExams = requiredExams.toMutableSet().apply {
+                                    if (checkedExam) remove(examId) else add(examId)
+                                }
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = checkedExam,
+                            onCheckedChange = { on ->
+                                requiredExams = requiredExams.toMutableSet().apply {
+                                    if (on) add(examId) else remove(examId)
+                                }
+                            },
+                            colors = CheckboxDefaults.colors(checkedColor = NavyPrimary)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(label, fontSize = 12.sp, color = NavyPrimary)
+                    }
+                }
             }
         },
         confirmButton = {
@@ -927,12 +1056,20 @@ fun AdminSettingsDialog(
                         isQuizRequired = isQuizReq,
                         quizPassingScore = passInt,
                         requiredModuleIds = requiredModules.toSet(),
+                        requiredExamIds = requiredExams.toSet(),
+                        requiredAssignmentIds = initialSettings.requiredAssignmentIds.ifEmpty { setOf("asg-12-final-project") },
+                        requireGradedFinalProject = requireFinalProjectGraded,
+                        requirePdfAllPagesVisited = requireAllPdfPages,
                         institutionName = instName.trim().ifEmpty { initialSettings.institutionName },
                         officialWebsite = officialWebsite.trim().ifEmpty { initialSettings.officialWebsite },
                         institutionAccreditation = instAccred.trim().ifEmpty { initialSettings.institutionAccreditation },
-                        authorizedSignerName = signerName.trim().ifEmpty { initialSettings.authorizedSignerName },
-                        authorizedSignerTitle = signerTitle.trim().ifEmpty { initialSettings.authorizedSignerTitle },
+                        leftSignerName = leftSignerName.trim().ifEmpty { "Hasina Khan" },
+                        leftSignerTitle = leftSignerTitle.trim(),
+                        authorizedSignerName = signerName.trim().ifEmpty { "Amirul Islam" },
+                        authorizedSignerTitle = signerTitle.trim().ifEmpty { "Founder of ISCEB" },
                         certificateTitle = certTitle.trim().ifEmpty { initialSettings.certificateTitle },
+                        certificatesEnabled = certificatesEnabled,
+                        demoCertificateEnabled = demoCertificateEnabled,
                         scheduleConfig = initialSettings.scheduleConfig.copy(
                             classTimeWindow = classTimeWindow.trim().ifEmpty { "9:00 PM to 11:00 PM" },
                             timeZoneId = timeZoneId.trim().ifEmpty { "Asia/Dhaka" }

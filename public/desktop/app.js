@@ -3,13 +3,16 @@ import {
   DEFAULT_DEVELOPER,
   DEFAULT_FOUNDER,
   DEFAULT_MEMBERS,
+  DEFAULT_MEMBERS_ROSTER_VERSION,
   FIREBASE_CONFIG,
   INITIAL_ASSIGNMENTS,
   INITIAL_CLASSES,
   INITIAL_EXAMS,
   INITIAL_MODULES,
+  MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
-  buildFirestoreManifestPayload
+  buildFirestoreManifestPayload,
+  splitBytesIntoLessonFileChunks
 } from "./curriculum-data.js";
 import {
   ADMIN_AMIRUL_ID,
@@ -53,11 +56,72 @@ function formatBytes(bytes) {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
+function normalizeSettings(raw) {
+  const s = {
+    passingPercentage: 60,
+    requiredModulesCompleted: 12,
+    certificatesEnabled: true,
+    demoCertificateEnabled: true,
+    leftSignerName: "Hasina Khan",
+    leftSignerTitle: "",
+    authorizedSignerName: "Amirul Islam",
+    authorizedSignerTitle: "Founder of ISCEB",
+    ...(raw || {})
+  };
+  if (typeof s.certificatesEnabled !== "boolean") s.certificatesEnabled = true;
+  if (typeof s.demoCertificateEnabled !== "boolean") s.demoCertificateEnabled = true;
+  if (!s.leftSignerName || /nafiul|amirul/i.test(s.leftSignerName)) {
+    s.leftSignerName = "Hasina Khan";
+  }
+  if (!s.leftSignerTitle || /developer/i.test(s.leftSignerTitle)) {
+    s.leftSignerTitle = "";
+  }
+  if (!s.authorizedSignerName || /nafiul|hasina/i.test(s.authorizedSignerName)) {
+    s.authorizedSignerName = "Amirul Islam";
+  } else if (/^md\.?\s*amirul islam$/i.test(s.authorizedSignerName.trim())) {
+    s.authorizedSignerName = "Amirul Islam";
+  }
+  if (!s.authorizedSignerTitle || /developer|academic directorate/i.test(s.authorizedSignerTitle)) {
+    s.authorizedSignerTitle = "Founder of ISCEB";
+  }
+  return s;
+}
+
+function sanitizeDeveloperProfile(raw) {
+  const dev = { ...structuredClone(DEFAULT_DEVELOPER), ...(raw || {}) };
+  if (dev.biography) {
+    dev.biography = dev.biography.replaceAll(
+      "International Supply Chain Education Board",
+      "Institute of Supply Chain Excellence Bangladesh"
+    );
+  }
+  return dev;
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const savedRosterVer = Number(parsed.membersRosterVersion || 1);
+      const parsedMembers = Array.isArray(parsed.members) && parsed.members.length ? parsed.members : [];
+      let effectiveMembers;
+      if (!parsedMembers.length || savedRosterVer < DEFAULT_MEMBERS_ROSTER_VERSION) {
+        const official = structuredClone(DEFAULT_MEMBERS);
+        const officialIds = new Set(official.map((m) => m.id));
+        const extras = parsedMembers
+          .filter((m) => !officialIds.has(m.id))
+          .map((m, idx) => ({ ...m, displayOrder: official.length + idx + 1 }));
+        effectiveMembers = [...official, ...extras];
+      } else {
+        effectiveMembers = parsedMembers;
+      }
+      const parsedFounder = parsed.founderProfile || structuredClone(DEFAULT_FOUNDER);
+      const effectiveFounder =
+        savedRosterVer < DEFAULT_MEMBERS_ROSTER_VERSION && !parsedFounder.educationBackground
+          ? { ...structuredClone(DEFAULT_FOUNDER), ...parsedFounder, biography: DEFAULT_FOUNDER.biography, educationBackground: DEFAULT_FOUNDER.educationBackground }
+          : parsedFounder;
+
       return {
         currentView: parsed.currentView || "dashboard",
         // Never restore admin role from plain localStorage; verified async via HMAC session
@@ -72,9 +136,10 @@ function loadState() {
         classes: Array.isArray(parsed.classes) && parsed.classes.length ? parsed.classes : structuredClone(INITIAL_CLASSES),
         exams: Array.isArray(parsed.exams) && parsed.exams.length ? parsed.exams : structuredClone(INITIAL_EXAMS),
         assignments: Array.isArray(parsed.assignments) && parsed.assignments.length ? parsed.assignments : structuredClone(INITIAL_ASSIGNMENTS),
-        members: Array.isArray(parsed.members) && parsed.members.length ? parsed.members : structuredClone(DEFAULT_MEMBERS),
-        founderProfile: parsed.founderProfile || structuredClone(DEFAULT_FOUNDER),
-        developerProfile: parsed.developerProfile || structuredClone(DEFAULT_DEVELOPER),
+        members: effectiveMembers,
+        membersRosterVersion: DEFAULT_MEMBERS_ROSTER_VERSION,
+        founderProfile: effectiveFounder,
+        developerProfile: sanitizeDeveloperProfile(parsed.developerProfile),
         progressByUser: parsed.progressByUser || {},
         examAttemptsByUser: parsed.examAttemptsByUser || {},
         assignmentSubmissionsByUser: parsed.assignmentSubmissionsByUser || {},
@@ -90,10 +155,7 @@ function loadState() {
           latestApkVersionName: "1.5",
           apkDownloadUrl: FIREBASE_CONFIG.apkDownloadUrl
         },
-        settings: parsed.settings || {
-          passingPercentage: 60,
-          requiredModulesCompleted: 12
-        }
+        settings: normalizeSettings(parsed.settings)
       };
     }
   } catch (_) {}
@@ -109,6 +171,7 @@ function loadState() {
     exams: structuredClone(INITIAL_EXAMS),
     assignments: structuredClone(INITIAL_ASSIGNMENTS),
     members: structuredClone(DEFAULT_MEMBERS),
+    membersRosterVersion: DEFAULT_MEMBERS_ROSTER_VERSION,
     founderProfile: structuredClone(DEFAULT_FOUNDER),
     developerProfile: structuredClone(DEFAULT_DEVELOPER),
     progressByUser: {},
@@ -126,10 +189,7 @@ function loadState() {
       latestApkVersionName: "1.5",
       apkDownloadUrl: FIREBASE_CONFIG.apkDownloadUrl
     },
-    settings: {
-      passingPercentage: 60,
-      requiredModulesCompleted: 12
-    }
+    settings: normalizeSettings()
   };
 }
 
@@ -141,6 +201,7 @@ let deferredInstallPrompt = null;
 let activeTimerInterval = null;
 let examCountdownInterval = null;
 let examModalSession = null;
+let demoCertificateActive = false;
 let selectedLoginAdminId = ADMIN_AMIRUL_ID;
 let desktopAdminAuthMode = "login"; // login | setup | reset
 let lastIssuedSecretNotice = "";
@@ -191,20 +252,97 @@ async function rehydrateVerifiedAdminSession() {
   }
 }
 
+function inferMediaMimeType(media) {
+  if (media?.mimeType) return media.mimeType;
+  const name = String(media?.fileName || "").toLowerCase();
+  if (media?.type === "PDF" || name.endsWith(".pdf")) return "application/pdf";
+  if (media?.type === "IMAGE") {
+    if (name.endsWith(".png")) return "image/png";
+    if (name.endsWith(".webp")) return "image/webp";
+    return "image/jpeg";
+  }
+  if (media?.type === "AUDIO") {
+    if (name.endsWith(".m4a")) return "audio/mp4";
+    if (name.endsWith(".wav")) return "audio/wav";
+    return "audio/mpeg";
+  }
+  if (media?.type === "VIDEO") {
+    if (name.endsWith(".webm")) return "video/webm";
+    return "video/mp4";
+  }
+  if (name.endsWith(".txt")) return "text/plain";
+  if (name.endsWith(".csv")) return "text/csv";
+  return "application/octet-stream";
+}
+
+function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
+  const title = media.title || media.fileName || "Study Material";
+  const fileName = media.fileName || "study-material";
+  const upperType = String(media.type || "").toUpperCase();
+  const safeUrl = escapeHtml(resolvedUrl);
+  const safeName = escapeHtml(fileName);
+  const lowerName = fileName.toLowerCase();
+
+  let previewBody = "";
+  if (upperType === "VIDEO" || /\.(mp4|webm|mov|mkv|3gp)$/i.test(lowerName)) {
+    previewBody = `<video controls autoplay playsinline src="${safeUrl}" style="width: 100%; max-height: 62vh; border-radius: 10px; background: #000;"></video>`;
+  } else if (upperType === "AUDIO" || /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(lowerName)) {
+    previewBody = `
+      <div style="background: var(--navy); color: #fff; border-radius: 12px; padding: 18px; margin-bottom: 12px;">
+        <div style="font-weight: 800; color: var(--gold-soft); margin-bottom: 10px;">Audio Lecture: ${escapeHtml(title)}</div>
+        <audio controls autoplay src="${safeUrl}" style="width: 100%;"></audio>
+      </div>
+    `;
+  } else if (upperType === "IMAGE" || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lowerName)) {
+    previewBody = `<img src="${safeUrl}" alt="${escapeHtml(title)}" style="max-width: 100%; max-height: 64vh; object-fit: contain; display: block; margin: 0 auto; border-radius: 10px;" />`;
+  } else if (upperType === "PDF" || lowerName.endsWith(".pdf")) {
+    previewBody = `<iframe src="${safeUrl}" title="${escapeHtml(title)}" style="width: 100%; height: 64vh; border: 1px solid var(--border); border-radius: 10px; background: #fff;"></iframe>`;
+  } else {
+    previewBody = `
+      <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 18px; text-align: center;">
+        <div style="font-weight: 800; color: var(--navy); font-size: 15px; margin-bottom: 6px;">${escapeHtml(title)}</div>
+        <div style="font-size: 12.5px; color: var(--muted); margin-bottom: 10px;">${safeName} • ${escapeHtml(media.fileSizeFormatted || formatBytes(media.fileSizeBytes))}</div>
+        <p style="font-size: 12.5px; color: #334155; margin: 0;">Download this document to open it with your installed Word, Excel, or PowerPoint app, or open it in a new tab.</p>
+      </div>
+    `;
+  }
+
+  openModal(
+    title,
+    `
+      ${previewBody}
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 14px;">
+        <a class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open in New Tab</a>
+        <a class="btn btn-gold btn-sm" href="${safeUrl}" download="${safeName}">Download File</a>
+      </div>
+      <div id="textPreviewContainer"></div>
+    `
+  );
+
+  if (blob && /\.(txt|csv|md|json|log)$/i.test(lowerName)) {
+    blob.text().then((txt) => {
+      const target = document.getElementById("textPreviewContainer");
+      if (target) {
+        target.innerHTML = `<pre style="margin-top: 12px; max-height: 45vh; overflow: auto; background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 10px; font-size: 12px; white-space: pre-wrap;">${escapeHtml(txt.slice(0, 20000))}</pre>`;
+      }
+    }).catch(() => {});
+  }
+}
+
 async function openSyncedCloudMedia(media) {
   if (!media) return;
   const rawUrl = String(media.url || "").trim();
   if (/^https?:\/\//i.test(rawUrl)) {
-    window.open(rawUrl, "_blank", "noopener,noreferrer");
+    presentMediaPreviewModal(media, rawUrl, null);
     return;
   }
   const cachedUrl = localAttachmentUrls.get(media.id);
   if (cachedUrl) {
-    window.open(cachedUrl, "_blank", "noopener,noreferrer");
+    presentMediaPreviewModal(media, cachedUrl, null);
     return;
   }
   if (!media.cloudFileId || !media.cloudChunkCount) {
-    showToast("File is stored locally on the uploader's device only (attach HTTPS link or re-upload under 3.5 MB).", true);
+    showToast("File is stored locally on the uploader's device only (attach HTTPS link or re-upload under 18 MB).", true);
     return;
   }
   const fb = await initFirebaseSdk();
@@ -227,10 +365,10 @@ async function openSyncedCloudMedia(media) {
       for (let j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
       chunks.push(arr);
     }
-    const blob = new Blob(chunks, { type: media.mimeType || (media.type === "PDF" ? "application/pdf" : "application/octet-stream") });
+    const blob = new Blob(chunks, { type: inferMediaMimeType(media) });
     const objUrl = URL.createObjectURL(blob);
     localAttachmentUrls.set(media.id, objUrl);
-    window.open(objUrl, "_blank", "noopener,noreferrer");
+    presentMediaPreviewModal(media, objUrl, blob);
   } catch (err) {
     showToast(`Unable to open cloud file: ${err.message || err}`, true);
   }
@@ -327,6 +465,13 @@ function closeModal() {
     clearInterval(examCountdownInterval);
     examCountdownInterval = null;
   }
+  const bodyEl = document.getElementById("modalBody");
+  if (bodyEl) {
+    bodyEl.querySelectorAll("audio, video").forEach((el) => {
+      try { el.pause(); } catch (_) {}
+    });
+    bodyEl.innerHTML = "";
+  }
   examModalSession = null;
   document.getElementById("modalBackdrop").classList.remove("open");
 }
@@ -414,10 +559,10 @@ async function syncFromCloudFirestore(silent = false) {
       if (Array.isArray(c.modules) && c.modules.length) state.modules = c.modules;
       if (Array.isArray(c.classes) && c.classes.length) state.classes = c.classes;
       if (c.settings) {
-        state.settings = { ...state.settings, ...c.settings };
+        state.settings = normalizeSettings({ ...state.settings, ...c.settings });
         try {
           if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
-          if (c.settings.developerProfileJson) state.developerProfile = JSON.parse(c.settings.developerProfileJson);
+          if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
           if (c.settings.membersJson) state.members = JSON.parse(c.settings.membersJson);
         } catch (_) {}
       }
@@ -591,7 +736,7 @@ function renderDashboard() {
       <div class="stat-card">
         <div class="stat-label">Active Study Time</div>
         <div class="stat-value">${formatSeconds(stats.totalSeconds)}</div>
-        <div class="stat-sub">PGD Certificate: ${stats.certEligible ? "Eligible" : "In Progress"}</div>
+        <div class="stat-sub">PGD Certificate: <span style="white-space: nowrap; font-weight: 700;">${stats.certEligible ? "Eligible" : "In Progress"}</span></div>
       </div>
     </div>
 
@@ -764,14 +909,22 @@ function renderCourses() {
               ${uniqueMaterials
                 .map((m) => {
                   const hasCloud = Boolean((m.cloudFileId && m.cloudChunkCount > 0) || /^https?:\/\//i.test(String(m.url || "")));
-                  return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #fff; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);">
-                    <div>
+                  const statusText = hasCloud ? "Cloud Synced" : localAttachmentUrls.has(m.id) ? "PC Session Ready" : "Device Local Only";
+                  return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #fff; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); flex-wrap: wrap;">
+                    <div style="min-width: 0; flex: 1;">
                       <div style="font-size: 13px; font-weight: 700; color: var(--navy);">${escapeHtml(m.title || m.fileName || "Study Material")}</div>
-                      <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(m.type || "FILE")} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${hasCloud ? "Cloud Synced" : "Device Local"}</div>
+                      <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(m.type || "FILE")} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${statusText}</div>
                     </div>
-                    <button type="button" class="btn btn-primary btn-sm" data-action="open-cloud-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">
-                      Open / Preview
-                    </button>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                      <button type="button" class="btn btn-primary btn-sm" data-action="open-cloud-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">
+                        Open / Preview
+                      </button>
+                      ${
+                        isAdminUser()
+                          ? `<button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="delete-class-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">Delete</button>`
+                          : ""
+                      }
+                    </div>
                   </div>`;
                 })
                 .join("")}
@@ -802,8 +955,8 @@ function renderCourses() {
           }
         </div>
 
-        <div style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 12px; padding: 14px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <div style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 12px; padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
             <h3 style="margin: 0; font-size: 14px; color: var(--navy);">Lesson Mastery Check (2 Questions)</h3>
             ${prog.quizScore !== null ? `<span class="badge ${prog.quizPassed ? "badge-ok" : "badge-warn"}">Score: ${prog.quizScore}%</span>` : ""}
           </div>
@@ -830,6 +983,56 @@ function renderCourses() {
             <button type="submit" class="btn btn-primary btn-sm">Submit Mastery Check</button>
           </form>
         </div>
+
+        ${
+          isAdminUser()
+            ? `
+          <div class="upload-center-card" id="desktopAdminMediaUploadCenter">
+            <div class="flex-header-between" style="margin-bottom: 10px;">
+              <strong style="font-size: 14.5px; color: #fff;">Admin Media Upload Center</strong>
+              <span style="font-size: 11.5px; color: var(--gold-soft); font-weight: 700; white-space: nowrap;">Max 18MB Cloud Sync</span>
+            </div>
+            <label class="btn btn-gold upload-banner-btn" style="cursor: pointer;">
+              Upload multiple files, PDF, image, document, audio, video
+              <input type="file" id="adminMultiMediaUploadInput" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*" />
+            </label>
+            <div class="media-upload-grid">
+              <label class="btn btn-primary media-upload-btn" style="cursor: pointer;">
+                Image
+                <input type="file" class="adminTypedMediaInput" data-media-type="IMAGE" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept="image/*" />
+              </label>
+              <label class="btn btn-primary media-upload-btn" style="cursor: pointer;">
+                Document
+                <input type="file" class="adminTypedMediaInput" data-media-type="DOCUMENT" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" />
+              </label>
+              <label class="btn btn-primary media-upload-btn" style="cursor: pointer;">
+                Audio
+                <input type="file" class="adminTypedMediaInput" data-media-type="AUDIO" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept="audio/*" />
+              </label>
+              <label class="btn btn-primary media-upload-btn" style="cursor: pointer;">
+                Video
+                <input type="file" class="adminTypedMediaInput" data-media-type="VIDEO" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept="video/*" />
+              </label>
+            </div>
+            <form id="adminAttachRemoteUrlForm" data-class-id="${escapeHtml(selectedClass.id)}" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.14); display: grid; gap: 8px;">
+              <div style="font-size: 11.5px; color: var(--gold-soft); font-weight: 700;">Or Attach Shared HTTPS Link (for files &gt;18 MB or cloud-hosted video/PDF)</div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <select id="adminRemoteMediaType" class="select" style="width: auto; min-width: 120px;">
+                  <option value="PDF">PDF</option>
+                  <option value="VIDEO">Video</option>
+                  <option value="AUDIO">Audio</option>
+                  <option value="IMAGE">Image</option>
+                  <option value="DOCUMENT">Document</option>
+                </select>
+                <input type="url" id="adminRemoteMediaUrl" class="input" style="flex: 1; min-width: 210px;" placeholder="https://example.com/lecture-material.pdf" required />
+                <input type="text" id="adminRemoteMediaTitle" class="input" style="width: 180px;" placeholder="Material Title" />
+                <button type="submit" class="btn btn-gold btn-sm">Attach HTTPS Link</button>
+              </div>
+            </form>
+          </div>
+        `
+            : ""
+        }
       </div>
     `
     : `<div class="card">Select a class from the left list.</div>`;
@@ -859,8 +1062,8 @@ function renderExams() {
       const best = userAttempts.reduce((max, a) => (a.percentage > (max?.percentage || -1) ? a : max), null);
       return `
         <div class="card" style="margin-bottom: 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
-            <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap;">
+            <div style="min-width: 0; flex: 1;">
               <span class="badge ${exam.id === "exam-final" ? "badge-gold" : "badge-navy"}">${exam.totalMarks} Marks • ${exam.durationMinutes} Mins</span>
               <h3 style="margin: 8px 0 4px; font-size: 15.5px; color: var(--navy);">${escapeHtml(exam.title)}</h3>
               <p style="margin: 0; font-size: 12.5px; color: var(--muted);">${exam.questions.length} Questions • Passing: ${exam.passingPercentage}%</p>
@@ -886,8 +1089,8 @@ function renderExams() {
       const sub = subs[asg.id];
       return `
         <div class="card" style="margin-bottom: 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
-            <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap;">
+            <div style="min-width: 0; flex: 1;">
               <span class="badge ${asg.isFinalProject ? "badge-gold" : "badge-navy"}">${asg.maxMarks} Marks${asg.isFinalProject ? " • Capstone" : ""}</span>
               <h3 style="margin: 8px 0 4px; font-size: 15px; color: var(--navy);">${escapeHtml(asg.title)}</h3>
               <p style="margin: 0; font-size: 12.5px; color: #334155;">${escapeHtml(asg.topicDescription)}</p>
@@ -929,21 +1132,51 @@ function renderLearning() {
   const user = getActiveUser();
   const stats = getOverallStats();
   const cert = state.certificatesByUser[user.id];
+  const certificatesEnabled = state.settings.certificatesEnabled !== false;
+  const demoCertEnabled = state.settings.demoCertificateEnabled !== false || isAdminUser();
+  const demoRecord = {
+    recipientName: user.fullName || "ISCEB Executive Candidate",
+    serial: "ISCEB-DEMO-PGD-2026",
+    issuedDate: new Date().toISOString().slice(0, 10),
+    isDemo: true
+  };
+  const displayedCert = demoCertificateActive && demoCertEnabled ? demoRecord : cert;
+  const leftSignerName = state.settings.leftSignerName || "Hasina Khan";
+  const leftSignerTitle = state.settings.leftSignerTitle || "";
+  const rightSignerName = state.settings.authorizedSignerName || "Amirul Islam";
+  const rightSignerTitle = state.settings.authorizedSignerTitle || "Founder of ISCEB";
 
   return `
     <div class="two-col-grid">
       <div class="card">
-        <h3 style="margin: 0 0 10px; color: var(--navy);">PGD Certificate Readiness</h3>
+        <div class="flex-header-between" style="margin-bottom: 10px;">
+          <h3 style="margin: 0; color: var(--navy);">Certificate Eligibility Dashboard</h3>
+          <span class="badge ${cert ? "badge-ok" : stats.certEligible ? "badge-gold" : "badge-warn"}" id="learningCertStatusBadge">${cert ? "Issued" : stats.certEligible ? "Eligible" : "In Progress"}</span>
+        </div>
         <div style="display: grid; gap: 8px; font-size: 13.5px; margin-bottom: 14px;">
           <div>1. Lectures Completed: <strong>${stats.completedCount} / ${stats.totalClasses}</strong></div>
           <div>2. Timed Exams Passed: <strong>${stats.passedExamsCount} / ${state.exams.length}</strong></div>
           <div>3. Active Study Hours Logged: <strong>${formatSeconds(stats.totalSeconds)}</strong></div>
           <div>4. Account Role: <strong>${escapeHtml(user.designation)}</strong></div>
         </div>
-        <button type="button" class="btn btn-gold" data-action="issue-certificate">
-          ${cert ? "Regenerate Official PGD Certificate" : "Generate Official PGD Certificate"}
-        </button>
-        ${cert ? `<button type="button" class="btn btn-primary" style="margin-left: 8px;" onclick="window.print()">Print / Save PDF</button>` : ""}
+        ${
+          !certificatesEnabled
+            ? `<div style="margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12.5px; font-weight: 700;">Official certificate generation is currently paused by the ISCEB Administrator.</div>`
+            : ""
+        }
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-gold" data-action="issue-certificate" ${!certificatesEnabled ? "disabled" : ""}>
+            ${cert ? "Regenerate Official PGD Certificate" : "Generate Official PGD Certificate"}
+          </button>
+          ${
+            demoCertEnabled
+              ? `<button type="button" class="btn btn-outline" data-action="preview-demo-certificate">
+                  ${demoCertificateActive ? "Hide Demo Preview" : "Preview Demo Certificate"}
+                </button>`
+              : ""
+          }
+          ${displayedCert ? `<button type="button" class="btn btn-primary" onclick="window.print()">Print / Save PDF</button>` : ""}
+        </div>
       </div>
 
       <div class="card">
@@ -958,33 +1191,36 @@ function renderLearning() {
     </div>
 
     ${
-      cert
+      displayedCert
         ? `
       <div class="cert-sheet">
         <img src="./isceb-logo.webp" alt="ISCEB" style="height: 68px; object-fit: contain; margin-bottom: 8px;" />
+        ${displayedCert.isDemo ? `<div class="cert-demo-pill">DEMO CERTIFICATE PREVIEW</div>` : ""}
         <div style="font-size: 12px; font-weight: 800; letter-spacing: 1.4px; color: var(--gold-dark); text-transform: uppercase;">
-          International Supply Chain Education Board (ISCEB)
+          Institute of Supply Chain Excellence Bangladesh (ISCEB)
         </div>
         <h2 style="margin: 8px 0 4px; font-size: 28px; color: var(--navy);">Post Graduate Diploma in Supply Chain Management</h2>
         <p style="margin: 0 0 14px; color: var(--muted); font-size: 14px;">This certifies that</p>
         <div style="font-size: 30px; font-weight: 800; color: var(--navy); border-bottom: 2px solid var(--gold); display: inline-block; padding: 0 28px 6px; margin-bottom: 14px;">
-          ${escapeHtml(cert.recipientName)}
+          ${escapeHtml(displayedCert.recipientName)}
         </div>
         <p style="max-width: 680px; margin: 0 auto 22px; font-size: 14px; color: #334155;">
           has successfully fulfilled the executive academic requirements across the 12-module, 48-lecture Post Graduate Diploma curriculum in Strategic & Operational Supply Chain Management.
         </p>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 26px; font-size: 12.5px;">
-          <div>
-            <div style="border-top: 1px solid #94A3B8; padding-top: 6px; font-weight: 800; color: var(--navy);">${escapeHtml(state.founderProfile.name)}</div>
-            <div style="color: var(--muted);">${escapeHtml(state.founderProfile.designation)} • ${escapeHtml(state.founderProfile.additionalRole)}</div>
+        <div class="cert-signatories-grid">
+          <div class="cert-sig-col">
+            <div class="cert-sig-space" aria-hidden="true"></div>
+            <div class="cert-sig-line">${escapeHtml(leftSignerName)}</div>
+            ${leftSignerTitle ? `<div style="color: var(--muted);">${escapeHtml(leftSignerTitle)}</div>` : ""}
           </div>
-          <div>
-            <div style="font-weight: 800; color: var(--gold-dark);">Serial: ${escapeHtml(cert.serial)}</div>
-            <div style="color: var(--muted);">Issued: ${escapeHtml(cert.issuedDate)}</div>
+          <div class="cert-sig-col">
+            <div style="font-weight: 800; color: var(--gold-dark);">Serial: ${escapeHtml(displayedCert.serial)}</div>
+            <div style="color: var(--muted);">Issued: ${escapeHtml(displayedCert.issuedDate)}</div>
           </div>
-          <div>
-            <div style="border-top: 1px solid #94A3B8; padding-top: 6px; font-weight: 800; color: var(--navy);">${escapeHtml(state.developerProfile.name)}</div>
-            <div style="color: var(--muted);">${escapeHtml(state.developerProfile.designation)}</div>
+          <div class="cert-sig-col">
+            <div class="cert-sig-space" aria-hidden="true"></div>
+            <div class="cert-sig-line">${escapeHtml(rightSignerName)}</div>
+            <div style="color: var(--gold-dark); font-weight: 700;">${escapeHtml(rightSignerTitle)}</div>
           </div>
         </div>
       </div>
@@ -994,68 +1230,144 @@ function renderLearning() {
   `;
 }
 
+function getMemberPhotoSrc(member) {
+  if (member?.photoUrl) return member.photoUrl;
+  const map = {
+    amirul: "./admin-amirul.webp",
+    hasina: "./member-hasina.webp",
+    masudur: "./member-masudur.webp",
+    asif: "./member-asif.webp",
+    mashiur: "./member-mashiur.webp",
+    shajibul: "./member-shajibul.webp",
+    tonmoy: "./member-tonmoy.webp",
+    nafiul: "./admin-nafiul.webp"
+  };
+  return map[member?.builtInPhotoKey] || "";
+}
+
+function renderMemberAvatarHtml(member, sizePx = 68) {
+  const src = getMemberPhotoSrc(member);
+  if (src) {
+    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(member.fullName)}" class="portrait-avatar" style="width: ${sizePx}px; height: ${sizePx}px; flex-shrink: 0; object-fit: cover; object-position: center 20%; border: 2.5px solid var(--gold); background: var(--navy);" />`;
+  }
+  const initials = String(member?.fullName || "IM")
+    .split(" ")
+    .filter((w) => w && w.toLowerCase() !== "md.")
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("") || "IM";
+  return `<div class="portrait-avatar" style="width: ${sizePx}px; height: ${sizePx}px; flex-shrink: 0; display: grid; place-items: center; background: var(--navy); color: var(--gold); font-weight: 800; font-size: ${Math.round(sizePx * 0.34)}px; border: 2.5px solid var(--gold);">${escapeHtml(initials)}</div>`;
+}
+
+function renderMemberDetailHtml(member) {
+  const skillsHtml = Array.isArray(member.skillsAndExpertise) && member.skillsAndExpertise.length
+    ? `<div style="display: flex; flex-wrap: wrap; gap: 6px;">${member.skillsAndExpertise
+        .map((s) => `<span class="badge badge-navy" style="font-size: 11px;">${escapeHtml(s)}</span>`)
+        .join("")}</div>`
+    : `<span style="color: var(--muted); font-style: italic; font-size: 12.5px;">Not specified</span>`;
+
+  return `
+    <div style="display: grid; gap: 14px;">
+      <div class="card-navy" style="border-radius: 14px; padding: 18px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+        ${renderMemberAvatarHtml(member, 92)}
+        <div style="flex: 1; min-width: 220px;">
+          <span class="badge badge-gold">#${Number(member.displayOrder || 1)} ${escapeHtml(member.designation || "ISCEB Member")}</span>
+          <h3 style="margin: 6px 0 3px; color: #fff; font-size: 20px;">${escapeHtml(member.fullName)}</h3>
+          <div style="font-size: 13px; color: var(--gold-soft); font-weight: 700;">${escapeHtml(member.professionalIdentity || "")}</div>
+          ${member.roleInIsceb ? `<div style="font-size: 12px; color: #CBD5E1; margin-top: 4px;">${escapeHtml(member.roleInIsceb)}</div>` : ""}
+        </div>
+      </div>
+
+      ${member.currentOrganization || member.roleInIsceb ? `
+        <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Organization & Role in ISCEB</div>
+          ${member.currentOrganization ? `<div style="font-size: 13px; color: #1E293B;"><strong>Workplace:</strong> ${escapeHtml(member.currentOrganization)}</div>` : ""}
+          ${member.roleInIsceb ? `<div style="font-size: 13px; color: #1E293B; margin-top: 2px;"><strong>Role in ISCEB:</strong> ${escapeHtml(member.roleInIsceb)}</div>` : ""}
+        </div>` : ""}
+
+      ${member.educationalQualification ? `
+        <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Educational Qualification & Certifications</div>
+          <div style="font-size: 13px; color: #334155; white-space: pre-line;">${escapeHtml(member.educationalQualification)}</div>
+        </div>` : ""}
+
+      ${member.professionalExperience ? `
+        <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Professional Experience</div>
+          <div style="font-size: 13px; color: #334155; white-space: pre-line;">${escapeHtml(member.professionalExperience)}</div>
+        </div>` : ""}
+
+      <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+        <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 6px;">Skills & Expertise</div>
+        ${skillsHtml}
+      </div>
+
+      ${member.biography ? `
+        <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Personal & Professional Biography</div>
+          <div style="font-size: 13px; color: #334155; white-space: pre-line; line-height: 1.55;">${escapeHtml(member.biography)}</div>
+        </div>` : ""}
+
+      ${member.contactInformation ? `
+        <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Contact & Affiliation</div>
+          <div style="font-size: 12.5px; color: var(--muted);">${escapeHtml(member.contactInformation)}</div>
+        </div>` : ""}
+    </div>
+  `;
+}
+
 function renderDirectory() {
   const sortedMembers = [...state.members].sort((a, b) => Number(a.displayOrder || 99) - Number(b.displayOrder || 99));
 
   return `
-    <div class="two-col-grid">
-      <div class="card card-navy" style="display: flex; gap: 16px; align-items: center;">
-        <img src="./admin-amirul.webp" alt="Md. Amirul Islam" class="portrait-avatar" style="width: 88px; height: 88px; object-fit: cover; object-position: center 20%; border: 3px solid var(--gold);" />
+    <div class="card card-navy" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
         <div>
-          <span class="badge badge-gold">${escapeHtml(state.founderProfile.designation)}</span>
-          <h3 style="margin: 6px 0 2px; color: #fff; font-size: 19px;">${escapeHtml(state.founderProfile.name)}</h3>
-          <div style="font-size: 12.5px; color: var(--gold-soft); font-weight: 700;">${escapeHtml(state.founderProfile.additionalRole)} • ${escapeHtml(state.founderProfile.professionalIdentity)}</div>
-          <p style="margin: 8px 0 4px; font-size: 12.5px; color: #CBD5E1;">${escapeHtml(state.founderProfile.biography)}</p>
-          <div style="font-size: 12px; color: #E2E8F0;">Mobile: ${escapeHtml(state.founderProfile.mobileNumber)} • ${escapeHtml(state.founderProfile.email)}</div>
+          <span class="badge badge-gold">ISCEB Official Directory</span>
+          <h2 style="margin: 6px 0 4px; color: #fff; font-size: 20px;">ISCEB Members & Executive Leadership</h2>
+          <p style="margin: 0; font-size: 13px; color: #CBD5E1;">Official leadership, faculty tutors, corporate advisors & technology team (${sortedMembers.length} active profiles). Click any profile to view full biography and credentials.</p>
         </div>
-      </div>
-
-      <div class="card" style="display: flex; gap: 16px; align-items: center;">
-        <img src="./admin-nafiul.webp" alt="Md. Nafiul Islam Nahin" class="portrait-avatar" style="width: 88px; height: 88px; object-fit: cover; object-position: center 20%; border: 3px solid var(--navy);" />
-        <div>
-          <span class="badge badge-navy">${escapeHtml(state.developerProfile.designation)}</span>
-          <h3 style="margin: 6px 0 2px; color: var(--navy); font-size: 19px;">${escapeHtml(state.developerProfile.name)}</h3>
-          <div style="font-size: 12.5px; color: var(--navy-soft); font-weight: 700;">Android, Web & Desktop Engineering</div>
-          <p style="margin: 8px 0 4px; font-size: 12.5px; color: #334155;">${escapeHtml(state.developerProfile.biography)}</p>
-          <div style="font-size: 12px; color: var(--muted);">Email: ${escapeHtml(state.developerProfile.contactEmail)} • ${escapeHtml(state.developerProfile.location)}</div>
-        </div>
+        ${isAdminUser() ? `<button type="button" class="btn btn-primary btn-sm" data-action="add-member" style="background: var(--gold); color: var(--navy); font-weight: 800;">+ Add ISCEB Member</button>` : ""}
       </div>
     </div>
 
-    <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <div>
-          <h3 style="margin: 0; color: var(--navy);">ISCEB Members & Faculty Directory</h3>
-          <p style="margin: 2px 0 0; font-size: 12.5px; color: var(--muted);">Verified leadership and board faculty (${sortedMembers.length} active profile${sortedMembers.length === 1 ? "" : "s"})</p>
-        </div>
-        ${isAdminUser() ? `<button type="button" class="btn btn-primary btn-sm" data-action="add-member">+ Add ISCEB Member</button>` : ""}
-      </div>
-      <div class="three-col-grid">
-        ${sortedMembers
-          .map(
-            (m, i) => `
-          <div class="card" style="margin-bottom: 0; background: var(--surface-muted);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-              <span class="badge badge-navy">#${i + 1} ${escapeHtml(m.designation)}</span>
+    <div class="two-col-grid" style="gap: 14px;">
+      ${sortedMembers
+        .map(
+          (m, i) => `
+        <div class="card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid #E2E8F0; transition: box-shadow .15s ease;">
+          <div>
+            <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 10px;">
+              ${renderMemberAvatarHtml(m, 72)}
+              <div style="min-width: 0; flex: 1;">
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px;">
+                  <span class="badge badge-navy">#${Number(m.displayOrder || i + 1)}</span>
+                  ${m.designation ? `<span class="badge badge-gold">${escapeHtml(m.designation)}</span>` : ""}
+                </div>
+                <h4 style="margin: 2px 0; color: var(--navy); font-size: 16px; line-height: 1.25;">${escapeHtml(m.fullName)}</h4>
+                <div style="font-size: 12px; font-weight: 700; color: var(--gold-dark); margin-top: 2px;">${escapeHtml(m.roleInIsceb || m.currentOrganization || "")}</div>
+              </div>
             </div>
-            <h4 style="margin: 4px 0; color: var(--navy); font-size: 15px;">${escapeHtml(m.fullName)}</h4>
-            <div style="font-size: 12px; font-weight: 700; color: var(--gold-dark); margin-bottom: 6px;">${escapeHtml(m.roleInIsceb || m.currentOrganization || "")}</div>
-            <p style="margin: 0 0 8px; font-size: 12.5px; color: #334155;">${escapeHtml(m.biography || "")}</p>
-            <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(m.contactInformation || "")}</div>
+            ${m.professionalIdentity ? `<div style="font-size: 12.5px; font-weight: 600; color: #1E293B; margin-bottom: 6px;">${escapeHtml(m.professionalIdentity)}</div>` : ""}
+            <p style="margin: 0 0 10px; font-size: 12.5px; color: #475569; line-height: 1.48; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">${escapeHtml(m.biography || "")}</p>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid #F1F5F9;">
+            <button type="button" class="btn btn-primary btn-sm" data-action="view-member" data-member-id="${escapeHtml(m.id)}">View Full Profile →</button>
             ${
               isAdminUser()
-                ? `<div style="display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap;">
+                ? `<div style="display: flex; gap: 6px; flex-wrap: wrap;">
                     <button type="button" class="btn btn-outline btn-sm" data-action="edit-member" data-member-id="${escapeHtml(m.id)}">Edit</button>
                     <button type="button" class="btn btn-outline btn-sm" data-action="move-member-up" data-member-id="${escapeHtml(m.id)}">Up</button>
                     ${m.id !== "member-founder-amirul" ? `<button type="button" class="btn btn-danger btn-sm" data-action="delete-member" data-member-id="${escapeHtml(m.id)}">Remove</button>` : ""}
                   </div>`
-                : ""
+                : `<span style="font-size: 11px; color: var(--muted);">${escapeHtml(m.currentOrganization || "")}</span>`
             }
           </div>
-        `
-          )
-          .join("")}
-      </div>
+        </div>
+      `
+        )
+        .join("")}
     </div>
   `;
 }
@@ -1256,7 +1568,25 @@ function renderAdmin() {
           <input type="password" id="deskChangeConfirmPw" class="input" placeholder="Confirm New Password" autocomplete="new-password" required />
           <button type="submit" class="btn btn-outline btn-sm">Update My Admin Password</button>
         </form>
-        <div style="display: grid; gap: 6px; font-size: 12.5px; color: #334155; border-top: 1px solid var(--border); padding-top: 10px;">
+        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: grid; gap: 8px;">
+          <div style="font-size: 12.5px; font-weight: 800; color: var(--navy);">Certificate & Demo Diploma Controls</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-sm ${state.settings.certificatesEnabled !== false ? "btn-primary" : "btn-outline"}" data-action="toggle-certificates-enabled">
+              Official Certificates: ${state.settings.certificatesEnabled !== false ? "Enabled" : "Disabled"}
+            </button>
+            <button type="button" class="btn btn-sm ${state.settings.demoCertificateEnabled !== false ? "btn-gold" : "btn-outline"}" data-action="toggle-demo-cert-enabled">
+              Demo Certificate Preview: ${state.settings.demoCertificateEnabled !== false ? "Enabled" : "Disabled"}
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" data-action="admin-preview-demo-cert">
+              Open & Print Demo Certificate
+            </button>
+          </div>
+          <div style="font-size: 11.5px; color: var(--muted);">
+            Signatories — Left: <strong>${escapeHtml(state.settings.leftSignerName || "Hasina Khan")}</strong> • Right: <strong>${escapeHtml(state.settings.authorizedSignerName || "Amirul Islam")}</strong> (${escapeHtml(state.settings.authorizedSignerTitle || "Founder of ISCEB")})
+          </div>
+        </div>
+
+        <div style="display: grid; gap: 6px; font-size: 12.5px; color: #334155; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px;">
           <div><strong>Firebase Project:</strong> ${escapeHtml(FIREBASE_CONFIG.projectId)}</div>
           <div><strong>Firestore DB:</strong> ${escapeHtml(FIREBASE_CONFIG.databaseId)}</div>
           <div><strong>Google Cloud Auth:</strong> ${escapeHtml(cloudUser ? cloudUser.email : "Not signed in")}</div>
@@ -1275,7 +1605,7 @@ function render() {
   });
 
   const titles = {
-    dashboard: ["Executive SCM Dashboard", "International Supply Chain Education Board (ISCEB) — Desktop Workspace"],
+    dashboard: ["Executive SCM Dashboard", "Institute of Supply Chain Excellence Bangladesh (ISCEB) — Desktop Workspace"],
     courses: ["All 12 Modules & 48 Lectures", "Part 1: Basic Level (1–28) & Part 2: Advance Level (29–48)"],
     exams: ["Timed Examinations & Assignments", "Official Module Assessments, 100-Mark Final Exam & Capstone Study"],
     learning: ["My Learning & Official PGD Certificate", "Academic Readiness, Printable Executive Diploma & Serial Verification"],
@@ -1412,6 +1742,13 @@ function setupListeners() {
     if (btn) btn.style.display = "inline-flex";
   });
 
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    const btn = document.getElementById("installPwaBtn");
+    if (btn) btn.style.display = "none";
+    showToast("ISCEB App installed! Future GitHub updates will auto-sync silently.");
+  });
+
   document.getElementById("installPwaBtn").addEventListener("click", async () => {
     if (!deferredInstallPrompt) return;
     deferredInstallPrompt.prompt();
@@ -1419,6 +1756,46 @@ function setupListeners() {
     deferredInstallPrompt = null;
     document.getElementById("installPwaBtn").style.display = "none";
   });
+
+  const checkPwaUpdateBtn = document.getElementById("checkPwaUpdateBtn");
+  if (checkPwaUpdateBtn) {
+    checkPwaUpdateBtn.addEventListener("click", async () => {
+      await fetchVersionJson();
+      if ("serviceWorker" in navigator) {
+        try {
+          const reg = window.__iscebSwRegistration || (await navigator.serviceWorker.getRegistration("./"));
+          if (reg) {
+            await reg.update();
+            if (reg.waiting) {
+              reg.waiting.postMessage({ type: "SKIP_WAITING" });
+              showToast("New ISCEB PWA version ready — applying update now...");
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+      const verRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
+      if (verRes && verRes.ok) {
+        const info = await verRes.json().catch(() => null);
+        if (info && info.buildId) {
+          showToast(`ISCEB Live PWA is up to date (Build ${info.buildId}).`);
+          return;
+        }
+      }
+      showToast("ISCEB Live PWA update check completed.");
+    });
+  }
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "ISCEB_PWA_UPDATED") {
+        const statusEl = document.getElementById("sidebarPwaStatus");
+        if (statusEl && event.data.buildId && event.data.buildId !== "__ISCEB_SW_BUILD__") {
+          statusEl.textContent = `PWA Build: ${event.data.buildId}`;
+        }
+      }
+    });
+  }
 
   document.getElementById("mainContent").addEventListener("click", (e) => {
     const navTarget = e.target.closest("[data-nav]");
@@ -1506,6 +1883,11 @@ function setupListeners() {
          </form>`
       );
     } else if (action === "issue-certificate") {
+      if (state.settings.certificatesEnabled === false) {
+        showToast("Official certificate generation is currently disabled by Administrator.", true);
+        return;
+      }
+      demoCertificateActive = false;
       const user = getActiveUser();
       const serial = `ISCEB-PGD-2026-${String(1000 + Math.floor(Math.random() * 8999))}`;
       state.certificatesByUser[user.id] = {
@@ -1515,6 +1897,26 @@ function setupListeners() {
       };
       saveState();
       showToast(`Official PGD Certificate generated (${serial}).`);
+      render();
+    } else if (action === "preview-demo-certificate") {
+      demoCertificateActive = !demoCertificateActive;
+      showToast(demoCertificateActive ? "Demo Certificate preview opened (Hasina Khan & Amirul Islam)." : "Demo Certificate preview closed.");
+      render();
+    } else if (action === "toggle-certificates-enabled") {
+      state.settings.certificatesEnabled = state.settings.certificatesEnabled === false;
+      saveState();
+      showToast(`Official Certificate generation ${state.settings.certificatesEnabled ? "enabled" : "disabled"}.`);
+      render();
+    } else if (action === "toggle-demo-cert-enabled") {
+      state.settings.demoCertificateEnabled = state.settings.demoCertificateEnabled === false;
+      saveState();
+      showToast(`Demo Certificate preview ${state.settings.demoCertificateEnabled ? "enabled" : "disabled"}.`);
+      render();
+    } else if (action === "admin-preview-demo-cert") {
+      demoCertificateActive = true;
+      state.currentView = "learning";
+      saveState();
+      showToast("Opened Demo Certificate preview.");
       render();
     } else if (action === "verify-cert") {
       const serial = document.getElementById("verifyCertInput")?.value.trim();
@@ -1529,6 +1931,34 @@ function setupListeners() {
       const all = cls ? [cls.pdfMedia, cls.audioMedia, cls.videoMedia, ...(cls.attachments || [])].filter(Boolean) : [];
       const media = all.find((m) => (m.id || "") === mid) || all[0];
       openSyncedCloudMedia(media);
+    } else if (action === "delete-class-media") {
+      if (!isAdminUser()) {
+        showToast("Admin sign-in required to remove class materials.", true);
+        return;
+      }
+      const cid = actBtn.dataset.classId;
+      const mid = actBtn.dataset.mediaId;
+      const cls = state.classes.find((c) => c.id === cid);
+      if (!cls) return;
+      if (cls.pdfMedia?.id === mid) cls.pdfMedia = null;
+      if (cls.audioMedia?.id === mid) cls.audioMedia = null;
+      if (cls.videoMedia?.id === mid) cls.videoMedia = null;
+      cls.attachments = (cls.attachments || []).filter((m) => (m.id || "") !== mid);
+      saveState();
+      if (cloudUser) {
+        pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 105) + 1,
+          releaseNotes: `Removed material from Lecture ${cls.lectureCode}`,
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+        });
+      } else {
+        showToast("Removed material locally. Connect Google Cloud Sync to update student devices.");
+        render();
+      }
     } else if (action === "select-login-admin") {
       selectedLoginAdminId = actBtn.dataset.adminId;
       desktopAdminAuthMode = "login";
@@ -1555,6 +1985,11 @@ function setupListeners() {
       });
     } else if (action === "trigger-google-auth") {
       signInWithGoogleCloud();
+    } else if (action === "view-member") {
+      const member = state.members.find((m) => m.id === actBtn.dataset.memberId);
+      if (member) {
+        openModal(`ISCEB Member Profile`, renderMemberDetailHtml(member));
+      }
     } else if (action === "add-member" || action === "edit-member") {
       const member = action === "edit-member" ? state.members.find((m) => m.id === actBtn.dataset.memberId) : null;
       openModal(
@@ -1610,6 +2045,13 @@ function setupListeners() {
       });
       showToast(`Attached ${file.name} for PC viewing.`);
       render();
+    } else if (e.target.id === "adminMultiMediaUploadInput" || e.target.classList.contains("adminTypedMediaInput")) {
+      const cid = e.target.dataset.classId;
+      const forcedType = e.target.dataset.mediaType || "";
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (!files.length) return;
+      handleAdminMediaFilesSelected(cid, forcedType, files);
     }
   });
 
@@ -1629,6 +2071,56 @@ function setupListeners() {
       updateClassProgress(cid, { quizScore: score, quizPassed: passed, completed: passed ? true : getClassProgress(cid).completed });
       showToast(`Lesson Mastery Check: ${score}% (${passed ? "Passed & Complete" : "Review Notes"})`, !passed);
       render();
+    } else if (e.target.id === "adminAttachRemoteUrlForm") {
+      e.preventDefault();
+      if (!isAdminUser()) {
+        showToast("Admin authentication required.", true);
+        return;
+      }
+      const cid = e.target.dataset.classId;
+      const cls = state.classes.find((c) => c.id === cid);
+      if (!cls) return;
+      const rawUrl = (document.getElementById("adminRemoteMediaUrl")?.value || "").trim();
+      const mediaType = document.getElementById("adminRemoteMediaType")?.value || "PDF";
+      const customTitle = (document.getElementById("adminRemoteMediaTitle")?.value || "").trim();
+      if (!/^https?:\/\//i.test(rawUrl)) {
+        showToast("Enter a valid HTTPS link starting with https://", true);
+        return;
+      }
+      const derivedName = rawUrl.split("?")[0].split("/").pop() || `material.${mediaType.toLowerCase()}`;
+      const mediaObj = {
+        id: `link-${Date.now()}`,
+        type: mediaType,
+        fileName: derivedName,
+        fileSizeFormatted: "Cloud Link",
+        fileSizeBytes: 0,
+        url: rawUrl,
+        uploadTimestamp: Date.now(),
+        title: customTitle || derivedName,
+        description: "",
+        mimeType: inferMediaMimeType({ type: mediaType, fileName: derivedName }),
+        cloudFileId: "",
+        cloudChunkCount: 0
+      };
+      if (mediaType === "PDF") cls.pdfMedia = mediaObj;
+      if (mediaType === "AUDIO") cls.audioMedia = mediaObj;
+      if (mediaType === "VIDEO") cls.videoMedia = mediaObj;
+      cls.attachments = [...(cls.attachments || []), mediaObj];
+      saveState();
+      if (cloudUser) {
+        pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 105) + 1,
+          releaseNotes: `Attached HTTPS ${mediaType} to Lecture ${cls.lectureCode}`,
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+        });
+      } else {
+        showToast("Attached link locally. Sign in with 'Google Cloud Sync' to publish to student phones.");
+        render();
+      }
     } else if (e.target.id === "adminPublishForm") {
       e.preventDefault();
       if (!isAdminUser()) {
@@ -1756,6 +2248,110 @@ function setupListeners() {
       render();
     }
   });
+}
+
+async function handleAdminMediaFilesSelected(cid, forcedType, files) {
+  if (!isAdminUser()) {
+    showToast("Admin login required to upload class media.", true);
+    return;
+  }
+  const cls = state.classes.find((c) => c.id === cid);
+  if (!cls) return;
+
+  const fb = await initFirebaseSdk();
+  const canCloudSync = Boolean(fb && cloudUser);
+  const newMediaList = [];
+  let cloudSyncedCount = 0;
+  let largeLocalOnlyCount = 0;
+  let cloudErrorMsg = "";
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const lower = file.name.toLowerCase();
+    const inferred = lower.endsWith(".pdf")
+      ? "PDF"
+      : (forcedType || (
+        file.type.startsWith("image/") ? "IMAGE"
+          : file.type.startsWith("audio/") ? "AUDIO"
+          : file.type.startsWith("video/") ? "VIDEO"
+          : "DOCUMENT"
+      ));
+    const mediaId = `pc-media-${Date.now()}-${i}`;
+    localAttachmentUrls.set(mediaId, URL.createObjectURL(file));
+
+    let cloudFileId = "";
+    let cloudChunkCount = 0;
+
+    if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
+      try {
+        showToast(`Uploading ${file.name} (${i + 1}/${files.length}) to Firebase Firestore...`);
+        const rawBytes = new Uint8Array(await file.arrayBuffer());
+        const candidateId = `pc_${cid}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const { doc, setDoc, serverTimestamp } = fb.fsMod;
+        const chunks = splitBytesIntoLessonFileChunks({
+          fileId: candidateId,
+          bytes: rawBytes,
+          authorUid: cloudUser.uid,
+          serverTimestampToken: serverTimestamp()
+        });
+        for (const chunk of chunks) {
+          await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
+        }
+        cloudFileId = candidateId;
+        cloudChunkCount = chunks.length;
+        cloudSyncedCount += 1;
+      } catch (err) {
+        cloudErrorMsg = err?.message || "Firestore chunk upload denied";
+      }
+    } else if (file.size > MAX_CLOUD_FILE_BYTES) {
+      largeLocalOnlyCount += 1;
+    }
+
+    const mediaObj = {
+      id: mediaId,
+      type: inferred,
+      title: file.name.replace(/\.[^.]+$/, ""),
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      fileSizeFormatted: formatBytes(file.size),
+      url: "",
+      uploadTimestamp: Date.now(),
+      description: "",
+      mimeType: file.type || inferMediaMimeType({ type: inferred, fileName: file.name }),
+      cloudFileId,
+      cloudChunkCount
+    };
+    if (inferred === "PDF") cls.pdfMedia = mediaObj;
+    if (inferred === "AUDIO") cls.audioMedia = mediaObj;
+    if (inferred === "VIDEO") cls.videoMedia = mediaObj;
+    newMediaList.push(mediaObj);
+  }
+
+  cls.attachments = [...(cls.attachments || []), ...newMediaList];
+  saveState();
+
+  if (canCloudSync && cloudSyncedCount > 0) {
+    await pushCurriculumToFirestore({
+      versionTag: state.manifest.versionTag || "v1.6.0",
+      versionCode: Number(state.manifest.versionCode || 105) + 1,
+      releaseNotes: `Uploaded ${cloudSyncedCount} cloud study file(s) to Lecture ${cls.lectureCode}`,
+      announcement: state.manifest.announcement || "",
+      apkVersionName: state.manifest.latestApkVersionName || "1.6",
+      apkVersionCode: state.manifest.latestApkVersionCode || 7,
+      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+    });
+  } else if (cloudErrorMsg) {
+    showToast(`Saved for PC only — Firestore sync failed: ${cloudErrorMsg}. Sign in with Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
+    render();
+  } else if (!canCloudSync) {
+    showToast(`Attached ${files.length} file(s) on this PC. Click 'Google Cloud Sync' to upload for student phones.`);
+    render();
+  } else if (largeLocalOnlyCount > 0) {
+    showToast(`File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach HTTPS Link' for student phones.`, true);
+    render();
+  } else {
+    render();
+  }
 }
 
 setupListeners();

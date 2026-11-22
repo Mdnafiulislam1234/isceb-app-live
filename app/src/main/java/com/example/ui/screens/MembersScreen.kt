@@ -230,61 +230,6 @@ fun MembersScreen(
             }
         }
 
-        // Separate Founder Profile Card & Developer Profile Card
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "Founder & App Engineering Profiles",
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = NavyPrimary
-                    )
-                )
-
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val sideBySide = maxWidth >= 600.dp
-                    if (sideBySide) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            FounderSummaryCard(
-                                founderProfile = founderProfile,
-                                onClick = onOpenFounderProfile,
-                                modifier = Modifier.weight(1f)
-                            )
-                            DeveloperSummaryCard(
-                                developerProfile = developerProfile,
-                                onClick = onOpenDeveloperProfile,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            FounderSummaryCard(
-                                founderProfile = founderProfile,
-                                onClick = onOpenFounderProfile,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            DeveloperSummaryCard(
-                                developerProfile = developerProfile,
-                                onClick = onOpenDeveloperProfile,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         // Search Members Directory
         item {
             Column(
@@ -607,16 +552,35 @@ private fun MemberDirectoryCard(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = member.fullName,
-                        style = MaterialTheme.typography.titleSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = NavyPrimary,
-                            fontSize = 14.5.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = NavyPrimary
+                        ) {
+                            Text(
+                                text = "#${member.displayOrder}",
+                                color = GoldMetallic,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = member.fullName,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = NavyPrimary,
+                                fontSize = 14.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
                     if (member.designation.isNotBlank()) {
                         Text(
                             text = member.designation,
@@ -1069,6 +1033,60 @@ fun MemberAvatarBox(
             builtInPhotoKey == "amirul" -> {
                 Image(
                     painter = painterResource(id = R.drawable.img_admin_amirul),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "hasina" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_hasina),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "masudur" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_masudur),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "asif" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_asif),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "mashiur" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_mashiur),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "shajibul" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_shajibul),
+                    contentDescription = fullName,
+                    modifier = Modifier.fillMaxSize(),
+                    alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            builtInPhotoKey == "tonmoy" -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_member_tonmoy),
                     contentDescription = fullName,
                     modifier = Modifier.fillMaxSize(),
                     alignment = androidx.compose.ui.BiasAlignment(0f, -0.35f),

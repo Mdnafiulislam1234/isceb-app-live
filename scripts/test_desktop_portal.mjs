@@ -5,13 +5,16 @@ import {
   AVAILABLE_USERS,
   DEFAULT_DEVELOPER,
   DEFAULT_FOUNDER,
+  DEFAULT_MEMBERS,
   FIREBASE_CONFIG,
   INITIAL_ASSIGNMENTS,
   INITIAL_CLASSES,
   INITIAL_EXAMS,
   INITIAL_MODULES,
+  MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
-  buildFirestoreManifestPayload
+  buildFirestoreManifestPayload,
+  splitBytesIntoLessonFileChunks
 } from "../public/desktop/curriculum-data.js";
 import {
   ADMIN_AMIRUL_ID,
@@ -55,6 +58,33 @@ test("Desktop role integrity separates Founder Md. Amirul Islam and Developer Md
   const students = getStudentSwitcherUsers(AVAILABLE_USERS);
   assert.equal(students.length, 3);
   assert.ok(students.every((u) => u.role === "STUDENT"));
+});
+
+test("Desktop ISCEB Members directory enforces exact 1..8 order, portraits, and full bios", () => {
+  assert.equal(DEFAULT_MEMBERS.length, 8);
+  assert.deepEqual(
+    DEFAULT_MEMBERS.map((m) => m.displayOrder),
+    [1, 2, 3, 4, 5, 6, 7, 8]
+  );
+  assert.deepEqual(
+    DEFAULT_MEMBERS.map((m) => m.fullName),
+    [
+      "Md. Amirul Islam",
+      "Hasina Akter Khan",
+      "MD. MASUDUR RAHMAN",
+      "Shah Mohammad Asif Mahmud",
+      "Mr. Md. Mashiur Rahman",
+      "Shajibul Hasan",
+      "Tonmoy Khan",
+      "Developer Mohammad Nafiul Islam"
+    ]
+  );
+  for (const member of DEFAULT_MEMBERS) {
+    assert.ok(member.photoUrl.startsWith("./") && member.photoUrl.endsWith(".webp"));
+    const diskPath = `./public/desktop/${member.photoUrl.slice(2)}`;
+    assert.ok(fs.existsSync(diskPath), `Missing desktop member photo: ${diskPath}`);
+    assert.ok(member.biography.length > 80, `Incomplete biography for ${member.fullName}`);
+  }
 });
 
 test("Desktop assessments preserve exact marks allocation", () => {
@@ -194,4 +224,133 @@ test("Desktop Web Portal PBKDF2 admin auth enforces strength, single-use invite,
   assert.equal(okLogin.ok, true);
   assert.equal(await auth.getValidatedSessionAdminId(), ADMIN_AMIRUL_ID);
 });
+
+test("Desktop Web Portal enforces single-line badges, untruncated upload banner, and parallel media upload options grid", () => {
+  const css = fs.readFileSync("./public/desktop/styles.css", "utf8");
+  assert.ok(css.includes("white-space: nowrap;"), "Badges and media upload buttons must disable line wrapping");
+  assert.ok(css.includes(".upload-banner-btn"), "Missing .upload-banner-btn CSS");
+  assert.ok(css.includes("overflow: visible;"), "Upload banner must never clip text");
+  assert.ok(css.includes(".media-upload-grid"), "Missing .media-upload-grid CSS");
+  assert.ok(css.includes(".media-upload-btn"), "Missing .media-upload-btn CSS");
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("Certificate Eligibility Dashboard"));
+  assert.ok(appJs.includes("Upload multiple files, PDF, image, document, audio, video"));
+  for (const label of ["Image", "Document", "Audio", "Video"]) {
+    assert.ok(appJs.includes(label), `Missing media upload option: ${label}`);
+  }
+});
+
+test("PC/Web portal enforces official ISCEB full name, Hasina Khan & Amirul Islam certificate signatories, and Demo Preview", () => {
+  const indexHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  const manifestJson = fs.readFileSync("./public/desktop/manifest.webmanifest", "utf8");
+  const curriculumJs = fs.readFileSync("./public/desktop/curriculum-data.js", "utf8");
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  const stylesCss = fs.readFileSync("./public/desktop/styles.css", "utf8");
+
+  for (const [name, content] of [
+    ["index.html", indexHtml],
+    ["manifest.webmanifest", manifestJson],
+    ["curriculum-data.js", curriculumJs]
+  ]) {
+    assert.ok(content.includes("Institute of Supply Chain Excellence Bangladesh"), `${name} must include official ISCEB full name`);
+    assert.ok(!content.includes("International Supply Chain Education Board"), `${name} must not contain old wrong full name`);
+  }
+
+  assert.ok(appJs.includes("Institute of Supply Chain Excellence Bangladesh (ISCEB)"));
+  assert.ok(appJs.includes('leftSignerName: "Hasina Khan"'));
+  assert.ok(appJs.includes('authorizedSignerName: "Amirul Islam"'));
+  assert.ok(appJs.includes('authorizedSignerTitle: "Founder of ISCEB"'));
+  assert.ok(appJs.includes('data-action="preview-demo-certificate"'));
+  assert.ok(appJs.includes('data-action="toggle-certificates-enabled"'));
+  assert.ok(appJs.includes('data-action="toggle-demo-cert-enabled"'));
+  assert.ok(stylesCss.includes(".cert-signatories-grid"));
+
+  const certStart = appJs.indexOf('<div class="cert-sheet">');
+  const certEnd = appJs.indexOf("function getMemberPhotoSrc");
+  assert.ok(certStart > 0 && certEnd > certStart, "Missing .cert-sheet template");
+  const certSection = appJs.slice(certStart, certEnd);
+  assert.ok(certSection.includes("Institute of Supply Chain Excellence Bangladesh (ISCEB)"));
+  assert.ok(certSection.includes("leftSignerName"));
+  assert.ok(certSection.includes("rightSignerName"));
+  assert.ok(certSection.includes("rightSignerTitle"));
+  assert.ok(!certSection.includes("developerProfile"), "Certificate template must never render developer Nafiul profile");
+  assert.ok(!certSection.includes("Nafiul"), "Certificate template must never contain Nafiul");
+});
+
+test("Desktop chunked lesson_files helper complies with firestore.rules limits and strips ephemeral blob URLs", () => {
+  assert.equal(MAX_CLOUD_FILE_BYTES, 18 * 1024 * 1024);
+
+  const sampleBytes = new Uint8Array(850_000);
+  for (let i = 0; i < sampleBytes.length; i++) sampleBytes[i] = i % 251;
+
+  const chunks = splitBytesIntoLessonFileChunks({
+    fileId: "pc_class-1_0_170000",
+    bytes: sampleBytes,
+    authorUid: "admin-uid-123",
+    serverTimestampToken: "TS"
+  });
+  assert.equal(chunks.length, 3);
+  assert.equal(chunks[0].chunkId, "pc_class-1_0_170000_0");
+  assert.equal(chunks[0].payload.totalChunks, 3);
+  assert.ok(chunks[0].payload.dataBase64.length <= 600_000);
+  assert.equal(chunks[0].payload.authorUid, "admin-uid-123");
+
+  const catalog = buildFirestoreCatalogPayload({
+    authorUid: "admin-uid-123",
+    versionCode: 110,
+    modules: INITIAL_MODULES,
+    classes: INITIAL_CLASSES.map((c, idx) =>
+      idx === 0
+        ? {
+            ...c,
+            pdfMedia: { id: "m1", type: "PDF", fileName: "Guide.pdf", url: "blob:https://example.com/123", cloudFileId: "cf1", cloudChunkCount: 1 },
+            attachments: [{ id: "m1", type: "PDF", fileName: "Guide.pdf", url: "blob:https://example.com/123", cloudFileId: "cf1", cloudChunkCount: 1 }]
+          }
+        : c
+    ),
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.equal(catalog.classes[0].pdfMedia.url, "");
+  assert.equal(catalog.classes[0].attachments[0].url, "");
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("presentMediaPreviewModal"));
+  assert.ok(appJs.includes("handleAdminMediaFilesSelected"));
+  assert.ok(appJs.includes("adminAttachRemoteUrlForm"));
+  assert.ok(appJs.includes('data-action="delete-class-media"'));
+});
+
+test("GitHub Pages PWA setup configures permanent manifest, auto-updating Service Worker, and CI build stamping", () => {
+  assert.ok(fs.existsSync("./public/.nojekyll"), "public/.nojekyll is required for GitHub Pages");
+
+  const manifest = JSON.parse(fs.readFileSync("./public/desktop/manifest.webmanifest", "utf8"));
+  assert.equal(manifest.start_url, "./");
+  assert.equal(manifest.scope, "./");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.orientation, "any");
+  assert.equal(manifest.short_name, "ISCEB");
+  assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 2);
+
+  const swJs = fs.readFileSync("./public/desktop/sw.js", "utf8");
+  assert.ok(swJs.includes("__ISCEB_SW_BUILD__"));
+  assert.ok(swJs.includes("skipWaiting()"));
+  assert.ok(swJs.includes("clients.claim()"));
+  assert.ok(swJs.includes('cache: "no-store"'));
+  assert.ok(swJs.includes("ISCEB_PWA_UPDATED"));
+
+  const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  assert.ok(desktopHtml.includes('updateViaCache: "none"'));
+  assert.ok(desktopHtml.includes("reg.update()"));
+  assert.ok(desktopHtml.includes("controllerchange"));
+  assert.ok(desktopHtml.includes("visibilitychange"));
+  assert.ok(desktopHtml.includes("checkPwaUpdateBtn"));
+
+  const workflow = fs.readFileSync("./.github/workflows/release-apk.yml", "utf8");
+  assert.ok(workflow.includes("__ISCEB_SW_BUILD__"));
+  assert.ok(workflow.includes("pwa-version.json"));
+  assert.ok(workflow.includes("actions/deploy-pages@v4"));
+});
+
 

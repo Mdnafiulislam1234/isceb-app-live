@@ -116,7 +116,8 @@ jobs:
             --tests "com.example.ExampleRobolectricTest" \
             --tests "com.example.ExampleUnitTest" \
             --tests "com.example.UpdateSyncMechanismTest" \
-            --tests "com.example.SecurityAndFixVerificationTest"
+            --tests "com.example.SecurityAndFixVerificationTest" \
+            --tests "com.example.LmsRoleAndCertificationTest"
 
       - name: Build, Zipalign, Sign (v1+v2+v3) & Generate version.json
         env:
@@ -128,12 +129,32 @@ jobs:
             "ISCEB v${{ steps.meta.outputs.version_name }} (Build ${{ steps.meta.outputs.version_code }}): ${{ steps.meta.outputs.commit_msg }}" \
             "${{ steps.meta.outputs.version_code }}"
 
+      - name: Stamp PWA Service Worker Cache & Version Metadata
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          PWA_BUILD_ID="b${{ steps.meta.outputs.version_code }}-${SHORT_SHA}"
+          sed -i "s/__ISCEB_SW_BUILD__/${PWA_BUILD_ID}/g" public/desktop/sw.js
+          touch public/.nojekyll
+          cat > public/desktop/pwa-version.json <<EOF
+          {
+            "appName": "ISCEB",
+            "buildId": "${PWA_BUILD_ID}",
+            "versionName": "${{ steps.meta.outputs.version_name }}",
+            "versionCode": ${{ steps.meta.outputs.version_code }},
+            "commitSha": "${SHORT_SHA}",
+            "pwaUrl": "${{ steps.meta.outputs.pages_url }}/desktop/",
+            "updatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          echo "Stamped ISCEB PWA build: ${PWA_BUILD_ID}"
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
           enablement: true
 
-      - name: Upload GitHub Pages Artifact (Download Portal + QR + APK + Desktop App)
+      - name: Upload GitHub Pages Artifact (Download Portal + QR + APK + Live PWA)
         uses: actions/upload-pages-artifact@v3
         with:
           path: public

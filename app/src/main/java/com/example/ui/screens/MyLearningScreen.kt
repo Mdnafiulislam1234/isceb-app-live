@@ -2,17 +2,19 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,15 +23,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import com.example.ui.icons.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
-import com.example.ui.icons.EmojiEvents
 import androidx.compose.material.icons.filled.Info
-import com.example.ui.icons.LocalFireDepartment
-import com.example.ui.icons.OpenInNew
-import com.example.ui.icons.School
-import com.example.ui.icons.Shield
-import com.example.ui.icons.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,8 +33,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
@@ -60,25 +55,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.model.AdminCompletionSettings
 import com.example.model.CertificateEligibility
 import com.example.model.CertificateRecord
-import com.example.model.CertificateStatus
 import com.example.model.CourseClass
 import com.example.model.CourseModule
 import com.example.model.UserProgress
 import com.example.ui.components.CertificatePreviewCard
 import com.example.ui.components.ClassCard
+import com.example.ui.icons.Download
+import com.example.ui.icons.EmojiEvents
+import com.example.ui.icons.OpenInNew
+import com.example.ui.icons.School
+import com.example.ui.icons.Verified
 import com.example.ui.theme.BgLight
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.GoldDark
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.GoldSoft
-import com.example.ui.theme.NavyDark
 import com.example.ui.theme.NavyPrimary
-import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.NavySurface
 import com.example.ui.theme.SuccessGreen
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MyLearningScreen(
     modules: List<CourseModule>,
@@ -93,6 +92,13 @@ fun MyLearningScreen(
     onGenerateCertificate: () -> Unit,
     onOpenCertificatePdf: (CertificateRecord) -> Unit,
     onVerifyCertificate: (String) -> Unit,
+    passedExamCount: Int = 0,
+    totalRequiredExamCount: Int = 5,
+    submittedAssignmentCount: Int = 0,
+    adminSettings: AdminCompletionSettings = AdminCompletionSettings(),
+    onPreviewDemoCertificate: () -> Unit = {},
+    onDownloadCertificatePdf: (CertificateRecord) -> Unit = onOpenCertificatePdf,
+    onDownloadDemoCertificatePdf: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -193,21 +199,26 @@ fun MyLearningScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Study streak & stats row
+                    // Verified LMS stats row (no hardcoded streak)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceAround
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.LocalFireDepartment, contentDescription = null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
+                            Icon(imageVector = Icons.Default.Verified, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("5 Days Streak", color = Color(0xFFFFD54F), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text(
+                                text = "$passedExamCount/$totalRequiredExamCount Exams Passed",
+                                color = Color(0xFFFFD54F),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Default.School, contentDescription = null, tint = GoldSoft, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("12 Modules Total", color = Color.White, fontSize = 11.sp)
+                            Text("$submittedAssignmentCount Tasks • ${modules.size} Mods", color = Color.White, fontSize = 11.sp)
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -236,10 +247,10 @@ fun MyLearningScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -250,25 +261,36 @@ fun MyLearningScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Certification Eligibility Dashboard",
+                                text = "Certification Eligibility",
                                 style = MaterialTheme.typography.titleSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = NavyPrimary
-                                )
+                                ),
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(if (eligibility.isEligible) Color(0xFFDCFCE7) else Color(0xFFEFF6FF))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .background(
+                                    if (eligibility.existingCertificate != null || eligibility.isEligible) {
+                                        Color(0xFFDCFCE7)
+                                    } else {
+                                        Color(0xFFEFF6FF)
+                                    }
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = if (eligibility.isEligible) "ELIGIBLE FOR DIPLOMA" else "IN PROGRESS",
-                                color = if (eligibility.isEligible) SuccessGreen else NavyPrimary,
+                                text = eligibility.status.displayLabel.uppercase(),
+                                color = if (eligibility.existingCertificate != null || eligibility.isEligible) SuccessGreen else NavyPrimary,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 9.sp
+                                fontSize = 9.5.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.testTag("badge_learning_cert_status")
                             )
                         }
                     }
@@ -280,14 +302,33 @@ fun MyLearningScreen(
                         style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF334155))
                     )
                     Text(
-                        text = "• Mandatory Quizzes Status: ${if (eligibility.allQuizzesPassed) "All Passed" else "Assessments Pending"}",
+                        text = "• Mandatory Assessments: ${if (eligibility.allQuizzesPassed && eligibility.mandatoryExamsPassed) "All Passed" else "Pending Completion"}",
+                        style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF334155))
+                    )
+                    Text(
+                        text = "• Final Project & Capstone: ${if (eligibility.finalProjectSubmitted) "Satisfied" else "Pending"}",
                         style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF334155))
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    if (!adminSettings.certificatesEnabled) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFFEE2E2))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "Official certificate issuance is currently disabled by Administrator settings.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = DangerRed, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
                     if (eligibility.existingCertificate != null) {
-                        // Existing Certificate Banner
                         val cert = eligibility.existingCertificate
                         Box(
                             modifier = Modifier
@@ -310,26 +351,34 @@ fun MyLearningScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
+                                        onClick = { onDownloadCertificatePdf(cert) },
+                                        modifier = Modifier.weight(1f).testTag("btn_download_existing_cert"),
+                                        colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyPrimary)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Download PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                                    }
+                                    OutlinedButton(
                                         onClick = { onOpenCertificatePdf(cert) },
                                         modifier = Modifier.weight(1f).testTag("btn_view_existing_cert"),
-                                        colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyPrimary)
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldSoft)
                                     ) {
                                         Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("View PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text("View PDF", fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
                                     OutlinedButton(
                                         onClick = { onVerifyCertificate(cert.certificateId) },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier.weight(0.8f),
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                                     ) {
-                                        Text("Verify ID", fontSize = 11.sp)
+                                        Text("Verify", fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
                                 }
                             }
                         }
-                    } else if (eligibility.isEligible) {
-                        // Eligible: Generate Button
+                    } else if (eligibility.isEligible && adminSettings.certificatesEnabled) {
                         Button(
                             onClick = onGenerateCertificate,
                             modifier = Modifier.fillMaxWidth().height(46.dp).testTag("btn_generate_certificate"),
@@ -341,7 +390,6 @@ fun MyLearningScreen(
                             Text("Generate Official Landscape PDF Certificate", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     } else {
-                        // Ineligible info
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -349,13 +397,48 @@ fun MyLearningScreen(
                                 .background(Color(0xFFF1F5F9))
                                 .padding(10.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.Top) {
                                 Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = Color(0xFF64748B), modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
+                                val reqText = if (eligibility.remainingRequirements.isNotEmpty()) {
+                                    eligibility.remainingRequirements.joinToString("\n") { "• $it" }
+                                } else {
+                                    "Complete all ${eligibility.totalRequiredCount} lessons with minimum study times and pass assessments to unlock your verified Executive Diploma."
+                                }
                                 Text(
-                                    text = "Complete all 48 lessons with minimum study times and pass assessments to unlock your verified Executive Diploma.",
-                                    style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF475569), fontSize = 11.sp)
+                                    text = reqText,
+                                    style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF475569), fontSize = 11.sp),
+                                    lineHeight = 16.sp
                                 )
+                            }
+                        }
+                    }
+
+                    if (isAdmin || adminSettings.demoCertificateEnabled) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("card_demo_certificate"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onPreviewDemoCertificate,
+                                modifier = Modifier.weight(1.1f).heightIn(min = 48.dp).testTag("btn_preview_demo_certificate"),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary)
+                            ) {
+                                Icon(imageVector = Icons.Default.Verified, contentDescription = null, tint = GoldDark, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Demo Preview", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            }
+                            Button(
+                                onClick = onDownloadDemoCertificatePdf,
+                                modifier = Modifier.weight(0.9f).heightIn(min = 48.dp).testTag("btn_download_demo_certificate"),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic)
+                            ) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Demo PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -365,8 +448,9 @@ fun MyLearningScreen(
 
         // Tabs
         item {
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = selectedTab,
+                edgePadding = 8.dp,
                 containerColor = Color.White,
                 contentColor = NavyPrimary,
                 indicator = { tabPositions ->
@@ -375,7 +459,10 @@ fun MyLearningScreen(
                         color = GoldMetallic
                     )
                 },
-                modifier = Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(12.dp))
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(12.dp))
             ) {
                 tabs.forEachIndexed { index, title ->
                     val count = when (index) {
@@ -387,11 +474,16 @@ fun MyLearningScreen(
                     Tab(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("tab_learning_$index"),
                         text = {
                             Text(
                                 text = "$title ($count)",
                                 fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 11.sp
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     )
@@ -401,7 +493,48 @@ fun MyLearningScreen(
 
         // Items List or Certificate List
         if (selectedTab == 3) {
-            // My Certificates Tab
+            if (isAdmin || adminSettings.demoCertificateEnabled) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GoldMetallic)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Demo Executive PGD Certificate",
+                                fontWeight = FontWeight.Bold,
+                                color = NavyPrimary,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = "Preview the official certificate layout from Institute of Supply Chain Excellence Bangladesh (ISCEB) with Left & Right Signatories, QR verification, and Landscape A4 PDF export.",
+                                color = Color(0xFF475569),
+                                fontSize = 11.5.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(
+                                    onClick = onPreviewDemoCertificate,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Verified, contentDescription = null, tint = GoldDark, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Preview Demo", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = onDownloadDemoCertificatePdf,
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Download PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (issuedCertificates.isEmpty()) {
                 item {
                     Card(
@@ -424,14 +557,32 @@ fun MyLearningScreen(
                 }
             } else {
                 items(issuedCertificates) { cert ->
-                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CertificatePreviewCard(record = cert)
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                onClick = { onDownloadCertificatePdf(cert) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyPrimary)
+                            ) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Download PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = { onOpenCertificatePdf(cert) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Open PDF", fontSize = 11.5.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
                     }
                 }
             }
         } else {
-            // Classes list
             if (currentList.isEmpty()) {
                 item {
                     Card(
@@ -478,7 +629,7 @@ fun MyLearningScreen(
                     Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                         ClassCard(
                             courseClass = cls,
-                            isAdmin = false,
+                            isAdmin = isAdmin,
                             isFirst = false,
                             isLast = false,
                             onClick = { onClassClick(cls) },

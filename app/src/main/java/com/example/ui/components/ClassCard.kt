@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,6 +62,7 @@ import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.SuccessGreen
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ClassCard(
     courseClass: CourseClass,
@@ -97,8 +100,9 @@ fun ClassCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     // Class Number Circle (01..48)
@@ -124,8 +128,6 @@ fun ClassCard(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(10.dp))
-
                     // Status Pill
                     when (courseClass.status) {
                         ClassStatus.COMPLETED -> {
@@ -138,7 +140,7 @@ fun ClassCard(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(10.dp))
                                     Spacer(modifier = Modifier.width(3.dp))
-                                    Text("COMPLETED", color = SuccessGreen, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    Text("COMPLETED", color = SuccessGreen, fontWeight = FontWeight.Bold, fontSize = 9.sp, maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -149,7 +151,14 @@ fun ClassCard(
                                     .background(Color(0xFFFEF9C3))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
-                                Text("IN PROGRESS (${courseClass.activeLearningSeconds}s)", color = Color(0xFF854D0E), fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                Text(
+                                    text = "IN PROGRESS (${courseClass.activeLearningSeconds}s)",
+                                    color = Color(0xFF854D0E),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         }
                         ClassStatus.LOCKED -> {
@@ -162,7 +171,7 @@ fun ClassCard(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(10.dp))
                                     Spacer(modifier = Modifier.width(3.dp))
-                                    Text("LOCKED", color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    Text("LOCKED", color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 9.sp, maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -173,12 +182,10 @@ fun ClassCard(
                                     .background(Color(0xFFF8FAFC))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
-                                Text("PENDING", color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                Text("PENDING", color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 9.sp, maxLines = 1, softWrap = false)
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.width(8.dp))
 
                     // Duration
                     Row(verticalAlignment = Alignment.CenterVertically) {

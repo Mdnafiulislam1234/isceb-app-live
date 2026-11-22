@@ -6,13 +6,17 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -121,6 +125,10 @@ fun ClassDetailScreen(
     onResolveMediaFile: suspend (LessonMedia) -> java.io.File? = { null },
     onLoadDemoMedia: () -> Unit,
     onNavigateClass: (CourseClass) -> Unit,
+    canManageClass: Boolean = isAdmin,
+    canDownloadMedia: Boolean = courseClass.allowMediaDownload || isAdmin || canManageClass,
+    onPdfPageStudyTick: (currentPage: Int, totalPages: Int, activeDeltaSec: Long, idleDeltaSec: Long) -> Unit = { _, _, _, _ -> },
+    onVideoPlaybackProgress: (positionMs: Long, durationMs: Long, isPlaying: Boolean) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
@@ -132,7 +140,7 @@ fun ClassDetailScreen(
 
     val isCompleted = studentProgress?.status == ClassStatus.COMPLETED || courseClass.isCompleted
     val activeSec = studentProgress?.activeLearningSeconds ?: 0L
-    val reqTime = adminSettings.minLearningTimeSeconds
+    val reqTime = courseClass.minStudySecondsOverride ?: adminSettings.minLearningTimeSeconds
     val timeProgress = (activeSec.toFloat() / reqTime.toFloat()).coerceIn(0f, 1f)
     val timeMet = activeSec >= reqTime
 
@@ -140,6 +148,12 @@ fun ClassDetailScreen(
     val playbackMet = playbackPercent >= adminSettings.minPlaybackPercent
 
     val pdfConfirmed = studentProgress?.isPdfConfirmed == true
+    val pdfSec = studentProgress?.pdfReadingSeconds ?: 0L
+    val visitedPagesCount = studentProgress?.visitedPdfPages?.size ?: 0
+    val totalPdfPagesCount = studentProgress?.totalPdfPages ?: 0
+    val pdfTimeMet = pdfSec >= adminSettings.minPdfReadingSeconds
+    val pdfPagesMet = !adminSettings.requirePdfAllPagesVisited || totalPdfPagesCount == 0 || visitedPagesCount >= totalPdfPagesCount
+    val canConfirmPdf = canManageClass || (pdfTimeMet && pdfPagesMet)
     val quizPassed = studentProgress?.quizPassed == true || courseClass.quizPassed
 
     LazyColumn(
@@ -348,18 +362,34 @@ fun ClassDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = if (pdfConfirmed) "• PDF Lecture Document: Confirmed Read" else "• PDF Lecture Document: Needs Review",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontWeight = if (pdfConfirmed) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (pdfConfirmed) SuccessGreen else NavyPrimary
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (pdfConfirmed) {
+                                        "• PDF Lecture Document: Confirmed Read (${pdfSec}s)"
+                                    } else {
+                                        "• PDF Reading: ${pdfSec}s / ${adminSettings.minPdfReadingSeconds}s" +
+                                            if (totalPdfPagesCount > 0) " • Pages $visitedPagesCount/$totalPdfPagesCount" else ""
+                                    },
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontWeight = if (pdfConfirmed) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (pdfConfirmed) SuccessGreen else NavyPrimary
+                                    )
                                 )
-                            )
+                                if (!pdfConfirmed && !canConfirmPdf) {
+                                    val remSec = (adminSettings.minPdfReadingSeconds - pdfSec).coerceAtLeast(0L)
+                                    Text(
+                                        text = if (remSec > 0L) "Read PDF actively for ${remSec}s more to unlock confirmation." else "Browse all PDF pages to unlock confirmation.",
+                                        fontSize = 9.5.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
 
                             if (!pdfConfirmed) {
                                 OutlinedButton(
                                     onClick = onConfirmPdfRead,
-                                    modifier = Modifier.height(30.dp),
+                                    enabled = canConfirmPdf,
+                                    modifier = Modifier.height(32.dp).testTag("btn_confirm_pdf_read"),
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text("Confirm Read", fontSize = 10.sp)
@@ -400,8 +430,8 @@ fun ClassDetailScreen(
                         }
                     }
 
-                    // Admin override row
-                    if (isAdmin) {
+                    // Faculty / Admin sign-off override row
+                    if (canManageClass) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier
@@ -412,7 +442,12 @@ fun ClassDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Admin Sign-off Override:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                            Text(
+                                if (isAdmin) "Admin Sign-off Override:" else "Faculty Completion Override:",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NavyPrimary
+                            )
                             TextButton(onClick = onAdminToggleCompletion) {
                                 Text(if (isCompleted) "Mark Incomplete" else "Mark Complete Directly", fontSize = 10.sp, color = if (isCompleted) DangerRed else SuccessGreen)
                             }
@@ -473,7 +508,7 @@ fun ClassDetailScreen(
                             fontSize = 16.sp
                         )
                     )
-                    if (isAdmin) {
+                    if (canManageClass) {
                         Button(
                             onClick = { onOpenUploadDialog(MediaType.PDF) },
                             colors = ButtonDefaults.buttonColors(
@@ -556,7 +591,7 @@ fun ClassDetailScreen(
                                     }
                                 }
 
-                                if (isAdmin) {
+                                if (canManageClass) {
                                     IconButton(
                                         onClick = { onDeleteAttachment(item.id) },
                                         modifier = Modifier
@@ -596,25 +631,33 @@ fun ClassDetailScreen(
                                         .testTag("btn_open_attachment_$idx"),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
+                                    val openLabel = when (item.type) {
+                                        MediaType.AUDIO -> "Play Audio"
+                                        MediaType.VIDEO -> "Play Video"
+                                        MediaType.PDF -> "Read PDF"
+                                        else -> "Preview / Open"
+                                    }
                                     Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Preview / Open", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                                    Text(openLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
                                 }
 
-                                Button(
-                                    onClick = { onDownloadAttachment(item) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("btn_download_attachment_$idx"),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = NavyPrimary,
-                                        contentColor = GoldMetallic
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                if (canDownloadMedia) {
+                                    Button(
+                                        onClick = { onDownloadAttachment(item) },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("btn_download_attachment_$idx"),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = NavyPrimary,
+                                            contentColor = GoldMetallic
+                                        ),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
@@ -625,13 +668,16 @@ fun ClassDetailScreen(
                 if (courseClass.pdfMedia != null) {
                     PdfViewerCard(
                         pdfMedia = courseClass.pdfMedia,
-                        isAdmin = isAdmin,
+                        isAdmin = canManageClass,
                         onReplace = { onOpenUploadDialog(MediaType.PDF) },
                         onDelete = { onDeleteMedia(MediaType.PDF) },
                         onResolvePdfFile = onResolveMediaFile,
                         onOpenFullscreen = onOpenAttachment,
                         onOpenExternal = onOpenExternalAttachment,
-                        onDownload = onDownloadAttachment
+                        onDownload = onDownloadAttachment,
+                        initialPage = (studentProgress?.lastPdfPage ?: 1).coerceAtLeast(1),
+                        canDownload = canDownloadMedia,
+                        onPageStudyTick = onPdfPageStudyTick
                     )
                 }
 
@@ -642,7 +688,7 @@ fun ClassDetailScreen(
                         progressMs = audioProgressMs,
                         durationMs = audioDurationMs,
                         playbackSpeed = audioSpeed,
-                        isAdmin = isAdmin,
+                        isAdmin = canManageClass,
                         onPlayPause = onPlayPauseAudio,
                         onSeek = onSeekAudio,
                         onSkipSeconds = onSkipAudioSeconds,
@@ -658,11 +704,17 @@ fun ClassDetailScreen(
                         isPlaying = isPlayingVideo,
                         positionMs = videoPositionMs,
                         durationMs = videoDurationMs,
-                        isAdmin = isAdmin,
+                        isAdmin = canManageClass,
                         onPlayPause = onPlayPauseVideo,
                         onSeek = onSeekVideo,
                         onReplace = { onOpenUploadDialog(MediaType.VIDEO) },
-                        onDelete = { onDeleteMedia(MediaType.VIDEO) }
+                        onDelete = { onDeleteMedia(MediaType.VIDEO) },
+                        onResolveVideoFile = onResolveMediaFile,
+                        onOpenFullscreen = onOpenAttachment,
+                        onOpenExternal = onOpenExternalAttachment,
+                        onDownload = onDownloadAttachment,
+                        canDownload = canDownloadMedia,
+                        onPlaybackProgress = onVideoPlaybackProgress
                     )
                 }
 
@@ -684,15 +736,15 @@ fun ClassDetailScreen(
                             Spacer(modifier = Modifier.height(10.dp))
                             Text("No Materials Uploaded Yet", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = NavyPrimary))
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text("Admins can upload PDFs, images, documents, audio lectures, or videos for this class.", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF6B7F96), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontSize = 12.sp))
+                            Text("Faculty and admins can upload PDFs, images, documents, audio lectures, or videos for this class.", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF6B7F96), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontSize = 12.sp))
                         }
                     }
                 }
             }
         }
 
-        // Admin Multi-File Upload Panel
-        if (isAdmin) {
+        // Faculty / Admin Multi-File Upload Panel
+        if (canManageClass) {
             item {
                 Card(
                     modifier = Modifier
@@ -706,17 +758,23 @@ fun ClassDetailScreen(
                             .fillMaxWidth()
                             .padding(16.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Admin Media Upload Center", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color.White))
                             }
-                            Text("Max 50MB / file", style = MaterialTheme.typography.labelSmall.copy(color = GoldSoft))
+                            Text(
+                                text = "18MB Cloud / 50MB Device",
+                                style = MaterialTheme.typography.labelSmall.copy(color = GoldSoft),
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -725,38 +783,99 @@ fun ClassDetailScreen(
                             onClick = { onOpenUploadDialog(MediaType.PDF) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("btn_admin_multi_upload_center"),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(imageVector = Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Upload Multiple Files (PDF, Image, Doc, Audio, Video)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Upload multiple files, PDF, image, document, audio, video",
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(onClick = { onOpenUploadDialog(MediaType.IMAGE) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic), shape = RoundedCornerShape(8.dp)) {
-                                Icon(imageVector = Icons.Default.Image, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Image", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Button(onClick = { onOpenUploadDialog(MediaType.DOCUMENT) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic), shape = RoundedCornerShape(8.dp)) {
-                                Icon(imageVector = Icons.Default.Article, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Doc", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Button(onClick = { onOpenUploadDialog(MediaType.AUDIO) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic), shape = RoundedCornerShape(8.dp)) {
-                                Icon(imageVector = Icons.Default.Audiotrack, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Audio", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Button(onClick = { onOpenUploadDialog(MediaType.VIDEO) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic), shape = RoundedCornerShape(8.dp)) {
-                                Icon(imageVector = Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Video", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val useSingleRow = maxWidth >= 420.dp
+                            val optionItems = listOf(
+                                Triple(MediaType.IMAGE, "Image", Icons.Default.Image) to "btn_upload_opt_image",
+                                Triple(MediaType.DOCUMENT, "Document", Icons.Default.Article) to "btn_upload_opt_document",
+                                Triple(MediaType.AUDIO, "Audio", Icons.Default.Audiotrack) to "btn_upload_opt_audio",
+                                Triple(MediaType.VIDEO, "Video", Icons.Default.Videocam) to "btn_upload_opt_video"
+                            )
+
+                            if (useSingleRow) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    optionItems.forEach { (item, tag) ->
+                                        val (type, label, icon) = item
+                                        Button(
+                                            onClick = { onOpenUploadDialog(type) },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .heightIn(min = 48.dp)
+                                                .testTag(tag),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Icon(imageVector = icon, contentDescription = label, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    optionItems.chunked(2).forEach { rowItems ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            rowItems.forEach { (item, tag) ->
+                                                val (type, label, icon) = item
+                                                Button(
+                                                    onClick = { onOpenUploadDialog(type) },
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .heightIn(min = 48.dp)
+                                                        .testTag(tag),
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Icon(imageVector = icon, contentDescription = label, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = label,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        softWrap = false
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -764,14 +883,21 @@ fun ClassDetailScreen(
 
                         OutlinedButton(
                             onClick = onLoadDemoMedia,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldSoft),
                             border = androidx.compose.foundation.BorderStroke(1.dp, GoldMetallic.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.DownloadDone, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Icon(imageVector = Icons.Default.DownloadDone, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Attach Sample Lecture Pack (PDF + Audio + Video)", fontSize = 11.sp)
+                            Text(
+                                text = "Attach Sample Lecture Pack (PDF + Audio + Video)",
+                                fontSize = 11.5.sp,
+                                lineHeight = 15.sp
+                            )
                         }
                     }
                 }

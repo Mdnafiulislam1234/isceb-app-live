@@ -381,6 +381,54 @@ object MediaFileManager {
         }
     }
 
+    fun extractFormattedDuration(file: File): String? {
+        if (!file.exists() || file.length() == 0L) return null
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            val durationMs = retriever
+                .extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?: return null
+            if (durationMs <= 0L) return null
+            val totalSeconds = durationMs / 1000L
+            val hours = totalSeconds / 3600L
+            val minutes = (totalSeconds % 3600L) / 60L
+            val seconds = totalSeconds % 60L
+            if (hours > 0L) {
+                String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format(Locale.US, "%02d:%02d", minutes, seconds)
+            }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    fun isPlainTextDocument(media: LessonMedia): Boolean {
+        val ext = media.fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val mime = media.mimeType.lowercase(Locale.ROOT)
+        return ext in setOf("txt", "csv", "md", "json", "log", "xml") || mime.startsWith("text/")
+    }
+
+    fun readTextPreview(file: File, maxChars: Int = 20_000): String? {
+        if (!file.exists() || file.length() == 0L) return null
+        return try {
+            file.bufferedReader(Charsets.UTF_8).use { reader ->
+                val buf = CharArray(maxChars)
+                val count = reader.read(buf)
+                if (count <= 0) "" else String(buf, 0, count)
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     fun sanitizeFileName(name: String): String {
         val trimmed = name.trim().ifBlank { "file" }
         return trimmed.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(80)

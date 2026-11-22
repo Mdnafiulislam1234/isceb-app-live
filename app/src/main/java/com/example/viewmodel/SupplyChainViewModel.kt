@@ -1,7 +1,11 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
@@ -14,13 +18,16 @@ import com.example.data.CloudSyncRepository
 import com.example.data.OperationType
 import com.example.data.SupplyChainRepository
 import com.example.data.handleFirestoreError
+import com.example.model.AccountStatus
 import com.example.model.AdminCompletionSettings
 import com.example.model.ApkDownloadState
 import com.example.model.AppNotification
 import com.example.model.AppUpdateInfo
 import com.example.model.AssignmentSubmission
+import com.example.model.AuditLogEntry
 import com.example.model.CertificateEligibility
 import com.example.model.CertificateRecord
+import com.example.model.CertificationEligibilityStatus
 import com.example.model.CourseClass
 import com.example.model.CourseModule
 import com.example.model.CoursePart
@@ -35,6 +42,7 @@ import com.example.model.ModuleAssignment
 import com.example.model.ModuleExam
 import com.example.model.PendingUploadItem
 import com.example.model.StudentClassProgress
+import com.example.model.SubmissionStatus
 import com.example.model.SyncStatus
 import com.example.model.UserProfile
 import com.example.model.UserProgress
@@ -44,6 +52,7 @@ import com.example.util.ApkInstallLaunchResult
 import com.example.util.ApkUpdateManager
 import com.example.util.CertificatePdfGenerator
 import com.example.util.MediaFileManager
+import kotlinx.coroutines.withContext
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -71,6 +80,8 @@ sealed class Screen {
     object FounderProfileScreenRoute : Screen()
     object DeveloperProfileScreenRoute : Screen()
     data class MemberDetail(val memberId: String) : Screen()
+    object TeacherPanel : Screen()
+    object AdminPanel : Screen()
 }
 
 enum class NavTab {
@@ -104,6 +115,9 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val currentUser: StateFlow<UserProfile> = repository.currentUser
     val availableUsers: List<UserProfile> = repository.availableUsers
     val adminUsers: List<UserProfile> = repository.availableUsers.filter { it.role == UserRole.ADMIN }
+    val registeredAccounts: StateFlow<List<UserProfile>> = repository.registeredAccounts
+    val hasSignedInAccount: StateFlow<Boolean> = repository.hasSignedInAccount
+    val auditLogs: StateFlow<List<AuditLogEntry>> = repository.auditLogs
     val developerProfile: StateFlow<DeveloperProfile> = repository.developerProfile
     val founderProfile: StateFlow<FounderProfile> = repository.founderProfile
     val iscebMembers: StateFlow<List<IscebMember>> = repository.iscebMembers
@@ -114,6 +128,22 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val adminSettings: StateFlow<AdminCompletionSettings> = repository.adminSettings
     val issuedCertificates: StateFlow<List<CertificateRecord>> = repository.issuedCertificates
     val isAdminLoggedIn: StateFlow<Boolean> = repository.isAdminLoggedIn
+
+    val isTeacher: StateFlow<Boolean> = combine(currentUser, isAdminLoggedIn) { user, admin ->
+        !admin && user.role == UserRole.TEACHER && user.accountStatus == AccountStatus.ACTIVE
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val isStaff: StateFlow<Boolean> = combine(isAdminLoggedIn, isTeacher) { admin, teacher ->
+        admin || teacher
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun canManageModule(moduleId: String): Boolean {
+        if (isAdminLoggedIn.value) return true
+        val user = currentUser.value
+        return user.role == UserRole.TEACHER &&
+            user.accountStatus == AccountStatus.ACTIVE &&
+            user.assignedModuleIds.contains(moduleId)
+    }
 
     // Assessments
     val moduleExams: StateFlow<List<ModuleExam>> = repository.moduleExams
@@ -141,6 +171,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val cloudSyncError: StateFlow<String?> = _cloudSyncError.asStateFlow()
 
     private var cloudListenerJob: Job? = null
+    private var staffListenerJob: Job? = null
     private var lastAutoResumeCheckMs: Long = System.currentTimeMillis()
     private var lastObservedManifest: CurriculumPublishManifest? = null
     private var lastObservedCatalog: CloudCatalogSnapshot? = null
@@ -173,7 +204,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     private val _notification = MutableStateFlow<AppNotification?>(null)
     val notification: StateFlow<AppNotification?> = _notification.asStateFlow()
 
-    // Audio Playback Simulation State
+    // Audio Playback State (backed by real android.media.MediaPlayer)
     private val _isPlayingAudio = MutableStateFlow(false)
     val isPlayingAudio: StateFlow<Boolean> = _isPlayingAudio.asStateFlow()
 
@@ -190,8 +221,12 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val audioSpeed: StateFlow<Float> = _audioSpeed.asStateFlow()
 
     private var audioTimerJob: Job? = null
+    private var audioLoadJob: Job? = null
+    private var audioMediaPlayer: MediaPlayer? = null
+    private var audioPreparedClassId: String? = null
+    private var audioPreparedSourceKey: String? = null
 
-    // Video Playback Simulation State
+    // Video Playback State (synced with real VideoView playback)
     private val _isPlayingVideo = MutableStateFlow(false)
     val isPlayingVideo: StateFlow<Boolean> = _isPlayingVideo.asStateFlow()
 
@@ -202,6 +237,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val videoDurationMs: StateFlow<Long> = _videoDurationMs.asStateFlow()
 
     private var videoTimerJob: Job? = null
+    private var lastVideoActiveRecordedSecMs: Long = 0L
 
     // Upload state
     private val _uploadProgress = MutableStateFlow<Float?>(null)
@@ -232,6 +268,8 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     val editingMember = MutableStateFlow<IscebMember?>(null)
     val previewPdfMedia = MutableStateFlow<LessonMedia?>(null)
     val previewImageMedia = MutableStateFlow<LessonMedia?>(null)
+    val previewVideoMedia = MutableStateFlow<LessonMedia?>(null)
+    val previewDocumentMedia = MutableStateFlow<LessonMedia?>(null)
 
     // Cryptographic Dual-Admin Auth State (Md. Amirul Islam first, Md. Nafiul Islam Nahin second)
     private val _adminSummaries = MutableStateFlow<List<AdminAuthSummary>>(emptyList())
@@ -261,8 +299,9 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         classes,
         studentProgressMap,
         currentUser,
-        examAttempts
-    ) { clsList, _, user, _ ->
+        examAttempts,
+        assignmentSubmissions
+    ) { clsList, _, user, _, _ ->
         if (clsList.isEmpty()) emptyEligibility
         else repository.evaluateCertificateEligibility(user.id)
     }.stateIn(
@@ -391,6 +430,24 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             }
 
             launch {
+                cloudRepo.observeUserAccount(uid)
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                    }
+                    .collect { remoteAccount ->
+                        if (remoteAccount != null) {
+                            repository.mergeCloudUserAccount(remoteAccount)
+                            if (remoteAccount.role == UserRole.TEACHER || remoteAccount.role == UserRole.ADMIN) {
+                                ensureStaffCloudListeners(includeAdminLogs = remoteAccount.role == UserRole.ADMIN || isAdminLoggedIn.value)
+                            }
+                        }
+                    }
+            }
+
+            launch {
                 cloudRepo.observeUserProgress(uid)
                     .catch { error ->
                         val firestoreError = generateSequence(error) { it.cause }
@@ -404,6 +461,76 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                     .collect { cloudProgress ->
                         repository.mergeCloudStudentProgress(cloudProgress)
                     }
+            }
+
+            launch {
+                cloudRepo.observeAssignments()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { remote -> if (remote.isNotEmpty()) repository.mergeCloudAssignments(remote) }
+            }
+
+            launch {
+                cloudRepo.observeExams()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { remote -> if (remote.isNotEmpty()) repository.mergeCloudExams(remote) }
+            }
+
+            launch {
+                cloudRepo.observeUserSubmissions(uid)
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { remote -> if (remote.isNotEmpty()) repository.mergeCloudSubmissions(remote) }
+            }
+
+            launch {
+                cloudRepo.observeUserExamAttempts(uid)
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { remote -> if (remote.isNotEmpty()) repository.mergeCloudExamAttempts(remote) }
+            }
+
+            launch {
+                cloudRepo.observeUserCertificates(uid)
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { remote -> if (remote.isNotEmpty()) repository.mergeCloudCertificates(remote) }
+            }
+
+            if (isAdminLoggedIn.value || currentUser.value.role == UserRole.TEACHER) {
+                ensureStaffCloudListeners(includeAdminLogs = isAdminLoggedIn.value)
+            }
+        }
+    }
+
+    private fun ensureStaffCloudListeners(includeAdminLogs: Boolean) {
+        val cloudRepo = cloudSyncRepository ?: return
+        if (cloudAuthUser.value == null) return
+        if (staffListenerJob?.isActive == true && !includeAdminLogs) return
+        staffListenerJob?.cancel()
+        staffListenerJob = viewModelScope.launch {
+            launch {
+                cloudRepo.observeAllUserAccounts()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { users -> repository.mergeCloudAllUsers(users) }
+            }
+            launch {
+                cloudRepo.observeAllSubmissions()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { subs -> repository.mergeCloudSubmissions(subs) }
+            }
+            launch {
+                cloudRepo.observeAllExamAttempts()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { attempts -> repository.mergeCloudExamAttempts(attempts) }
+            }
+            launch {
+                cloudRepo.observeAllCertificates()
+                    .catch { if (it is CancellationException) throw it }
+                    .collect { certs -> repository.mergeCloudCertificates(certs) }
+            }
+            if (includeAdminLogs) {
+                launch {
+                    cloudRepo.observeAuditLogs()
+                        .catch { if (it is CancellationException) throw it }
+                        .collect { logs -> repository.mergeCloudAuditLogs(logs) }
+                }
             }
         }
     }
@@ -466,7 +593,190 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         return MediaFileManager.ensureLocalMediaFile(getApplication(), media, cloudSyncRepository)
     }
 
-    // Student-only profile switcher (Admins must use cryptographic password auth)
+    // Account & Role Management (Genuine Student, Teacher & Admin accounts)
+    fun registerOrSignInStudentAccount(
+        fullName: String,
+        email: String,
+        organization: String = "ISCEB Enrolled Professional",
+        designation: String = "PGD Candidate",
+        mobileNumber: String = "",
+        enrolledProgram: String = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+        pickedPhotoUri: Uri? = null
+    ) {
+        if (fullName.isBlank() || email.isBlank() || !email.contains("@")) {
+            showNotification("Enter your full name and a valid email address.", isError = true)
+            return
+        }
+        stopAudioPlayback()
+        stopVideoPlayback()
+        closeExam()
+        viewModelScope.launch(Dispatchers.IO) {
+            var photoPath = ""
+            if (pickedPhotoUri != null) {
+                photoPath = MediaFileManager.copyProfilePhotoToInternalStorage(
+                    getApplication(),
+                    pickedPhotoUri,
+                    prefix = "student_avatar"
+                )?.absolutePath.orEmpty()
+            }
+            val account = repository.signInOrRegisterStudentAccount(
+                fullName = fullName,
+                email = email,
+                authUid = cloudAuthUser.value?.uid.orEmpty(),
+                organization = organization,
+                designation = designation,
+                mobileNumber = mobileNumber,
+                enrolledProgram = enrolledProgram,
+                photoUrl = photoPath
+            )
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.upsertUserAccount(account, allowRoleAndPrivileges = false)
+            }
+            refreshAdminAuthState()
+            showNotification("Welcome, ${account.fullName}! Student ID: ${account.studentId}")
+        }
+    }
+
+    fun updateStudentOwnProfile(
+        fullName: String,
+        organization: String,
+        designation: String,
+        mobileNumber: String,
+        enrolledProgram: String,
+        pickedPhotoUri: Uri? = null
+    ) {
+        if (currentUser.value.id == "guest-unauthenticated") {
+            showNotification("Please sign in with your student account first.", isError = true)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            var newPhotoPath: String? = null
+            if (pickedPhotoUri != null) {
+                newPhotoPath = MediaFileManager.copyProfilePhotoToInternalStorage(
+                    getApplication(),
+                    pickedPhotoUri,
+                    prefix = "student_${currentUser.value.id.take(10)}"
+                )?.absolutePath
+            }
+            val updated = repository.updateStudentOwnProfile(
+                fullName = fullName,
+                organization = organization,
+                designation = designation,
+                mobileNumber = mobileNumber,
+                enrolledProgram = enrolledProgram,
+                photoUrl = newPhotoPath
+            )
+            if (updated != null) {
+                if (cloudAuthUser.value != null) {
+                    cloudSyncRepository?.upsertUserAccount(updated, allowRoleAndPrivileges = false)
+                }
+                showNotification("Student profile updated.")
+            } else {
+                showNotification("Profile editing is unavailable for this account.", isError = true)
+            }
+        }
+    }
+
+    fun signOutStudentAccount() {
+        stopAudioPlayback()
+        stopVideoPlayback()
+        closeExam()
+        staffListenerJob?.cancel()
+        staffListenerJob = null
+        repository.signOutAccount()
+        refreshAdminAuthState()
+        try {
+            Firebase.auth.signOut()
+        } catch (_: Exception) {
+        }
+        if (_currentScreen.value is Screen.AdminPanel || _currentScreen.value is Screen.TeacherPanel) {
+            _currentScreen.value = Screen.Main
+            _navigationStack.clear()
+        }
+        showNotification("Signed out safely.")
+    }
+
+    fun activateTeacherAccount(userId: String) {
+        stopAudioPlayback()
+        stopVideoPlayback()
+        closeExam()
+        val ok = repository.activateTeacherSession(userId)
+        refreshAdminAuthState()
+        if (ok) {
+            ensureStaffCloudListeners(includeAdminLogs = false)
+            showNotification("Teacher mode active: ${repository.currentUser.value.fullName}")
+        } else {
+            showNotification("Unable to activate Teacher account.", isError = true)
+        }
+    }
+
+    fun createOrUpdateTeacherAccount(
+        fullName: String,
+        email: String,
+        designation: String,
+        organization: String,
+        assignedModuleIds: Set<String>
+    ) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can create or assign Teacher accounts.", isError = true)
+            return
+        }
+        if (fullName.isBlank() || email.isBlank()) {
+            showNotification("Teacher name and email are required.", isError = true)
+            return
+        }
+        val teacher = repository.createOrUpdateTeacherAccount(
+            fullName = fullName,
+            email = email,
+            designation = designation,
+            organization = organization,
+            assignedModuleIds = assignedModuleIds
+        )
+        val entry = repository.recordAuditLog(
+            actionType = "TEACHER_ROLE_ASSIGNED",
+            targetId = teacher.id,
+            summary = "Assigned ${assignedModuleIds.size} modules to Teacher ${teacher.fullName} (${teacher.email})"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.upsertUserAccount(teacher, allowRoleAndPrivileges = true)
+                cloudSyncRepository?.appendAuditLog(entry)
+            }
+        }
+        showNotification("Saved Teacher account: ${teacher.fullName} (${assignedModuleIds.size} modules)")
+    }
+
+    fun adminUpdateUserAccess(
+        userId: String,
+        role: UserRole,
+        accountStatus: AccountStatus,
+        isVerified: Boolean,
+        assignedModuleIds: Set<String>
+    ) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Admin authentication required to update user roles or status.", isError = true)
+            return
+        }
+        val updated = repository.adminUpdateUserAccess(userId, role, accountStatus, isVerified, assignedModuleIds)
+        if (updated == null) {
+            showNotification("User update failed or restricted.", isError = true)
+            return
+        }
+        val entry = repository.recordAuditLog(
+            actionType = "USER_ACCESS_UPDATED",
+            targetId = updated.id,
+            summary = "Updated ${updated.fullName}: role=${updated.role.name}, status=${updated.accountStatus.name}, verified=${updated.isVerified}"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.upsertUserAccount(updated, allowRoleAndPrivileges = true)
+                cloudSyncRepository?.appendAuditLog(entry)
+            }
+        }
+        showNotification("Updated access for ${updated.fullName}.")
+    }
+
+    // Account Switcher (Restricted to teacher/student switching when authorized; admins use AdminLoginDialog)
     fun switchUser(userId: String) {
         stopAudioPlayback()
         stopVideoPlayback()
@@ -475,30 +785,165 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         refreshAdminAuthState()
         if (switched) {
             val user = repository.currentUser.value
-            showNotification("Switched account to: ${user.fullName} (Student)")
+            showNotification("Active account: ${user.fullName} (${user.role.name})")
         } else {
             showNotification("Administrator mode requires password authentication.", isError = true)
         }
     }
 
-    // Audio Playback
+    // Real Audio Playback with resume position (MediaPlayer + cloud chunk resolution)
     fun playPauseAudio(classId: String) {
-        if (_audioCurrentClassId.value != classId) {
-            _audioCurrentClassId.value = classId
-            _audioProgressMs.value = 0L
+        val targetClass = classes.value.find { it.id == classId }
+        val audioMedia = targetClass?.audioMedia
+        if (audioMedia == null) {
+            showNotification("No audio lecture attached to this class.", isError = true)
+            return
+        }
+        val sourceKey = "${audioMedia.id}|${audioMedia.url}|${audioMedia.cloudFileId}"
+        val existingPlayer = audioMediaPlayer
+        if (existingPlayer != null && audioPreparedClassId == classId && audioPreparedSourceKey == sourceKey) {
+            if (_isPlayingAudio.value) {
+                runCatching { existingPlayer.pause() }
+                _isPlayingAudio.value = false
+                audioTimerJob?.cancel()
+                val dur = _audioDurationMs.value.coerceAtLeast(1L)
+                val pos = runCatching { existingPlayer.currentPosition.toLong() }.getOrDefault(_audioProgressMs.value)
+                _audioProgressMs.value = pos.coerceIn(0L, dur)
+                val percent = (_audioProgressMs.value.toFloat() / dur.toFloat()) * 100f
+                repository.recordActiveLearningTime(classId, 0L, percent, playbackPositionMs = _audioProgressMs.value)
+                pushClassProgressToCloud(classId)
+            } else {
+                applyAudioSpeed(existingPlayer, _audioSpeed.value)
+                runCatching { existingPlayer.start() }
+                _isPlayingAudio.value = true
+                startAudioTicker(classId)
+            }
+            return
+        }
+
+        // Initialize and prepare real MediaPlayer for this class audio
+        releaseAudioPlayer()
+        audioLoadJob?.cancel()
+        audioTimerJob?.cancel()
+        _isPlayingAudio.value = false
+        _audioCurrentClassId.value = classId
+
+        audioLoadJob = viewModelScope.launch {
+            showNotification("Loading audio lecture: ${audioMedia.displayTitle}...")
+            val localFile = withContext(Dispatchers.IO) { resolveLocalMediaFile(audioMedia) }
+            val trimmedUrl = audioMedia.url.trim()
+            val canStreamHttp = trimmedUrl.startsWith("https://", ignoreCase = true) ||
+                trimmedUrl.startsWith("http://", ignoreCase = true)
+
+            if (localFile == null && !canStreamHttp) {
+                val errMsg = if (audioMedia.cloudFileId.isNotBlank()) {
+                    "Unable to download audio lecture. Connect to internet & Google Sync."
+                } else {
+                    "Audio file is only stored on the uploader's device. Ask Admin to re-upload with Google Cloud Sync or an HTTPS link."
+                }
+                showNotification(errMsg, isError = true)
+                return@launch
+            }
+
+            val preparedPlayer = withContext(Dispatchers.IO) {
+                try {
+                    val mp = MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        if (localFile != null && localFile.exists()) {
+                            setDataSource(localFile.absolutePath)
+                        } else {
+                            setDataSource(trimmedUrl)
+                        }
+                        prepare()
+                    }
+                    Result.success(mp)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure<MediaPlayer>(e)
+                }
+            }
+
+            val mp = preparedPlayer.getOrNull()
+            if (mp == null) {
+                val reason = preparedPlayer.exceptionOrNull()?.localizedMessage ?: "Unsupported audio format"
+                showNotification("Cannot play '${audioMedia.displayTitle}': $reason", isError = true)
+                return@launch
+            }
+
+            val actualDurMs = runCatching { mp.duration.toLong() }.getOrDefault(0L).coerceAtLeast(1000L)
+            _audioDurationMs.value = actualDurMs
+            val savedResume = studentProgressMap.value[classId]?.lastPlaybackPositionMs
+                ?.takeIf { it in 1L until (actualDurMs - 1000L) } ?: 0L
+            if (savedResume > 0L) {
+                runCatching { mp.seekTo(savedResume.toInt()) }
+            }
+            _audioProgressMs.value = savedResume
+
+            mp.setOnCompletionListener {
+                _isPlayingAudio.value = false
+                audioTimerJob?.cancel()
+                _audioProgressMs.value = _audioDurationMs.value
+                repository.recordActiveLearningTime(
+                    classId = classId,
+                    secondsToAdd = 0L,
+                    playbackPercent = 100f,
+                    playbackPositionMs = _audioDurationMs.value
+                )
+                pushClassProgressToCloud(classId)
+            }
+            mp.setOnErrorListener { _, what, extra ->
+                _isPlayingAudio.value = false
+                audioTimerJob?.cancel()
+                showNotification("Audio playback error ($what/$extra).", isError = true)
+                true
+            }
+
+            audioMediaPlayer = mp
+            audioPreparedClassId = classId
+            audioPreparedSourceKey = sourceKey
+            applyAudioSpeed(mp, _audioSpeed.value)
+            runCatching { mp.start() }
             _isPlayingAudio.value = true
             startAudioTicker(classId)
-        } else {
-            _isPlayingAudio.value = !_isPlayingAudio.value
-            if (_isPlayingAudio.value) startAudioTicker(classId) else audioTimerJob?.cancel()
+        }
+    }
+
+    private fun applyAudioSpeed(mp: MediaPlayer, speed: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching {
+                val params = PlaybackParams().apply { setSpeed(speed.coerceIn(0.5f, 2.5f)) }
+                mp.playbackParams = params
+            }
+        }
+    }
+
+    private fun releaseAudioPlayer() {
+        audioPreparedClassId = null
+        audioPreparedSourceKey = null
+        val mp = audioMediaPlayer
+        audioMediaPlayer = null
+        if (mp != null) {
+            runCatching {
+                if (mp.isPlaying) mp.stop()
+            }
+            runCatching { mp.release() }
         }
     }
 
     fun seekAudio(targetMs: Long) {
-        _audioProgressMs.value = targetMs.coerceIn(0L, _audioDurationMs.value)
+        val dur = _audioDurationMs.value.coerceAtLeast(1L)
+        val clamped = targetMs.coerceIn(0L, dur)
+        _audioProgressMs.value = clamped
+        runCatching { audioMediaPlayer?.seekTo(clamped.toInt()) }
         _audioCurrentClassId.value?.let { classId ->
-            val percent = (_audioProgressMs.value.toFloat() / _audioDurationMs.value.toFloat()) * 100f
-            repository.recordActiveLearningTime(classId, 0L, percent)
+            val percent = (clamped.toFloat() / dur.toFloat()) * 100f
+            repository.recordActiveLearningTime(classId, 0L, percent, playbackPositionMs = clamped)
         }
     }
 
@@ -509,21 +954,44 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setAudioSpeed(speed: Float) {
         _audioSpeed.value = speed
+        audioMediaPlayer?.let { mp ->
+            val wasPlaying = runCatching { mp.isPlaying }.getOrDefault(false)
+            applyAudioSpeed(mp, speed)
+            if (!wasPlaying && _isPlayingAudio.value.not()) {
+                runCatching { if (mp.isPlaying) mp.pause() }
+            }
+        }
     }
 
     private fun startAudioTicker(classId: String) {
         audioTimerJob?.cancel()
         audioTimerJob = viewModelScope.launch {
+            var tickCount = 0
             while (_isPlayingAudio.value) {
-                delay(1000)
-                val step = (1000 * _audioSpeed.value).toLong()
-                val next = (_audioProgressMs.value + step).coerceAtMost(_audioDurationMs.value)
-                _audioProgressMs.value = next
+                delay(500)
+                if (!_isPlayingAudio.value) break
+                tickCount++
+                val dur = _audioDurationMs.value.coerceAtLeast(1L)
+                val playerPos = audioMediaPlayer?.let { mp ->
+                    runCatching { mp.currentPosition.toLong() }.getOrNull()
+                }
+                val pos = (playerPos ?: (_audioProgressMs.value + (500 * _audioSpeed.value).toLong())).coerceIn(0L, dur)
+                _audioProgressMs.value = pos
 
-                val percent = (next.toFloat() / _audioDurationMs.value.toFloat()) * 100f
-                repository.recordActiveLearningTime(classId, (1 * _audioSpeed.value).toLong(), percent)
+                if (tickCount % 2 == 0) {
+                    val percent = (pos.toFloat() / dur.toFloat()) * 100f
+                    repository.recordActiveLearningTime(
+                        classId = classId,
+                        secondsToAdd = 1L,
+                        playbackPercent = percent,
+                        playbackPositionMs = pos
+                    )
+                }
 
-                if (next >= _audioDurationMs.value) {
+                val stillPlaying = audioMediaPlayer?.let { mp ->
+                    runCatching { mp.isPlaying }.getOrDefault(true)
+                } ?: true
+                if (!stillPlaying && pos >= dur - 250L) {
                     _isPlayingAudio.value = false
                     pushClassProgressToCloud(classId)
                     break
@@ -533,58 +1001,140 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private fun stopAudioPlayback() {
-        _audioCurrentClassId.value?.let { pushClassProgressToCloud(it) }
+        _audioCurrentClassId.value?.let { classId ->
+            val dur = _audioDurationMs.value.coerceAtLeast(1L)
+            val percent = (_audioProgressMs.value.toFloat() / dur.toFloat()) * 100f
+            repository.recordActiveLearningTime(classId, 0L, percent, playbackPositionMs = _audioProgressMs.value)
+            pushClassProgressToCloud(classId)
+        }
         _isPlayingAudio.value = false
+        audioLoadJob?.cancel()
         audioTimerJob?.cancel()
+        releaseAudioPlayer()
     }
 
-    // Video Playback
+    // Real Video Playback state synchronized with inline / fullscreen VideoView
     fun playPauseVideo(classId: String) {
         _isPlayingVideo.value = !_isPlayingVideo.value
         if (_isPlayingVideo.value) {
-            startVideoTicker(classId)
+            if (_videoPositionMs.value == 0L) {
+                val savedPos = studentProgressMap.value[classId]?.lastPlaybackPositionMs
+                    ?.takeIf { it in 1L until (_videoDurationMs.value - 1000L) } ?: 0L
+                _videoPositionMs.value = savedPos
+            }
+            lastVideoActiveRecordedSecMs = System.currentTimeMillis()
         } else {
             videoTimerJob?.cancel()
+            val dur = _videoDurationMs.value.coerceAtLeast(1L)
+            val percent = (_videoPositionMs.value.toFloat() / dur.toFloat()) * 100f
+            repository.recordActiveLearningTime(classId, 0L, percent, playbackPositionMs = _videoPositionMs.value)
             pushClassProgressToCloud(classId)
         }
     }
 
-    private fun startVideoTicker(classId: String) {
-        videoTimerJob?.cancel()
-        videoTimerJob = viewModelScope.launch {
-            while (_isPlayingVideo.value) {
-                delay(1000)
-                val next = (_videoPositionMs.value + 1000L).coerceAtMost(_videoDurationMs.value)
-                _videoPositionMs.value = next
+    fun updateVideoPlaybackProgress(
+        classId: String,
+        positionMs: Long,
+        durationMs: Long,
+        isPlaying: Boolean
+    ) {
+        val safeDur = durationMs.coerceAtLeast(1000L)
+        val safePos = positionMs.coerceIn(0L, safeDur)
+        _videoDurationMs.value = safeDur
+        _videoPositionMs.value = safePos
+        if (_isPlayingVideo.value != isPlaying) {
+            _isPlayingVideo.value = isPlaying
+        }
 
-                val percent = (next.toFloat() / _videoDurationMs.value.toFloat()) * 100f
-                repository.recordActiveLearningTime(classId, 1L, percent)
-
-                if (next >= _videoDurationMs.value) {
-                    _isPlayingVideo.value = false
-                    pushClassProgressToCloud(classId)
-                    break
-                }
+        val now = System.currentTimeMillis()
+        val elapsedSec = if (isPlaying && lastVideoActiveRecordedSecMs > 0L) {
+            ((now - lastVideoActiveRecordedSecMs) / 1000L).coerceIn(0L, 5L)
+        } else {
+            0L
+        }
+        if (elapsedSec > 0L || !isPlaying) {
+            if (isPlaying) {
+                lastVideoActiveRecordedSecMs = now
+            }
+            val percent = (safePos.toFloat() / safeDur.toFloat()) * 100f
+            repository.recordActiveLearningTime(
+                classId = classId,
+                secondsToAdd = elapsedSec,
+                playbackPercent = percent,
+                playbackPositionMs = safePos
+            )
+            if (!isPlaying || (safePos > 0L && (safePos / 1000L) % 10L == 0L)) {
+                pushClassProgressToCloud(classId)
             }
         }
     }
 
     fun seekVideo(targetMs: Long, classId: String) {
-        _videoPositionMs.value = targetMs.coerceIn(0L, _videoDurationMs.value)
-        val percent = (_videoPositionMs.value.toFloat() / _videoDurationMs.value.toFloat()) * 100f
-        repository.recordActiveLearningTime(classId, 0L, percent)
+        val dur = _videoDurationMs.value.coerceAtLeast(1L)
+        val clamped = targetMs.coerceIn(0L, dur)
+        _videoPositionMs.value = clamped
+        val percent = (clamped.toFloat() / dur.toFloat()) * 100f
+        repository.recordActiveLearningTime(classId, 0L, percent, playbackPositionMs = clamped)
     }
 
     private fun stopVideoPlayback() {
         _isPlayingVideo.value = false
         videoTimerJob?.cancel()
+        lastVideoActiveRecordedSecMs = 0L
     }
 
-    // PDF Reading Tracking & Confirmation
+    fun pauseAllActiveStudySessions() {
+        stopAudioPlayback()
+        if (_isPlayingVideo.value) {
+            stopVideoPlayback()
+            val activeClassId = (_currentScreen.value as? Screen.ClassDetail)?.classId
+            activeClassId?.let { pushClassProgressToCloud(it) }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        audioLoadJob?.cancel()
+        audioTimerJob?.cancel()
+        videoTimerJob?.cancel()
+        releaseAudioPlayer()
+    }
+
+    // PDF Reading Tracking & Confirmation (tracks actual pages & active seconds, excludes idle time)
+    fun recordPdfPageStudy(
+        classId: String,
+        currentPage: Int,
+        totalPages: Int,
+        secondsReading: Long,
+        explicitConfirm: Boolean = false,
+        idleExcludedSeconds: Long = 0L
+    ) {
+        val prevPage = studentProgressMap.value[classId]?.lastPdfPage ?: 0
+        repository.recordPdfPageStudy(
+            classId = classId,
+            currentPage = currentPage,
+            totalPages = totalPages,
+            secondsReading = secondsReading,
+            explicitConfirm = explicitConfirm,
+            idleExcludedSecondsToAdd = idleExcludedSeconds
+        )
+        val updatedSec = studentProgressMap.value[classId]?.pdfReadingSeconds ?: 0L
+        if (explicitConfirm || currentPage != prevPage || (updatedSec > 0L && updatedSec % 5L == 0L)) {
+            pushClassProgressToCloud(classId)
+        }
+    }
+
     fun confirmPdfRead(classId: String) {
-        repository.recordPdfReading(classId, 30L, explicitConfirm = true)
+        val prog = studentProgressMap.value[classId]
+        repository.recordPdfPageStudy(
+            classId = classId,
+            currentPage = (prog?.lastPdfPage ?: 1).coerceAtLeast(1),
+            totalPages = (prog?.totalPdfPages ?: 1).coerceAtLeast(1),
+            secondsReading = 0L,
+            explicitConfirm = true
+        )
         pushClassProgressToCloud(classId)
-        showNotification("Confirmed: PDF syllabus guide thoroughly reviewed.")
+        showNotification("Confirmed: PDF syllabus guide reviewed.")
     }
 
     // Class Quick Quiz Submission
@@ -592,6 +1142,10 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         val passed = repository.submitQuiz(classId, scorePercent)
         pushClassProgressToCloud(classId)
         if (passed) {
+            val issued = repository.issuedCertificates.value.find { it.studentId == currentUser.value.id && it.status == com.example.model.CertificateStatus.VALID }
+            if (issued != null && cloudAuthUser.value != null) {
+                viewModelScope.launch { cloudSyncRepository?.issueCertificateInCloud(issued) }
+            }
             showNotification("Quiz Passed! ($scorePercent%) — Verified for Class Completion! 🎉")
             activeQuizClass.value = null
         } else {
@@ -610,9 +1164,18 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
 
     // ================= EXAM ASSESSMENT ACTIONS =================
 
+    fun getStudentExamAttemptsCount(examId: String): Int =
+        repository.getStudentExamAttemptsCount(examId, currentUser.value.id)
+
     fun openExam(exam: ModuleExam) {
-        // If student already has an attempt, load it
         val previousAttempt = repository.getStudentBestExamAttempt(exam.id)
+        if (previousAttempt == null) {
+            val (canStart, reason) = repository.canStudentStartExam(exam.id)
+            if (!canStart) {
+                showNotification(reason ?: "Cannot start exam.", isError = true)
+                return
+            }
+        }
         activeExam.value = exam
         activeExamResult.value = previousAttempt
         isExamSubmitted.value = previousAttempt != null
@@ -625,6 +1188,11 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun retakeExam(exam: ModuleExam) {
+        val (canStart, reason) = repository.canStudentStartExam(exam.id)
+        if (!canStart) {
+            showNotification(reason ?: "Maximum attempts reached or exam window closed.", isError = true)
+            return
+        }
         activeExam.value = exam
         activeExamResult.value = null
         isExamSubmitted.value = false
@@ -653,12 +1221,44 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         activeExamResult.value = attempt
         isExamSubmitted.value = true
 
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.recordExamAttemptInCloud(attempt, exam.moduleId)
+                val issued = issuedCertificates.value.find {
+                    it.studentId == attempt.studentId && it.status == com.example.model.CertificateStatus.VALID
+                }
+                if (issued != null) {
+                    cloudSyncRepository?.issueCertificateInCloud(issued)
+                }
+            }
+        }
+
         val resultMsg = if (attempt.isPassed) {
             "Exam Passed! Score: ${attempt.scoreMarks}/${attempt.totalMarks} (${attempt.percentage}%) 🎉"
         } else {
             "Score: ${attempt.scoreMarks}/${attempt.totalMarks} (${attempt.percentage}%). Required: ${exam.passingPercentage}%."
         }
         showNotification(resultMsg, isError = !attempt.isPassed)
+    }
+
+    fun createOrUpdateModuleExam(exam: ModuleExam) {
+        if (!canManageModule(exam.moduleId)) {
+            showNotification("Permission denied: Not assigned to manage this module.", isError = true)
+            return
+        }
+        val saved = repository.createOrUpdateExam(exam)
+        val log = repository.recordAuditLog(
+            actionType = "EXAM_SAVED",
+            targetId = saved.id,
+            summary = "Saved exam '${saved.title}' for module ${saved.moduleId} (pass=${saved.passingPercentage}%, maxAttempts=${saved.maxAttempts})"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.upsertExam(saved)
+                cloudSyncRepository?.appendAuditLog(log)
+            }
+        }
+        showNotification("Exam saved: ${saved.title}")
     }
 
     fun closeExam() {
@@ -694,18 +1294,93 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         activeAssignment.value = null
     }
 
+    fun createOrUpdateModuleAssignment(assignment: ModuleAssignment) {
+        if (!canManageModule(assignment.moduleId)) {
+            showNotification("Permission denied: Not assigned to manage this module.", isError = true)
+            return
+        }
+        val saved = repository.createOrUpdateAssignment(assignment)
+        val log = repository.recordAuditLog(
+            actionType = "ASSIGNMENT_SAVED",
+            targetId = saved.id,
+            summary = "Saved assignment '${saved.title}' for module ${saved.moduleId} (${saved.maxMarks} marks)"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.upsertAssignment(saved)
+                cloudSyncRepository?.appendAuditLog(log)
+            }
+        }
+        showNotification("Assignment saved: ${saved.title}")
+    }
+
     fun submitAssignment(assignmentId: String, text: String, fileName: String? = null) {
         if (text.isBlank()) {
             showNotification("Please provide assignment text or report summary.", isError = true)
             return
         }
-        repository.submitAssignment(assignmentId, text, fileName)
+        val existing = repository.getStudentAssignmentSubmission(assignmentId)
+        if (existing?.isGraded == true) {
+            showNotification("This graded submission is locked and cannot be modified.", isError = true)
+            return
+        }
+        val sub = repository.submitAssignment(assignmentId, text, fileName)
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                val targetModuleId = activeAssignment.value?.moduleId
+                    ?: moduleAssignments.value.find { it.id == assignmentId }?.moduleId.orEmpty()
+                cloudSyncRepository?.submitAssignmentToCloud(sub, targetModuleId)
+                val issued = issuedCertificates.value.find {
+                    it.studentId == sub.studentId && it.status == com.example.model.CertificateStatus.VALID
+                }
+                if (issued != null) {
+                    cloudSyncRepository?.issueCertificateInCloud(issued)
+                }
+            }
+        }
         showNotification("Assignment submitted successfully for review!")
         activeAssignment.value = null
     }
 
     fun gradeAssignment(submissionId: String, marks: Int, feedback: String) {
-        repository.gradeAssignment(submissionId, marks, feedback)
+        val target = assignmentSubmissions.value.find { it.submissionId == submissionId }
+        val modId = target?.moduleId ?: moduleAssignments.value.find { it.id == target?.assignmentId }?.moduleId.orEmpty()
+        if (modId.isNotBlank() && !canManageModule(modId)) {
+            showNotification("Permission denied: Only assigned faculty or Admin can grade this module.", isError = true)
+            return
+        }
+        repository.gradeAssignment(
+            submissionId = submissionId,
+            marksAwarded = marks,
+            feedback = feedback,
+            graderUid = currentUser.value.authUid.ifBlank { currentUser.value.id },
+            graderName = currentUser.value.fullName
+        )
+        val updatedSub = assignmentSubmissions.value.find { it.submissionId == submissionId }
+        val log = repository.recordAuditLog(
+            actionType = "ASSIGNMENT_GRADED",
+            targetId = submissionId,
+            summary = "Graded ${target?.studentName ?: submissionId} with $marks marks"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) {
+                cloudSyncRepository?.gradeSubmissionInCloud(
+                    submissionId = submissionId,
+                    marksAwarded = marks,
+                    feedback = feedback,
+                    graderName = currentUser.value.fullName
+                )
+                cloudSyncRepository?.appendAuditLog(log)
+                if (updatedSub != null) {
+                    val issued = issuedCertificates.value.find {
+                        it.studentId == updatedSub.studentId && it.status == com.example.model.CertificateStatus.VALID
+                    }
+                    if (issued != null) {
+                        cloudSyncRepository?.issueCertificateInCloud(issued)
+                    }
+                }
+            }
+        }
         showNotification("Assignment graded: $marks marks awarded.")
     }
 
@@ -716,38 +1391,153 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     // ================= CERTIFICATE ACTIONS =================
 
     fun generateCertificate(): CertificateRecord? {
+        if (!adminSettings.value.certificatesEnabled) {
+            showNotification("Official certificate issuance is currently disabled by Administrator.", isError = true)
+            return null
+        }
         val cert = repository.generateCertificateForStudent()
         return if (cert != null) {
             previewCertificate.value = cert
-            showNotification("Official ISCEB Diploma Issued! (ID: ${cert.certificateId}) 🎉")
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null) {
+                    cloudSyncRepository?.issueCertificateInCloud(cert)
+                }
+            }
+            showNotification("Official ISCEB Diploma Issued! (ID: ${cert.certificateId})")
             cert
         } else {
-            showNotification("Ineligible: Complete all required classes, exams & capstone.", isError = true)
+            showNotification("Ineligible: Complete all required lessons, exams & assignments.", isError = true)
             null
         }
     }
 
+    fun previewDemoCertificate(): CertificateRecord? {
+        val settings = adminSettings.value
+        if (!isAdminLoggedIn.value && !settings.demoCertificateEnabled) {
+            showNotification("Demo certificate preview is currently disabled by Administrator.", isError = true)
+            return null
+        }
+        val demoCert = repository.createDemoCertificateRecord()
+        previewCertificate.value = demoCert
+        return demoCert
+    }
+
+    fun createDemoCertificateRecord(): CertificateRecord {
+        return repository.createDemoCertificateRecord()
+    }
+
+    fun exportCertificatePdfToUri(record: CertificateRecord, targetUri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = CertificatePdfGenerator.exportCertificatePdfToUri(getApplication(), record, targetUri)
+            withContext(Dispatchers.Main) {
+                res.onSuccess { bytes ->
+                    showNotification("Certificate PDF saved (${bytes / 1024} KB).")
+                }.onFailure { err ->
+                    showNotification("Unable to save PDF: ${err.localizedMessage ?: "Export failed"}", isError = true)
+                }
+            }
+        }
+    }
+
+    fun toggleCertificatesEnabled(enabled: Boolean) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can toggle certificate settings.", isError = true)
+            return
+        }
+        val updated = adminSettings.value.copy(certificatesEnabled = enabled)
+        repository.updateAdminSettings(updated)
+        autoPublishCatalogIfCloudAdmin(if (enabled) "Enabled official certificates" else "Paused official certificates")
+        showNotification(if (enabled) "Official certificates enabled." else "Official certificates paused.")
+    }
+
+    fun toggleDemoCertificateEnabled(enabled: Boolean) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can toggle demo certificate settings.", isError = true)
+            return
+        }
+        val updated = adminSettings.value.copy(demoCertificateEnabled = enabled)
+        repository.updateAdminSettings(updated)
+        autoPublishCatalogIfCloudAdmin(if (enabled) "Enabled Demo Certificate preview" else "Restricted Demo Certificate preview to Admin")
+        showNotification(if (enabled) "Demo Certificate enabled for preview." else "Demo Certificate restricted to Admin.")
+    }
+
+    fun reissueCertificate(studentId: String, reason: String = "Administrative Re-issuance"): CertificateRecord? {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can re-issue certificates.", isError = true)
+            return null
+        }
+        val cert = repository.reissueCertificateForStudent(studentId, reason)
+        if (cert != null) {
+            val log = repository.recordAuditLog(
+                actionType = "CERTIFICATE_REISSUED",
+                targetId = cert.certificateId,
+                summary = "Re-issued certificate ${cert.certificateId} for ${cert.studentName}: $reason"
+            )
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null) {
+                    cloudSyncRepository?.issueCertificateInCloud(cert)
+                    cloudSyncRepository?.appendAuditLog(log)
+                }
+            }
+            showNotification("Re-issued certificate ${cert.certificateId} for ${cert.studentName}.")
+        } else {
+            showNotification("Could not re-issue certificate for this student.", isError = true)
+        }
+        return cert
+    }
+
     fun openOrShareCertificate(record: CertificateRecord) {
-        val file = record.filePath?.let { File(it) }
-            ?: CertificatePdfGenerator.generateCertificatePdf(getApplication(), record)
+        val file = CertificatePdfGenerator.generateCertificatePdf(getApplication(), record)
         CertificatePdfGenerator.openOrShareCertificate(getApplication(), file)
     }
 
     fun searchCertificate(certId: String) {
         isVerificationSearched.value = true
         verificationSearchQuery.value = certId
-        val res = repository.verifyCertificateById(certId)
-        verificationResult.value = res
-        if (res != null) {
-            showNotification("Verified Certificate: ${res.studentName} (${res.status})")
+        val localRes = repository.verifyCertificateById(certId)
+        verificationResult.value = localRes
+        if (localRes != null) {
+            showNotification("Verified Certificate: ${localRes.studentName} (${localRes.status})")
+        } else if (cloudAuthUser.value != null && cloudSyncRepository != null) {
+            viewModelScope.launch {
+                val remoteRes = cloudSyncRepository?.verifyCertificateOnline(certId)?.getOrNull()
+                if (remoteRes != null) {
+                    repository.mergeCloudCertificates(listOf(remoteRes))
+                    verificationResult.value = remoteRes
+                    showNotification("Verified Online: ${remoteRes.studentName} (${remoteRes.status})")
+                } else {
+                    showNotification("No certificate found with ID: $certId", isError = true)
+                }
+            }
         } else {
             showNotification("No certificate found with ID: $certId", isError = true)
         }
     }
 
     fun revokeCertificate(certId: String, reason: String) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can revoke certificates.", isError = true)
+            return
+        }
+        val targetCert = issuedCertificates.value.find { it.certificateId == certId }
         val ok = repository.revokeCertificate(certId, reason)
         if (ok) {
+            val log = repository.recordAuditLog(
+                actionType = "CERTIFICATE_REVOKED",
+                targetId = certId,
+                summary = "Revoked certificate $certId: $reason"
+            )
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null && targetCert != null) {
+                    cloudSyncRepository?.updateCertificateStatusInCloud(
+                        certId = certId,
+                        studentUid = targetCert.studentId,
+                        status = com.example.model.CertificateStatus.REVOKED,
+                        reason = reason
+                    )
+                    cloudSyncRepository?.appendAuditLog(log)
+                }
+            }
             showNotification("Certificate $certId revoked.")
             revokeTargetCert.value = null
             if (verificationResult.value?.certificateId == certId) {
@@ -759,8 +1549,29 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun reinstateCertificate(certId: String) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can reinstate certificates.", isError = true)
+            return
+        }
+        val targetCert = issuedCertificates.value.find { it.certificateId == certId }
         val ok = repository.reinstateCertificate(certId)
         if (ok) {
+            val log = repository.recordAuditLog(
+                actionType = "CERTIFICATE_REINSTATED",
+                targetId = certId,
+                summary = "Reinstated certificate $certId as VALID"
+            )
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null && targetCert != null) {
+                    cloudSyncRepository?.updateCertificateStatusInCloud(
+                        certId = certId,
+                        studentUid = targetCert.studentId,
+                        status = com.example.model.CertificateStatus.VALID,
+                        reason = null
+                    )
+                    cloudSyncRepository?.appendAuditLog(log)
+                }
+            }
             showNotification("Certificate $certId reinstated as VALID.")
             if (verificationResult.value?.certificateId == certId) {
                 verificationResult.value = repository.verifyCertificateById(certId)
@@ -771,13 +1582,29 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun updateAdminSettings(settings: AdminCompletionSettings) {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Only Administrators can update institutional rules.", isError = true)
+            return
+        }
         repository.updateAdminSettings(settings)
+        val log = repository.recordAuditLog(
+            actionType = "SETTINGS_UPDATED",
+            targetId = "admin_completion_settings",
+            summary = "Updated completion rules: minStudy=${settings.minLearningTimeSeconds}s, quizPass=${settings.quizPassingScore}%"
+        )
+        viewModelScope.launch {
+            if (cloudAuthUser.value != null) cloudSyncRepository?.appendAuditLog(log)
+        }
         autoPublishCatalogIfCloudAdmin("Updated institutional & completion rules")
         showNotification("Updated completion rules and institutional settings.")
         showAdminSettingsDialog.value = false
     }
 
     fun demoFastTrackCompletion() {
+        if (!isAdminLoggedIn.value) {
+            showNotification("Restricted: Admin mode required.", isError = true)
+            return
+        }
         repository.fastTrackCompleteAllClasses()
         showNotification("Fast-Track Activated: Completed all 48 classes and exams for ${currentUser.value.fullName}!")
     }
@@ -889,6 +1716,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         when (result) {
             is AdminAuthResult.Authenticated -> {
                 repository.activateVerifiedAdminSession(result.adminId)
+                ensureStaffCloudListeners(includeAdminLogs = true)
                 showNotification("Authenticated: ${result.fullName}")
                 showAdminLoginDialog.value = false
             }
@@ -916,6 +1744,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         when (result) {
             is AdminAuthResult.Authenticated -> {
                 repository.activateVerifiedAdminSession(result.adminId)
+                ensureStaffCloudListeners(includeAdminLogs = true)
                 result.oneTimeRecoveryCode?.let { code ->
                     _latestRecoveryKeyNotice.value = "Save one-time recovery key for ${result.fullName}: $code"
                 }
@@ -992,6 +1821,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         when (result) {
             is AdminAuthResult.Authenticated -> {
                 repository.activateVerifiedAdminSession(result.adminId)
+                ensureStaffCloudListeners(includeAdminLogs = true)
                 result.oneTimeRecoveryCode?.let { code ->
                     _latestRecoveryKeyNotice.value = "Updated one-time recovery key for ${result.fullName}: $code"
                 }
@@ -1007,9 +1837,15 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun logoutAdmin() {
+        staffListenerJob?.cancel()
+        staffListenerJob = null
         repository.deactivateAdminSession()
         refreshAdminAuthState()
-        showNotification("Switched to Learner Mode.")
+        if (_currentScreen.value is Screen.AdminPanel) {
+            _currentScreen.value = Screen.Main
+            _navigationStack.clear()
+        }
+        showNotification("Exited Administrator Mode.")
     }
 
     fun addModule(title: String, description: String, category: String, hours: Int) {
@@ -1166,6 +2002,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
 
                 var cloudFileId = ""
                 var cloudChunkCount = 0
+                var cloudFailureMsg: String? = null
                 val cloudRepo = cloudSyncRepository
                 if (cloudRepo != null && cloudAuthUser.value != null && savedFile.length() <= CloudSyncRepository.MAX_CLOUD_FILE_BYTES) {
                     _uploadByteStatus.value = "Syncing to Cloud Firestore..."
@@ -1175,12 +2012,13 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                     if (uploadRes.isSuccess) {
                         cloudFileId = candidateFileId
                         cloudChunkCount = uploadRes.getOrDefault(0)
+                    } else {
+                        cloudFailureMsg = uploadRes.exceptionOrNull()?.localizedMessage ?: "Firestore chunk upload failed"
                     }
                 }
 
                 val duration = when (mediaType) {
-                    MediaType.AUDIO -> "18:24"
-                    MediaType.VIDEO -> "12:30"
+                    MediaType.AUDIO, MediaType.VIDEO -> MediaFileManager.extractFormattedDuration(savedFile)
                     MediaType.PDF, MediaType.IMAGE, MediaType.DOCUMENT -> null
                 }
 
@@ -1206,13 +2044,30 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                 )
 
                 repository.attachFilesToClass(classId, listOf(media))
-                autoPublishCatalogNow("Uploaded ${media.displayTitle}")
+                val publishRes = autoPublishCatalogNow("Uploaded ${media.displayTitle}")
                 _uploadProgress.value = null
                 _uploadingTarget.value = null
                 _uploadByteStatus.value = null
-                _uploadError.value = null
-                val cloudNote = if (cloudChunkCount > 0) " • Synced to students" else if (savedFile.length() > CloudSyncRepository.MAX_CLOUD_FILE_BYTES) " • Large file saved locally (use HTTPS link for student streaming)" else ""
-                showNotification("Uploaded ${mediaType.displayLabel}: ${media.displayTitle} (${media.fileSizeFormatted})$cloudNote")
+                _uploadError.value = cloudFailureMsg
+                when {
+                    cloudFailureMsg != null -> showNotification(
+                        "Saved locally, but Cloud Sync failed ($cloudFailureMsg). Sign in as Admin Gmail.",
+                        isError = true
+                    )
+                    publishRes.isFailure && cloudAuthUser.value != null -> showNotification(
+                        "File uploaded, but publishing live catalog failed: ${publishRes.exceptionOrNull()?.localizedMessage ?: "Permission denied"}",
+                        isError = true
+                    )
+                    cloudAuthUser.value == null -> showNotification(
+                        "Saved locally (${media.fileSizeFormatted}). Connect Admin Google Cloud Sync to make visible to Student phones."
+                    )
+                    savedFile.length() > CloudSyncRepository.MAX_CLOUD_FILE_BYTES -> showNotification(
+                        "Saved locally (${media.fileSizeFormatted}). Files >18 MB need an HTTPS URL for Student cross-device access."
+                    )
+                    else -> showNotification(
+                        "Uploaded & cloud-synced ${mediaType.displayLabel}: ${media.displayTitle} (${media.fileSizeFormatted})!"
+                    )
+                }
                 onComplete?.invoke(true)
             } catch (e: Exception) {
                 _uploadProgress.value = null
@@ -1257,6 +2112,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                 val cloudRepo = cloudSyncRepository
                 var cloudSyncedFiles = 0
                 var largeLocalOnlyFiles = 0
+                var firstCloudError: String? = null
 
                 pendingItems.forEachIndexed { index, item ->
                     val uri = Uri.parse(item.uriString)
@@ -1283,6 +2139,8 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                                 cloudFileId = candidateFileId
                                 cloudChunkCount = uploadRes.getOrDefault(0)
                                 cloudSyncedFiles++
+                            } else if (firstCloudError == null) {
+                                firstCloudError = uploadRes.exceptionOrNull()?.localizedMessage ?: "Firestore upload denied"
                             }
                         } else {
                             largeLocalOnlyFiles++
@@ -1290,8 +2148,8 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                     }
 
                     val duration = when (item.mediaType) {
-                        MediaType.AUDIO -> item.durationFormatted ?: "18:24"
-                        MediaType.VIDEO -> item.durationFormatted ?: "12:30"
+                        MediaType.AUDIO, MediaType.VIDEO ->
+                            item.durationFormatted ?: MediaFileManager.extractFormattedDuration(savedFile)
                         MediaType.PDF, MediaType.IMAGE, MediaType.DOCUMENT -> null
                     }
 
@@ -1314,17 +2172,24 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                 }
 
                 repository.attachFilesToClass(classId, uploadedMedia)
-                autoPublishCatalogNow("Uploaded ${uploadedMedia.size} class study file(s)")
+                val publishRes = autoPublishCatalogNow("Uploaded ${uploadedMedia.size} class study file(s)")
                 _uploadProgress.value = null
                 _uploadingTarget.value = null
                 _uploadByteStatus.value = null
-                _uploadError.value = null
+                _uploadError.value = firstCloudError
                 val summaryMsg = when {
-                    largeLocalOnlyFiles > 0 -> "Uploaded ${uploadedMedia.size} file(s). Files >3.5 MB need an HTTPS URL for cross-device student access."
-                    cloudSyncedFiles > 0 -> "Uploaded & cloud-synced ${uploadedMedia.size} study file(s) to student phones!"
-                    else -> "Saved ${uploadedMedia.size} study file(s) locally. Connect Admin Google Sync to push live."
+                    firstCloudError != null ->
+                        "Saved locally, but Cloud Sync failed ($firstCloudError). Sign in with Admin Gmail (www.mdnafiulislam@gmail.com)."
+                    publishRes.isFailure && cloudAuthUser.value != null ->
+                        "Uploaded chunks, but live catalog publish failed: ${publishRes.exceptionOrNull()?.localizedMessage ?: "Permission denied"}"
+                    largeLocalOnlyFiles > 0 ->
+                        "Uploaded ${uploadedMedia.size} file(s). Files >18 MB need an HTTPS URL for cross-device student access."
+                    cloudSyncedFiles > 0 ->
+                        "Uploaded & cloud-synced ${uploadedMedia.size} study file(s) to student phones!"
+                    else ->
+                        "Saved ${uploadedMedia.size} study file(s) locally. Sign in with Admin Google Cloud Sync to push to students."
                 }
-                showNotification(summaryMsg)
+                showNotification(summaryMsg, isError = firstCloudError != null || (publishRes.isFailure && cloudAuthUser.value != null))
                 onComplete?.invoke(true)
             } catch (e: Exception) {
                 _uploadProgress.value = null
@@ -1375,13 +2240,31 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun openMediaFile(media: LessonMedia) {
-        if (media.type == MediaType.PDF) {
-            previewPdfMedia.value = media
-            return
-        }
-        if (media.type == MediaType.IMAGE) {
-            previewImageMedia.value = media
-            return
+        when (media.type) {
+            MediaType.PDF -> {
+                previewPdfMedia.value = media
+                return
+            }
+            MediaType.IMAGE -> {
+                previewImageMedia.value = media
+                return
+            }
+            MediaType.VIDEO -> {
+                previewVideoMedia.value = media
+                return
+            }
+            MediaType.DOCUMENT -> {
+                previewDocumentMedia.value = media
+                return
+            }
+            MediaType.AUDIO -> {
+                val activeClass = (_currentScreen.value as? Screen.ClassDetail)?.classId
+                    ?.let { cid -> classes.value.find { it.id == cid } }
+                if (activeClass != null && activeClass.audioMedia?.id == media.id) {
+                    playPauseAudio(activeClass.id)
+                    return
+                }
+            }
         }
         viewModelScope.launch {
             val localFile = resolveLocalMediaFile(media)
@@ -1403,15 +2286,20 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             val resolvedMedia = if (localFile != null) media.copy(url = localFile.absolutePath) else media
             val opened = MediaFileManager.openMediaWithSystemViewer(getApplication(), resolvedMedia)
             if (!opened) {
-                showNotification("Viewing '${media.displayTitle}' inside ISCEB reader (no external viewer installed).")
+                showNotification(
+                    if (localFile != null) "No external app found for '${media.displayTitle}'. Use Download to save to Files."
+                    else "File '${media.displayTitle}' could not be downloaded. Check internet & Google Sync.",
+                    isError = true
+                )
             }
         }
     }
 
     fun exportMediaToUri(media: LessonMedia, destinationUri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            resolveLocalMediaFile(media)
-            val saved = MediaFileManager.exportMediaToUri(getApplication(), media, destinationUri)
+            val resolvedFile = resolveLocalMediaFile(media)
+            val resolvedMedia = if (resolvedFile != null) media.copy(url = resolvedFile.absolutePath) else media
+            val saved = MediaFileManager.exportMediaToUri(getApplication(), resolvedMedia, destinationUri)
             if (saved) {
                 showNotification("Downloaded '${media.displayTitle}' to your selected folder!")
             } else {
@@ -1493,13 +2381,21 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     private fun autoPublishCatalogIfCloudAdmin(changeSummary: String) {
         if (!isAdminLoggedIn.value || cloudSyncRepository == null || cloudAuthUser.value == null) return
         viewModelScope.launch {
-            autoPublishCatalogNow(changeSummary)
+            val res = autoPublishCatalogNow(changeSummary)
+            if (res.isFailure) {
+                showNotification(
+                    "Saved locally, but Cloud Publish failed: ${res.exceptionOrNull()?.localizedMessage ?: "Admin Google account required"}",
+                    isError = true
+                )
+            }
         }
     }
 
-    private suspend fun autoPublishCatalogNow(changeSummary: String) {
-        val cloudRepo = cloudSyncRepository ?: return
-        if (!isAdminLoggedIn.value || cloudAuthUser.value == null) return
+    private suspend fun autoPublishCatalogNow(changeSummary: String): Result<Unit> {
+        val cloudRepo = cloudSyncRepository ?: return Result.failure(IllegalStateException("Cloud repository unavailable"))
+        if (!isAdminLoggedIn.value || cloudAuthUser.value == null) {
+            return Result.failure(IllegalStateException("Admin Google Cloud Sync not connected"))
+        }
         val nextNum = (publishManifest.value.versionCode - 100).coerceAtLeast(1) + 1
         val manifest = repository.adminPublishCurriculumUpdate(
             newVersionTag = "v1.$nextNum.0",
@@ -1509,7 +2405,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             latestApkVersionName = appUpdateInfo.value.latestAvailableApkVersionName.ifBlank { BuildConfig.VERSION_NAME },
             apkDownloadUrl = adminSettings.value.apkDownloadUrl
         )
-        cloudRepo.publishLiveCurriculum(
+        return cloudRepo.publishLiveCurriculum(
             manifest = manifest,
             modules = modules.value,
             classes = classes.value,
@@ -1725,8 +2621,43 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
 
     fun onCloudSignInSuccess(user: FirebaseUser) {
         _cloudSyncError.value = null
-        showNotification("☁️ Google Cloud Auto-Sync connected: ${user.email ?: "Signed In"}")
-        checkForUpdates()
+        viewModelScope.launch {
+            val cloudRepo = cloudSyncRepository
+            val existingRemote = try {
+                cloudRepo?.getUserAccountOnce(user.uid)?.getOrNull()
+            } catch (_: Exception) {
+                null
+            }
+            val account = if (existingRemote != null) {
+                repository.mergeCloudUserAccount(existingRemote)
+                val synced = repository.signInOrRegisterStudentAccount(
+                    fullName = existingRemote.fullName.ifBlank { user.displayName ?: "ISCEB Student" },
+                    email = existingRemote.email.ifBlank { user.email ?: "" },
+                    authUid = user.uid,
+                    organization = existingRemote.organization,
+                    designation = existingRemote.designation,
+                    mobileNumber = existingRemote.mobileNumber,
+                    enrolledProgram = existingRemote.enrolledProgram,
+                    photoUrl = existingRemote.photoUrl.ifBlank { user.photoUrl?.toString().orEmpty() }
+                )
+                if (existingRemote.role == UserRole.TEACHER) {
+                    repository.activateTeacherSession(synced.id)
+                    ensureStaffCloudListeners(includeAdminLogs = false)
+                }
+                repository.currentUser.value
+            } else {
+                val created = repository.signInOrRegisterStudentAccount(
+                    fullName = user.displayName ?: (user.email?.substringBefore("@") ?: "ISCEB Student"),
+                    email = user.email ?: "",
+                    authUid = user.uid,
+                    photoUrl = user.photoUrl?.toString().orEmpty()
+                )
+                cloudRepo?.upsertUserAccount(created, allowRoleAndPrivileges = false)
+                created
+            }
+            showNotification("☁️ Signed in & synced: ${account.fullName} (${account.studentId})")
+            checkForUpdates()
+        }
     }
 
     fun onCloudSignInError(message: String) {

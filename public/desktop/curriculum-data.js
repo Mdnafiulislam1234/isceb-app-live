@@ -24,28 +24,223 @@ export const DEFAULT_FOUNDER = {
   mobileNumber: "01715-282905",
   email: "amirul.islam@isceb.org",
   location: "Dhaka, Bangladesh",
-  biography: "Founder of ISCEB (International Supply Chain Education Board) and Lead Trainer of ISCEB, serving as Head of Supply Chain Management at BRB Group with executive leadership in strategic procurement, global logistics, and SCM mentorship."
+  educationBackground:
+    "MBA in Finance; M.Com in Marketing; Post Graduate Diploma in Supply Chain Management (ISCEA, USA); global certifications under TUV SUD South Asia Pvt. Ltd., Business Express, and SELTA Training Associates (risk management, internal auditing, process validation, and international logistics).",
+  biography:
+    "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, overseeing procurement, logistics, warehousing, planning, and supplier relationship management. Throughout his distinguished career, he held leadership positions at NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. Beyond his corporate accomplishments, he serves as Lead Trainer at IECB and Founder & Lead Trainer of ISCEB with the vision: \"Connect. Learn. Achieve.\""
 };
 
 export const DEFAULT_DEVELOPER = {
   name: "Md. Nafiul Islam Nahin",
   designation: "Developer of ISCEB App",
-  biography: "App Developer for ISCEB (International Supply Chain Education Board), architecting Android, Web, and PC/Desktop platforms with real-time cloud synchronization, encrypted assessments, and verified executive diploma issuance.",
+  biography:
+    "App Developer for ISCEB (Institute of Supply Chain Excellence Bangladesh), architecting Android, Web, and PC/Desktop platforms with real-time cloud synchronization, encrypted assessments, and verified executive diploma issuance.",
   contactEmail: "www.mdnafiulislam@gmail.com",
   location: "Dhaka, Bangladesh"
 };
 
+export const DEFAULT_MEMBERS_ROSTER_VERSION = 2;
+
 export const DEFAULT_MEMBERS = [
   {
     id: "member-founder-amirul",
+    builtInPhotoKey: "amirul",
+    photoUrl: "./admin-amirul.webp",
     fullName: "Md. Amirul Islam",
     designation: "Founder of ISCEB",
     professionalIdentity: "Head of Supply Chain Management at BRB Group",
     currentOrganization: "BRB Group",
-    roleInIsceb: "Founder of ISCEB • Lead Trainer of ISCEB",
+    educationalQualification:
+      "MBA in Finance; M.Com in Marketing; Post Graduate Diploma in Supply Chain Management (ISCEA, USA). Additional professional certifications under TUV SUD South Asia Pvt. Ltd., Business Express, and SELTA Training Associates (risk management, internal auditing, process validation, and international logistics).",
+    professionalExperience:
+      "Over two decades of executive leadership across Bangladesh's top conglomerates. Currently Head of Supply Chain Management at BRB Group overseeing procurement, logistics, warehousing, planning, and supplier relationship management. Previously held key leadership roles at NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. Also serves as Lead Trainer at IECB and Founder & Lead Trainer of ISCEB.",
+    skillsAndExpertise: [
+      "Strategic Sourcing & Vendor Management",
+      "Bonded Warehouse Operations",
+      "International Trade Compliance",
+      "Demand Forecasting & Risk Management",
+      "Internal Auditing & Process Validation",
+      "Corporate Training & Mentorship"
+    ],
+    roleInIsceb: "Founder & Lead Trainer • Institute of Supply Chain Excellence Bangladesh (ISCEB)",
     contactInformation: "Mobile: 01715-282905 • Email: amirul.islam@isceb.org",
-    biography: "Founder of ISCEB and Lead Trainer guiding supply chain management professionals while serving as Head of Supply Chain Management at BRB Group.",
+    biography:
+      "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, where he oversees procurement, logistics, warehousing, planning, and supplier relationship management to drive efficiency, innovation, and sustainable business growth.\n\nThroughout his distinguished career, Mr. Islam has held key leadership positions in reputed organizations such as NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. His deep understanding of both local and international supply chain ecosystems has enabled him to deliver excellence in strategic sourcing, vendor management, bonded warehouse operations, international trade compliance, demand forecasting, and risk management.\n\nBeyond his corporate accomplishments, he serves as Lead Trainer at Industrial Engineering and Consultant Bangladesh (IECB) and Founder of ISCEB, inspiring the next generation of leaders with the vision: \"Connect. Learn. Achieve.\"",
     displayOrder: 1
+  },
+  {
+    id: "member-hasina-khan",
+    builtInPhotoKey: "hasina",
+    photoUrl: "./member-hasina.webp",
+    fullName: "Hasina Akter Khan",
+    designation: "Chairman & CEO",
+    professionalIdentity: "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    currentOrganization: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    educationalQualification: "M.Sc. in Clothing and Textile — University of Dhaka",
+    professionalExperience:
+      "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
+    skillsAndExpertise: [
+      "Academic Leadership",
+      "Curriculum & Course Coordination",
+      "Professional Capacity Building",
+      "Industrial Education & Training",
+      "Student Mentorship"
+    ],
+    roleInIsceb: "Chairman & Chief Executive Officer (CEO) • ISCEB",
+    contactInformation: "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+    biography:
+      "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
+    displayOrder: 2
+  },
+  {
+    id: "member-masudur-rahman",
+    builtInPhotoKey: "masudur",
+    photoUrl: "./member-masudur.webp",
+    fullName: "MD. MASUDUR RAHMAN",
+    designation: "Manager - Import & Export, Logistics",
+    professionalIdentity: "MD. MASUDUR RAHMAN Dip. SCM℗ (ITC), dCIPS • @ MR DIY Bangladesh",
+    currentOrganization: "MR D.I.Y. (Bangladesh) Limited",
+    educationalQualification: "Dip. SCM℗ (ITC), dCIPS — Supply Chain & International Procurement",
+    professionalExperience:
+      "11+ years of experience in Commercial, Import & Export Operations, International Procurement, Demand Planning, Vendor Management, and Supply Chain across Retail, Automobile, and Pharma industries. Currently Manager, Import & Export (Logistics, Commercial, Customs Clearance & Freight Forwarding) at MR D.I.Y. (Bangladesh) Limited (Malaysian MNC, Tejgaon, Dhaka, Oct 2023 – Present).",
+    skillsAndExpertise: [
+      "Import & Export Operations",
+      "Foreign & Local Procurement",
+      "LC Documentation & Customs Clearance",
+      "Freight Forwarding & Landed Cost",
+      "Demand Planning & Market Intelligence",
+      "Vendor Management",
+      "ERP & Digital Process Automation"
+    ],
+    roleInIsceb: "ISCEB Supply Chain & Commercial Operations Practitioner",
+    contactInformation: "MR D.I.Y. (Bangladesh) Limited, Tejgaon, Dhaka • www.isceb.org",
+    biography:
+      "MD. MASUDUR RAHMAN (Dip. SCM℗ ITC, dCIPS) is an accomplished Supply Chain Professional with 11+ years of experience in Commercial, Import & Export Operations, International Procurement, Demand Planning, Vendor Management, and Supply Chain across the Retail, Automobile, and Pharma industries.\n\nSince October 2023, he has served as Manager, Import & Export at MR D.I.Y. (Bangladesh) Limited (a Malaysian MNC), managing end-to-end foreign and local raw material procurement, supplier negotiation, LC processing, shipment tracking, customs clearance, freight forwarding, landed cost evaluation, raw material market intelligence, ERP digital automation, and supply chain team mentorship.",
+    displayOrder: 3
+  },
+  {
+    id: "member-asif-mahmud",
+    builtInPhotoKey: "asif",
+    photoUrl: "./member-asif.webp",
+    fullName: "Shah Mohammad Asif Mahmud",
+    designation: "Faculty Tutor & SCM Leader",
+    professionalIdentity: "CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM, MBS, PGDSCM, PGDBM",
+    currentOrganization: "Bitopi Group (Oculin Tech BD Ltd) • ISCEB Faculty",
+    educationalQualification: "MBS, PGDSCM, PGDBM; Certified CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM",
+    professionalExperience:
+      "Over 15 years of Supply Chain Management leadership:\n• Senior Manager, Supply Chain Management – Bitopi Group (Oculin Tech BD Ltd)\n• AGM, Supply Chain Management & Commercial – Omega Exim Ltd\n• In-Charge, Commercial & Procurement – ANC Medical Device BD Ltd\n• Assistant Manager, SCM – Summit Communications Ltd\n• Senior Executive (Commercial), Supply Chain – NIPRO JMI Company Ltd\n• Senior Executive, Procurement – Edison Group\n• Executive, Commercial – Spectrum Engineering Consortium Ltd",
+    skillsAndExpertise: [
+      "Procurement & Strategic Sourcing",
+      "Commercial Operations (Import & Export)",
+      "Logistics & Warehouse Management",
+      "Distribution Network Strategy",
+      "Vendor Relationship Management",
+      "Case-Based SCM Instruction"
+    ],
+    roleInIsceb: "Faculty Tutor • Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    contactInformation: "Faculty Tutor, Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+    biography:
+      "With over 15 years of professional experience in Supply Chain Management, Shah Mohammad Asif Mahmud (CSCLTM, CSCMTM, CMILT, CEPSM, CEMIM, MBS, PGDSCM, PGDBM) is a highly accomplished and certified supply chain leader covering Procurement, Strategic Sourcing, Commercial Import & Export Operations, Logistics, Warehouse & Distribution Management, and Vendor Relationship Management.\n\nHaving led SCM teams at Bitopi Group, Omega Exim Ltd, ANC Medical Device BD Ltd, Summit Communications Ltd, NIPRO JMI Company Ltd, Edison Group, and Spectrum Engineering Consortium Ltd, he brings practical industry insights and hands-on case-based learning as a Tutor at ISCEB.",
+    displayOrder: 4
+  },
+  {
+    id: "member-mashiur-rahman",
+    builtInPhotoKey: "mashiur",
+    photoUrl: "./member-mashiur.webp",
+    fullName: "Mr. Md. Mashiur Rahman",
+    designation: "Sr. Consultant – HR",
+    professionalIdentity: "A Visionary Leader Shaping the Future of Human Resources",
+    currentOrganization: "Human Resources Consultancy & National Trainer",
+    educationalQualification: "BBM & MBA (HR); Dhaka Cantonment School & College alumnus; 350+ local and international trainings completed",
+    professionalExperience:
+      "Over 22 years across prestigious international organizations in Hospital, Pharmaceuticals, Diagnostics, Medical Education, Medical Devices, Textiles, Real Estate, and Food & Beverage industries. Facilitated employment and career mentorship for 35,000+ individuals. Honored with a Global Award from the College of American Pathologists (CAP), USA for hospital audit and quality assurance leadership in HR.",
+    skillsAndExpertise: [
+      "Strategic Human Resource Management",
+      "People-First Crisis Leadership",
+      "Corporate Training & Career Coaching",
+      "Hospital Audit & Quality Assurance",
+      "Organizational Development",
+      "Public Speaking & Mentorship"
+    ],
+    roleInIsceb: "Sr. Consultant – HR, Panelist & Corporate Trainer • ISCEB",
+    contactInformation: "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+    biography:
+      "Mr. Md. Mashiur Rahman stands as a distinguished name in Human Resource Management — a visionary corporate professional, researcher, and dynamic leader redefining HR practices for over 22 years across healthcare, pharmaceuticals, diagnostics, medical education, textiles, real estate, and food & beverage.\n\nHe has personally facilitated career opportunities for over 35,000 individuals and earned global recognition, including an award from the College of American Pathologists (CAP), USA for contributions to hospital audit and quality assurance. An accomplished trainer, panelist, career coach, and author of HR columns across national media, he is also an engaging vocalist, stand-up comedian, scriptwriter, and cook.",
+    displayOrder: 5
+  },
+  {
+    id: "member-shajibul-hasan",
+    builtInPhotoKey: "shajibul",
+    photoUrl: "./member-shajibul.webp",
+    fullName: "Shajibul Hasan",
+    designation: "Database, BI & Data Analysis Expert",
+    professionalIdentity: "Database Management, Business Intelligence & Data Analysis Expert",
+    currentOrganization: "MIS, Business Intelligence & Analytics Consulting",
+    educationalQualification:
+      "Master’s in Applied Statistics and Data Science (Jahangirnagar University); B.Sc. in Computer Science and Engineering (ULAB); PGD on MEAL (Academy of Business Professionals - ABP); PGD on SCM (BIHRM)",
+    professionalExperience:
+      "Over 15 years of experience in Management Information Systems (MIS), software and database consulting, business intelligence, ERP implementation, survey design, and data analytics across UN specialized agencies, international NGOs, software organizations, corporates, and the manufacturing sector.",
+    skillsAndExpertise: [
+      "Database Management",
+      "Business Intelligence (BI)",
+      "Applied Statistics & Data Analytics",
+      "MIS Reporting & ERP Implementation",
+      "Survey Design & MEAL Systems",
+      "Data-Driven Supply Chain Strategy"
+    ],
+    roleInIsceb: "Database Management, BI & Data Analytics Specialist • ISCEB",
+    contactInformation: "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+    biography:
+      "Shajibul Hasan is a dedicated, results-driven Database Management, Business Intelligence, and Data Analysis Expert with over 15 years of experience spanning UN specialized agencies, international NGOs, the software industry, corporate organizations, and manufacturing.\n\nAcademically grounded with a Master’s in Applied Statistics and Data Science (Jahangirnagar University), a B.Sc. in CSE (ULAB), PGD on MEAL (ABP), and PGD on SCM (BIHRM), he specializes in building integrated MIS reporting architectures, ERP solutions, and scalable analytics systems.",
+    displayOrder: 6
+  },
+  {
+    id: "member-tonmoy-khan",
+    builtInPhotoKey: "tonmoy",
+    photoUrl: "./member-tonmoy.webp",
+    fullName: "Tonmoy Khan",
+    designation: "ISCEB Web Developer",
+    professionalIdentity: "Senior Web Developer & Certified Plugin Developer (DIU CSE Alumnus)",
+    currentOrganization: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    educationalQualification: "B.Sc. in Computer Science & Engineering (CSE) — Daffodil International University (DIU)",
+    professionalExperience:
+      "4+ years of hands-on experience in core IT environments as a Senior Web Developer and certified plugin developer building scalable, high-performance web applications.",
+    skillsAndExpertise: [
+      "Full-Stack Web Engineering",
+      "Certified Plugin Development",
+      "Scalable Web Architecture",
+      "Performance Optimization",
+      "Seamless UI/UX Engineering"
+    ],
+    roleInIsceb: "ISCEB Web Developer",
+    contactInformation: "ISCEB Web Engineering • www.isceb.org",
+    biography:
+      "Tonmoy Khan serves as the ISCEB Web Developer. As a Senior Web Developer and DIU CSE alumnus with 4+ years of hands-on experience in core IT environments and certified plugin development, he specializes in building scalable, high-performance solutions that bridge the gap between complex code and seamless user experiences across the web ecosystem.",
+    displayOrder: 7
+  },
+  {
+    id: "member-developer-nafiul",
+    builtInPhotoKey: "nafiul",
+    photoUrl: "./admin-nafiul.webp",
+    fullName: "Developer Mohammad Nafiul Islam",
+    designation: "Developer of ISCEB App",
+    professionalIdentity: "Md. Nafiul Islam Nahin • Lead Android, Web & Cloud LMS Architect",
+    currentOrganization: "ISCEB App Engineering & Cloud Systems",
+    educationalQualification: "Android Systems Engineering (Kotlin / Jetpack Compose) & Cloud-Connected LMS Architecture",
+    professionalExperience:
+      "Lead architect and developer of the ISCEB LMS platform across Android and Web/PC Portals, designing real-time Cloud Firestore synchronization, role-based student/teacher/admin workflows, study telemetry, timed examinations, and QR-verifiable automated PDF executive diploma certification.",
+    skillsAndExpertise: [
+      "Android Kotlin & Jetpack Compose",
+      "Cloud Firestore & Security Rules",
+      "PC/Web PWA Portal Engineering",
+      "Verifiable Digital Certification",
+      "EdTech & Supply Chain LMS Architecture"
+    ],
+    roleInIsceb: "App Developer & Chief Systems Architect • ISCEB",
+    contactInformation: "Email: www.mdnafiulislam@gmail.com • Web: https://www.isceb.org • Dhaka, Bangladesh",
+    biography:
+      "Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin) is the Lead App Developer of the Institute of Supply Chain Excellence Bangladesh (ISCEB) LMS. He architected and engineered the unified Android and PC/Web platforms with offline-first persistence, live over-the-air curriculum publishing, role-scoped faculty and student dashboards, and automated QR-verified PGD certification.",
+    displayOrder: 8
   }
 ];
 
@@ -222,6 +417,72 @@ export function buildFirestoreManifestPayload({
   return payload;
 }
 
+export const MAX_CLOUD_FILE_BYTES = 18 * 1024 * 1024;
+export const LESSON_FILE_CHUNK_RAW_BYTES = 400_000;
+
+export function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  const sliceSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += sliceSize) {
+    const sub = bytes.subarray(i, Math.min(i + sliceSize, bytes.length));
+    binary += String.fromCharCode.apply(null, sub);
+  }
+  return btoa(binary);
+}
+
+export function splitBytesIntoLessonFileChunks({
+  fileId,
+  bytes,
+  authorUid,
+  serverTimestampToken = null
+}) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+    throw new Error("File is empty.");
+  }
+  if (bytes.length > MAX_CLOUD_FILE_BYTES) {
+    throw new Error("File exceeds the 18 MB cloud sync limit.");
+  }
+  const safeFileId = String(fileId || "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 100);
+  if (!safeFileId) throw new Error("Invalid fileId");
+
+  const totalChunks = Math.ceil(bytes.length / LESSON_FILE_CHUNK_RAW_BYTES);
+  if (totalChunks < 1 || totalChunks > 50) {
+    throw new Error(`Chunk count ${totalChunks} exceeds Firestore limit (max 50).`);
+  }
+
+  const chunks = [];
+  for (let index = 0; index < totalChunks; index++) {
+    const start = index * LESSON_FILE_CHUNK_RAW_BYTES;
+    const end = Math.min(start + LESSON_FILE_CHUNK_RAW_BYTES, bytes.length);
+    const dataBase64 = uint8ArrayToBase64(bytes.subarray(start, end));
+    const payload = {
+      fileId: safeFileId,
+      chunkIndex: index,
+      totalChunks,
+      dataBase64,
+      authorUid: String(authorUid)
+    };
+    if (serverTimestampToken !== null) {
+      payload.createdAt = serverTimestampToken;
+      payload.updatedAt = serverTimestampToken;
+    }
+    chunks.push({
+      chunkId: `${safeFileId}_${index}`,
+      payload
+    });
+  }
+  return chunks;
+}
+
+function sanitizeMediaForFirestore(media) {
+  if (!media || typeof media !== "object") return media;
+  const rawUrl = String(media.url || "").trim();
+  return {
+    ...media,
+    url: rawUrl.startsWith("blob:") ? "" : rawUrl
+  };
+}
+
 export function buildFirestoreCatalogPayload({
   authorUid,
   versionCode,
@@ -267,11 +528,11 @@ export function buildFirestoreCatalogPayload({
         isPublished: c.isPublished !== false,
         learningObjectives: Array.isArray(c.learningObjectives) ? c.learningObjectives : []
       };
-      if (c.pdfMedia) clsObj.pdfMedia = c.pdfMedia;
-      if (c.audioMedia) clsObj.audioMedia = c.audioMedia;
-      if (c.videoMedia) clsObj.videoMedia = c.videoMedia;
+      if (c.pdfMedia) clsObj.pdfMedia = sanitizeMediaForFirestore(c.pdfMedia);
+      if (c.audioMedia) clsObj.audioMedia = sanitizeMediaForFirestore(c.audioMedia);
+      if (c.videoMedia) clsObj.videoMedia = sanitizeMediaForFirestore(c.videoMedia);
       if (Array.isArray(c.attachments) && c.attachments.length > 0) {
-        clsObj.attachments = c.attachments;
+        clsObj.attachments = c.attachments.map(sanitizeMediaForFirestore);
       }
       return clsObj;
     }),

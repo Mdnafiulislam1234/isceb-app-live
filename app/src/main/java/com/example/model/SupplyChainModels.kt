@@ -1,7 +1,6 @@
 package com.example.model
 
 import com.example.BuildConfig
-
 import java.util.UUID
 
 enum class CoursePart(val label: String, val levelSubtitle: String) {
@@ -32,7 +31,30 @@ enum class CertificateStatus {
 
 enum class UserRole {
     STUDENT,
+    TEACHER,
     ADMIN
+}
+
+enum class AccountStatus(val displayLabel: String) {
+    ACTIVE("Active"),
+    PENDING_VERIFICATION("Pending Verification"),
+    SUSPENDED("Suspended")
+}
+
+enum class SubmissionStatus(val displayLabel: String) {
+    UPCOMING("Upcoming"),
+    PENDING("Pending"),
+    SUBMITTED("Submitted"),
+    UNDER_REVIEW("Under Review"),
+    GRADED("Graded")
+}
+
+enum class CertificationEligibilityStatus(val displayLabel: String) {
+    NOT_YET_ELIGIBLE("Not Yet Eligible"),
+    LEARNING_REQUIREMENTS_INCOMPLETE("Learning Requirements Incomplete"),
+    ASSESSMENTS_PENDING("Assessments Pending"),
+    ELIGIBLE_FOR_CERTIFICATION("Eligible for Certification"),
+    CERTIFICATE_ISSUED("Certificate Issued")
 }
 
 data class UserProfile(
@@ -43,13 +65,22 @@ data class UserProfile(
     val organization: String = "ISCEB Enrolled Professional",
     val designation: String = "",
     val additionalRole: String = "",
-    val mobileNumber: String = ""
+    val mobileNumber: String = "",
+    val studentId: String = "",
+    val photoUrl: String = "",
+    val enrolledProgram: String = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+    val accountStatus: AccountStatus = AccountStatus.ACTIVE,
+    val isVerified: Boolean = false,
+    val assignedModuleIds: Set<String> = emptySet(),
+    val authUid: String = "",
+    val createdAtMs: Long = 0L,
+    val updatedAtMs: Long = 0L
 )
 
 data class DeveloperProfile(
     val name: String = "Md. Nafiul Islam Nahin",
     val designation: String = "Developer of ISCEB App",
-    val biography: String = "App Developer for ISCEB (International Supply Chain Education Board), architecting the native Android application, digital learning workflows, offline-first synchronization, and certification platform.",
+    val biography: String = "App Developer for ISCEB (Institute of Supply Chain Excellence Bangladesh), architecting the native Android application, digital learning workflows, offline-first synchronization, and certification platform.",
     val educationBackground: String = "Post Graduate Diploma (PGD) in Supply Chain Management • Specialization in Enterprise Logistics, Operations & Mobile Application Engineering",
     val workExperience: String = "Lead Android & EdTech Systems Developer — Designed, engineered, and maintaining the official ISCEB mobile application with interactive curriculum management, assessment tracking, and cloud OTA synchronization.",
     val skillsAndExpertise: List<String> = listOf(
@@ -60,7 +91,7 @@ data class DeveloperProfile(
         "Assessment & Certification Engines",
         "EdTech Platform Design"
     ),
-    val projectInformation: String = "ISCEB App is an official Supply Chain Management education platform featuring 12 structured modules, 48 industry-focused classes, multimedia study materials, module assessments, member profiles, and verifiable digital certification.",
+    val projectInformation: String = "ISCEB App is an official Supply Chain Management education platform featuring 12 structured modules, 48 industry-focused classes, multimedia study materials, member profiles, and verifiable digital certification.",
     val contactEmail: String = "www.mdnafiulislam@gmail.com",
     val contactPhone: String = "",
     val contactWebsite: String = "https://www.isceb.org",
@@ -76,13 +107,15 @@ data class FounderProfile(
     val currentOrganization: String = "BRB Group",
     val mobileNumber: String = "01715-282905",
     val email: String = "amirul.islam@isceb.org",
-    val educationBackground: String = "",
-    val professionalExperience: String = "Head of Supply Chain Management at BRB Group; Founder of ISCEB and Lead Trainer guiding supply chain professionals across corporate procurement, logistics, and operations.",
-    val biography: String = "Md. Amirul Islam is the Founder of ISCEB and serves as Head of Supply Chain Management at BRB Group and Lead Trainer of ISCEB, championing practical supply chain management education and industry excellence.",
+    val educationBackground: String = "MBA in Finance; M.Com in Marketing; Post Graduate Diploma in Supply Chain Management (ISCEA, USA); global certifications under TUV SUD South Asia Pvt. Ltd., Business Express, and SELTA Training Associates (risk management, internal auditing, process validation, and international logistics).",
+    val professionalExperience: String = "Over two decades of leadership in end-to-end supply chain operations across Bangladesh's top conglomerates. Currently Head of Supply Chain Management at BRB Group (procurement, logistics, warehousing, planning, and supplier relationship management). Former key leadership roles at NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd; Lead Trainer at IECB and Founder & Lead Trainer at ISCEB.",
+    val biography: String = "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, overseeing procurement, logistics, warehousing, planning, and supplier relationship management.\n\nThroughout his distinguished career, Mr. Islam has held key leadership positions in reputed organizations such as NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. Beyond his corporate accomplishments, he serves as Lead Trainer at IECB and Founder & Lead Trainer of ISCEB with a vision to \"Connect. Learn. Achieve.\"",
     val skillsAndExpertise: List<String> = listOf(
-        "Supply Chain Leadership",
-        "Strategic Procurement & Sourcing",
-        "International Trade & Logistics",
+        "Strategic Sourcing & Vendor Management",
+        "Bonded Warehouse Operations",
+        "International Trade Compliance",
+        "Demand Forecasting & Risk Management",
+        "Internal Auditing & Process Validation",
         "Executive Training & Mentorship"
     ),
     val location: String = "Bangladesh",
@@ -161,25 +194,31 @@ data class ModuleExam(
     val moduleId: String,
     val title: String,
     val totalMarks: Int,
-    val isSyllabusFixedMarks: Boolean = false, // True for Mod 1 (20m), Mod 2 (25m), Mod 3 (30m), Mod 6 (25m), Final (100m)
+    val isSyllabusFixedMarks: Boolean = false,
     val passingPercentage: Int = 60,
     val durationMinutes: Int = 30,
     val questions: List<ExamQuestion> = emptyList(),
-    val scheduledWindowNote: String = "Class hours: 9:00 PM to 11:00 PM (Asia/Dhaka)"
+    val scheduledWindowNote: String = "Class hours: 9:00 PM to 11:00 PM (Asia/Dhaka)",
+    val maxAttempts: Int = 3,
+    val openFromMs: Long? = null,
+    val openUntilMs: Long? = null,
+    val isRequiredForCertification: Boolean = false,
+    val createdByUid: String = "system"
 )
 
 data class ExamAttempt(
     val attemptId: String,
     val examId: String,
     val studentId: String,
-    val studentAnswers: Map<String, Int>, // questionId -> selectedOptionIndex
+    val studentAnswers: Map<String, Int>,
     val scoreMarks: Int,
     val totalMarks: Int,
     val percentage: Int,
     val isPassed: Boolean,
     val startTimeMs: Long,
     val submittedTimeMs: Long,
-    val isAutoSubmittedOnTimeout: Boolean = false
+    val isAutoSubmittedOnTimeout: Boolean = false,
+    val moduleId: String = ""
 )
 
 data class ModuleAssignment(
@@ -189,7 +228,12 @@ data class ModuleAssignment(
     val topicDescription: String,
     val instructions: String,
     val maxMarks: Int = 20,
-    val isFinalProject: Boolean = false
+    val isFinalProject: Boolean = false,
+    val isRequiredForCertification: Boolean = isFinalProject,
+    val allowFileAttachment: Boolean = true,
+    val dueDateMs: Long? = null,
+    val createdByUid: String = "system",
+    val createdByName: String = "ISCEB Faculty"
 )
 
 data class AssignmentSubmission(
@@ -202,7 +246,12 @@ data class AssignmentSubmission(
     val submissionTimestamp: Long = System.currentTimeMillis(),
     val marksAwarded: Int? = null,
     val feedback: String? = null,
-    val isGraded: Boolean = false
+    val isGraded: Boolean = false,
+    val moduleId: String = "",
+    val status: SubmissionStatus = if (isGraded) SubmissionStatus.GRADED else SubmissionStatus.SUBMITTED,
+    val gradedByUid: String? = null,
+    val gradedByName: String? = null,
+    val gradedTimestamp: Long? = null
 )
 
 data class StudentClassProgress(
@@ -217,7 +266,12 @@ data class StudentClassProgress(
     val pdfReadingSeconds: Long = 0L,
     val quizScore: Int? = null,
     val quizPassed: Boolean = false,
-    val completionTimestamp: Long? = null
+    val completionTimestamp: Long? = null,
+    val lastPlaybackPositionMs: Long = 0L,
+    val lastPdfPage: Int = 0,
+    val totalPdfPages: Int = 0,
+    val visitedPdfPages: Set<Int> = emptySet(),
+    val idleExcludedSeconds: Long = 0L
 ) {
     val isCompleted: Boolean
         get() = status == ClassStatus.COMPLETED
@@ -237,18 +291,26 @@ data class AdminCompletionSettings(
     val minPlaybackPercent: Float = 80f,
     val minPdfReadingSeconds: Long = 45L,
     val isQuizRequired: Boolean = true,
-    val quizPassingScore: Int = 70, // percent
+    val quizPassingScore: Int = 70,
     val requiredModuleIds: Set<String> = (1..12).map { "mod-$it" }.toSet(),
     val institutionName: String = "ISCEB",
     val officialWebsite: String = "www.isceb.org",
     val institutionAccreditation: String = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
-    val authorizedSignerName: String = "Md. Amirul Islam, Founder of ISCEB",
-    val authorizedSignerTitle: String = "Lead Trainer of ISCEB • Head of SCM, BRB Group",
+    val leftSignerName: String = "Hasina Khan",
+    val leftSignerTitle: String = "",
+    val authorizedSignerName: String = "Amirul Islam",
+    val authorizedSignerTitle: String = "Founder of ISCEB",
     val certificateTitle: String = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+    val certificatesEnabled: Boolean = true,
+    val demoCertificateEnabled: Boolean = true,
     val scheduleConfig: CourseScheduleConfig = CourseScheduleConfig(),
     val remoteSyncManifestUrl: String = AppUpdateConfig.DEFAULT_VERSION_JSON_URL,
     val apkDownloadUrl: String = AppUpdateConfig.DEFAULT_APK_DIRECT_URL,
-    val autoApplyContentUpdates: Boolean = true
+    val autoApplyContentUpdates: Boolean = true,
+    val requiredExamIds: Set<String> = setOf("exam-mod-1", "exam-mod-2", "exam-mod-3", "exam-mod-6", "exam-final"),
+    val requiredAssignmentIds: Set<String> = setOf("asg-12-final-project"),
+    val requireGradedFinalProject: Boolean = false,
+    val requirePdfAllPagesVisited: Boolean = false
 )
 
 data class CertificateRecord(
@@ -266,7 +328,9 @@ data class CertificateRecord(
     val revocationTimestamp: Long? = null,
     val completedClassesCount: Int,
     val totalRequiredClasses: Int,
-    val filePath: String? = null
+    val filePath: String? = null,
+    val studentCode: String = "",
+    val verificationUrl: String = "https://www.isceb.org/verify/$certificateId"
 )
 
 data class CertificateEligibility(
@@ -277,7 +341,26 @@ data class CertificateEligibility(
     val allQuizzesPassed: Boolean = true,
     val mandatoryExamsPassed: Boolean = true,
     val finalProjectSubmitted: Boolean = true,
-    val existingCertificate: CertificateRecord? = null
+    val existingCertificate: CertificateRecord? = null,
+    val status: CertificationEligibilityStatus = when {
+        existingCertificate != null -> CertificationEligibilityStatus.CERTIFICATE_ISSUED
+        isEligible -> CertificationEligibilityStatus.ELIGIBLE_FOR_CERTIFICATION
+        completedRequiredCount == 0 && allQuizzesPassed -> CertificationEligibilityStatus.NOT_YET_ELIGIBLE
+        completedRequiredCount < totalRequiredCount -> CertificationEligibilityStatus.LEARNING_REQUIREMENTS_INCOMPLETE
+        else -> CertificationEligibilityStatus.ASSESSMENTS_PENDING
+    },
+    val remainingRequirements: List<String> = emptyList()
+)
+
+data class AuditLogEntry(
+    val logId: String = "log-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(4)}",
+    val actorUid: String,
+    val actorName: String,
+    val actorRole: UserRole,
+    val actionType: String,
+    val targetId: String,
+    val summary: String,
+    val timestampMs: Long = System.currentTimeMillis()
 )
 
 data class CourseClass(
@@ -299,7 +382,9 @@ data class CourseClass(
     val quizPassed: Boolean = false,
     val quizQuestions: List<QuizQuestion> = emptyList(),
     val attachments: List<LessonMedia> = emptyList(),
-    val lectureCode: String = ""
+    val lectureCode: String = "",
+    val minStudySecondsOverride: Long? = null,
+    val allowMediaDownload: Boolean = true
 ) {
     val allAttachments: List<LessonMedia>
         get() {
@@ -340,7 +425,7 @@ data class UserProgress(
     val bookmarkedClassIds: Set<String> = emptySet(),
     val currentModuleId: String = "mod-1",
     val currentClassId: String = "class-1",
-    val studyStreakDays: Int = 6,
+    val studyStreakDays: Int = 0,
     val totalActiveLearningSeconds: Long = 0L
 )
 

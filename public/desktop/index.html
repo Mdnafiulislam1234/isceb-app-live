@@ -4,9 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#071A33" />
-  <title>ISCEB Supply Chain Management — PC & Desktop Portal</title>
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>ISCEB Supply Chain Management — Live PWA & Desktop Portal</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./isceb-icon-192.png" />
+  <link rel="apple-touch-icon" href="./isceb-icon-512.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -55,12 +59,16 @@
             <span id="syncDot" class="sync-dot"></span>
             <span id="syncStatusLabel">Cloud Ready</span>
           </div>
-          <div id="sidebarCurriculumVer" style="color: #CBD5E1; font-size: 11px;">Curriculum: v1.5.0</div>
+          <div id="sidebarCurriculumVer" style="color: #CBD5E1; font-size: 11px;">Curriculum: v1.6.0</div>
           <div id="sidebarApkVer" style="color: #F4E2A3; font-size: 11px; margin-top: 2px;">Latest APK: Checking...</div>
+          <div id="sidebarPwaStatus" style="color: #86EFAC; font-size: 11px; margin-top: 2px;">PWA Auto-Update: Active</div>
         </div>
 
         <button type="button" id="installPwaBtn" class="btn btn-gold" style="display: none; width: 100%;">
-          Install PC Desktop App
+          Install ISCEB App
+        </button>
+        <button type="button" id="checkPwaUpdateBtn" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.06); color: #E2E8F0; border-color: rgba(255,255,255,0.22); font-size: 12px;">
+          Check App Update
         </button>
         <a href="../index.html" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.08); color: #F4E2A3; border-color: rgba(212,175,55,0.4);">
           Android APK Portal
@@ -72,7 +80,7 @@
       <header class="topbar">
         <div class="topbar-title-group">
           <h1 id="pageTitle">Executive SCM Dashboard</h1>
-          <p id="pageSubtitle">International Supply Chain Education Board (ISCEB) — Desktop Workspace</p>
+          <p id="pageSubtitle">Institute of Supply Chain Excellence Bangladesh (ISCEB) — Desktop Workspace</p>
         </div>
 
         <div class="topbar-actions">
@@ -105,8 +113,55 @@
   <script type="module" src="./app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+      let reloadingForSwUpdate = false;
+      const hadControllerAtBoot = Boolean(navigator.serviceWorker.controller);
+
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!hadControllerAtBoot || reloadingForSwUpdate) return;
+        reloadingForSwUpdate = true;
+        window.location.reload();
+      });
+
+      window.addEventListener("load", async () => {
+        try {
+          const reg = await navigator.serviceWorker.register("./sw.js", {
+            scope: "./",
+            updateViaCache: "none"
+          });
+          window.__iscebSwRegistration = reg;
+
+          const activateWaitingWorker = (worker) => {
+            if (worker && navigator.serviceWorker.controller) {
+              worker.postMessage({ type: "SKIP_WAITING" });
+            }
+          };
+
+          if (reg.waiting) {
+            activateWaitingWorker(reg.waiting);
+          }
+
+          reg.addEventListener("updatefound", () => {
+            const installing = reg.installing;
+            if (!installing) return;
+            installing.addEventListener("statechange", () => {
+              if (installing.state === "installed") {
+                activateWaitingWorker(installing);
+              }
+            });
+          });
+
+          const checkForSwUpdate = () => {
+            reg.update().catch(() => {});
+          };
+
+          checkForSwUpdate();
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              checkForSwUpdate();
+            }
+          });
+          window.setInterval(checkForSwUpdate, 5 * 60 * 1000);
+        } catch (_) {}
       });
     }
   </script>

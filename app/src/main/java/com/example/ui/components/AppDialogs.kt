@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import com.example.data.CloudSyncRepository
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -905,7 +906,7 @@ fun UploadMediaDialog(
                     )
                 )
                 Text(
-                    text = "Files up to 3.5 MB auto-sync directly to every student phone via Firestore. For larger PDFs/videos (>3.5 MB), attach a shared HTTPS URL.",
+                    text = "Files up to 18 MB auto-sync directly to every student phone via Firestore. For larger videos/files (>18 MB), attach a shared HTTPS URL.",
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = Color(0xFF6B7F96),
                         fontSize = 11.sp
@@ -1059,7 +1060,7 @@ fun UploadMediaDialog(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         pendingItems.forEachIndexed { idx, item ->
-                            val willCloudSync = item.sizeBytes <= 3_500_000L
+                            val willCloudSync = item.sizeBytes <= CloudSyncRepository.MAX_CLOUD_FILE_BYTES
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1085,7 +1086,7 @@ fun UploadMediaDialog(
                                             text = if (willCloudSync) {
                                                 "Size: ${item.sizeFormatted} • Syncs automatically to student phones"
                                             } else {
-                                                "Size: ${item.sizeFormatted} (>3.5 MB) • Use HTTPS Link tab for cross-device access"
+                                                "Size: ${item.sizeFormatted} (>18 MB) • Use HTTPS Link tab for cross-device access"
                                             },
                                             color = if (willCloudSync) Color(0xFF047857) else GoldDark,
                                             fontSize = 10.sp
@@ -1291,28 +1292,7 @@ fun UploadMediaDialog(
                     } else if (pendingItems.isNotEmpty()) {
                         onUploadMultipleFiles(pendingItems)
                     } else {
-                        val fallbackExt = when (selectedCategory) {
-                            MediaType.PDF -> "pdf"
-                            MediaType.IMAGE -> "png"
-                            MediaType.DOCUMENT -> "docx"
-                            MediaType.AUDIO -> "mp3"
-                            MediaType.VIDEO -> "mp4"
-                        }
-                        val fallbackBytes = when (selectedCategory) {
-                            MediaType.PDF -> 3 * 1024 * 1024L
-                            MediaType.IMAGE -> 2 * 1024 * 1024L
-                            MediaType.DOCUMENT -> 1 * 1024 * 1024L
-                            MediaType.AUDIO -> 15 * 1024 * 1024L
-                            MediaType.VIDEO -> 32 * 1024 * 1024L
-                        }
-                        val cleanBase = MediaFileManager.sanitizeFileName(presetTitle)
-                        onUploadPreset(
-                            selectedCategory,
-                            "$cleanBase.$fallbackExt",
-                            fallbackBytes,
-                            presetTitle,
-                            presetDescription
-                        )
+                        localValidationError = "Select at least one real file via 'Pick ${selectedCategory.displayLabel} Files' or 'All Types', or switch to 'HTTPS Link'."
                     }
                 },
                 enabled = !isUploading,
@@ -1326,7 +1306,7 @@ fun UploadMediaDialog(
                     text = when {
                         useHttpsUrlMode -> "Attach HTTPS Link"
                         pendingItems.isNotEmpty() -> "Upload ${pendingItems.size} File(s)"
-                        else -> "Attach Material"
+                        else -> "Select File(s) First"
                     },
                     fontWeight = FontWeight.Bold
                 )

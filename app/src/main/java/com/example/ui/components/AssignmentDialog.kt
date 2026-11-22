@@ -67,12 +67,31 @@ fun AssignmentDialog(
     isAdmin: Boolean,
     onSubmit: (text: String, fileName: String?) -> Unit,
     onGrade: (submissionId: String, marks: Int, feedback: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    canGrade: Boolean = isAdmin,
+    submissionsForStaff: List<AssignmentSubmission> = emptyList()
 ) {
-    var responseText by remember { mutableStateOf(currentSubmission?.submissionText ?: "") }
-    var attachedFile by remember { mutableStateOf(currentSubmission?.attachedFileName ?: "") }
-    var gradeMarks by remember { mutableStateOf(currentSubmission?.marksAwarded?.toString() ?: "") }
-    var gradeFeedback by remember { mutableStateOf(currentSubmission?.feedback ?: "") }
+    var selectedStaffSubmissionId by remember(submissionsForStaff, currentSubmission) {
+        mutableStateOf(
+            currentSubmission?.submissionId
+                ?: submissionsForStaff.firstOrNull()?.submissionId
+        )
+    }
+    val activeGradingSubmission = if (canGrade && submissionsForStaff.isNotEmpty()) {
+        submissionsForStaff.find { it.submissionId == selectedStaffSubmissionId } ?: submissionsForStaff.first()
+    } else {
+        currentSubmission
+    }
+
+    var responseText by remember(currentSubmission?.submissionId) { mutableStateOf(currentSubmission?.submissionText ?: "") }
+    var attachedFile by remember(currentSubmission?.submissionId) { mutableStateOf(currentSubmission?.attachedFileName ?: "") }
+    var gradeMarks by remember(activeGradingSubmission?.submissionId, activeGradingSubmission?.marksAwarded) {
+        mutableStateOf(activeGradingSubmission?.marksAwarded?.toString() ?: "")
+    }
+    var gradeFeedback by remember(activeGradingSubmission?.submissionId, activeGradingSubmission?.feedback) {
+        mutableStateOf(activeGradingSubmission?.feedback ?: "")
+    }
+    val isLockedAfterGrading = currentSubmission?.isGraded == true
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -159,7 +178,11 @@ fun AssignmentDialog(
                                         .padding(horizontal = 8.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = if (currentSubmission.isGraded) "Graded (${currentSubmission.marksAwarded}/${assignment.maxMarks}M)" else "Submitted • Pending Review",
+                                        text = if (currentSubmission.isGraded) {
+                                            "Status: ${currentSubmission.status.displayLabel} (${currentSubmission.marksAwarded}/${assignment.maxMarks}M)"
+                                        } else {
+                                            "Status: ${currentSubmission.status.displayLabel}"
+                                        },
                                         color = if (currentSubmission.isGraded) SuccessGreen else GoldSoft,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -258,6 +281,15 @@ fun AssignmentDialog(
                                         color = Color.DarkGray
                                     )
                                 }
+                                if (!currentSubmission.gradedByName.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Evaluated by: ${currentSubmission.gradedByName} (${currentSubmission.status.displayLabel})",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = GoldDark
+                                    )
+                                }
                             }
                         }
                     }
@@ -284,7 +316,8 @@ fun AssignmentDialog(
 
                             OutlinedTextField(
                                 value = responseText,
-                                onValueChange = { responseText = it },
+                                onValueChange = { if (!isLockedAfterGrading) responseText = it },
+                                enabled = !isLockedAfterGrading,
                                 placeholder = { Text("Write your analysis, methodology, calculations, or executive report summary here...") },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -304,7 +337,8 @@ fun AssignmentDialog(
                             ) {
                                 OutlinedTextField(
                                     value = attachedFile,
-                                    onValueChange = { attachedFile = it },
+                                    onValueChange = { if (!isLockedAfterGrading) attachedFile = it },
+                                    enabled = !isLockedAfterGrading,
                                     label = { Text("Attached Document (optional)") },
                                     placeholder = { Text("e.g. SCM_Analysis_Report.pdf") },
                                     leadingIcon = {
@@ -323,29 +357,38 @@ fun AssignmentDialog(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            Button(
-                                onClick = { onSubmit(responseText, attachedFile.ifBlank { null }) },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = GoldMetallic,
-                                    contentColor = NavyPrimary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("btn_submit_assignment_solution")
-                            ) {
-                                Icon(imageVector = Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
+                            if (isLockedAfterGrading) {
                                 Text(
-                                    text = if (currentSubmission != null) "Update Submission" else "Submit Assignment",
-                                    fontWeight = FontWeight.Bold
+                                    text = "This assignment has been officially graded and locked against further edits.",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = SuccessGreen
                                 )
+                            } else {
+                                Button(
+                                    onClick = { onSubmit(responseText, attachedFile.ifBlank { null }) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = GoldMetallic,
+                                        contentColor = NavyPrimary
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("btn_submit_assignment_solution")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (currentSubmission != null) "Update Submission" else "Submit Assignment",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // Admin Grading Section
-                    if (isAdmin && currentSubmission != null) {
+                    // Faculty / Admin Grading Section
+                    if (canGrade && activeGradingSubmission != null) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = NavySurface.copy(alpha = 0.08f)),
@@ -358,10 +401,29 @@ fun AssignmentDialog(
                                     .padding(14.dp)
                             ) {
                                 Text(
-                                    text = "Faculty Grading Panel (Admin Only)",
+                                    text = "Faculty Grading Panel",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = NavyPrimary
+                                )
+                                if (submissionsForStaff.size > 1) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text("Select Student Submission (${submissionsForStaff.size}):", fontSize = 11.sp, color = Color.DarkGray)
+                                    submissionsForStaff.forEach { item ->
+                                        androidx.compose.material3.TextButton(
+                                            onClick = { selectedStaffSubmissionId = item.submissionId }
+                                        ) {
+                                            val prefix = if (item.submissionId == activeGradingSubmission.submissionId) "● " else "○ "
+                                            val statusStr = if (item.isGraded) "${item.marksAwarded}/${assignment.maxMarks}M" else "Pending"
+                                            Text("$prefix${item.studentName} ($statusStr)", fontSize = 12.sp, color = NavyPrimary)
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Submission by ${activeGradingSubmission.studentName}: ${activeGradingSubmission.submissionText.take(240)}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF334155)
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -388,14 +450,14 @@ fun AssignmentDialog(
                                 Button(
                                     onClick = {
                                         val marks = gradeMarks.toIntOrNull() ?: 0
-                                        onGrade(currentSubmission.submissionId, marks, gradeFeedback)
+                                        onGrade(activeGradingSubmission.submissionId, marks, gradeFeedback)
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = NavyPrimary,
                                         contentColor = GoldMetallic
                                     ),
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().testTag("btn_record_assignment_grade")
                                 ) {
                                     Text("Record Official Grade", fontWeight = FontWeight.Bold)
                                 }

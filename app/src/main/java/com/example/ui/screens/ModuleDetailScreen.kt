@@ -5,12 +5,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +66,7 @@ import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.NavySurface
 import com.example.ui.theme.SuccessGreen
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ModuleDetailScreen(
     module: CourseModule,
@@ -86,12 +90,14 @@ fun ModuleDetailScreen(
     onToggleClassPublish: (CourseClass) -> Unit,
     onTakeExam: (ModuleExam) -> Unit,
     onOpenAssignment: (ModuleAssignment) -> Unit,
+    canManageModule: Boolean = isAdmin,
+    attemptsUsedCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
 
     val moduleClasses = classes
-        .filter { it.moduleId == module.id && (isAdmin || it.isPublished) }
+        .filter { it.moduleId == module.id && (canManageModule || it.isPublished) }
         .sortedBy { it.orderIndex }
     val completedCount = moduleClasses.count { it.isCompleted }
     val progressRatio = if (moduleClasses.isNotEmpty()) completedCount.toFloat() / moduleClasses.size else 0f
@@ -318,47 +324,57 @@ fun ModuleDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Text(
                                         text = "Module MCQ Exam",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = NavyPrimary
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
                                     Box(
                                         modifier = Modifier
                                             .background(
                                                 if (exam.isSyllabusFixedMarks) GoldMetallic.copy(alpha = 0.2f) else Color.LightGray.copy(alpha = 0.4f),
                                                 RoundedCornerShape(4.dp)
                                             )
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                            .padding(horizontal = 7.dp, vertical = 2.dp)
                                     ) {
                                         Text(
                                             text = if (exam.isSyllabusFixedMarks) "${exam.totalMarks} Marks (Syllabus)" else "${exam.totalMarks} Marks (Configurable)",
-                                            fontSize = 9.sp,
+                                            fontSize = 9.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (exam.isSyllabusFixedMarks) GoldDark else Color.DarkGray
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            color = if (exam.isSyllabusFixedMarks) GoldDark else Color.DarkGray,
+                                            modifier = Modifier.testTag("badge_exam_marks_${module.id}")
                                         )
                                     }
                                 }
 
                                 if (bestAttempt != null) {
                                     Text(
-                                        text = "Best Attempt: ${bestAttempt.scoreMarks}/${bestAttempt.totalMarks} (${bestAttempt.percentage}%) • ${if (bestAttempt.isPassed) "PASSED" else "FAILED"}",
+                                        text = "Best: ${bestAttempt.scoreMarks}/${bestAttempt.totalMarks} (${bestAttempt.percentage}%) • ${if (bestAttempt.isPassed) "PASSED" else "FAILED"} • Attempts: $attemptsUsedCount/${exam.maxAttempts}",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = if (bestAttempt.isPassed) SuccessGreen else DangerRed
                                     )
                                 } else {
                                     Text(
-                                        text = "Duration: ${exam.durationMinutes} mins • Auto-submits on expiry",
+                                        text = "Duration: ${exam.durationMinutes} mins • Attempts: $attemptsUsedCount/${exam.maxAttempts} • Auto-submits",
                                         fontSize = 11.sp,
                                         color = Color.Gray
                                     )
                                 }
                             }
+
+                            Spacer(modifier = Modifier.width(10.dp))
 
                             Button(
                                 onClick = { onTakeExam(exam) },
@@ -367,13 +383,17 @@ fun ModuleDetailScreen(
                                     contentColor = NavyPrimary
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_take_module_exam_${module.id}")
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("btn_take_module_exam_${module.id}")
                             ) {
                                 Text(
                                     text = if (bestAttempt != null) "Review" else "Take Exam",
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -392,25 +412,33 @@ fun ModuleDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Text(
                                         text = if (assignment.isFinalProject) "Capstone Final Project" else "Module Practical Assignment",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = NavyPrimary
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
                                     Box(
                                         modifier = Modifier
                                             .background(NavySurface.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                            .padding(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
                                         Text(
                                             text = "${assignment.maxMarks} Marks",
-                                            fontSize = 9.sp,
+                                            fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = NavyPrimary
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            color = NavyPrimary,
+                                            modifier = Modifier.testTag("badge_assignment_marks_${module.id}")
                                         )
                                     }
                                 }
@@ -431,16 +459,22 @@ fun ModuleDetailScreen(
                                 }
                             }
 
+                            Spacer(modifier = Modifier.width(10.dp))
+
                             OutlinedButton(
                                 onClick = { onOpenAssignment(assignment) },
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_open_assignment_${module.id}")
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("btn_open_assignment_${module.id}")
                             ) {
                                 Text(
                                     text = if (assignmentSubmission != null) "View" else "Submit",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     color = NavyPrimary
                                 )
                             }
@@ -450,8 +484,8 @@ fun ModuleDetailScreen(
             }
         }
 
-        // Admin Add Class Bar
-        if (isAdmin) {
+        // Faculty / Admin Add Class Bar
+        if (canManageModule) {
             item {
                 Row(
                     modifier = Modifier
@@ -504,7 +538,7 @@ fun ModuleDetailScreen(
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 ClassCard(
                     courseClass = cls,
-                    isAdmin = isAdmin,
+                    isAdmin = canManageModule,
                     isFirst = isFirst,
                     isLast = isLast,
                     onClick = { onClassClick(cls) },

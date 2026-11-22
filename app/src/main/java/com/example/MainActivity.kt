@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.auth.attemptAutoSignIn
 import com.example.auth.onGoogleSignInClicked
 import com.example.auth.signOutCloudSync
+import com.example.model.CertificateRecord
 import com.example.model.CourseClass
 import com.example.model.CourseModule
 import com.example.model.LessonMedia
@@ -73,6 +74,7 @@ import com.example.ui.components.CertificateVerificationScreen
 import com.example.ui.components.CreateEditClassDialog
 import com.example.ui.components.CreateEditModuleDialog
 import com.example.ui.components.DeleteConfirmDialog
+import com.example.ui.components.DocumentPreviewDialog
 import com.example.ui.components.ExamDialog
 import com.example.ui.components.FirebaseGuideDialog
 import com.example.ui.components.ImagePreviewDialog
@@ -81,7 +83,9 @@ import com.example.ui.components.PhoneInstallDialog
 import com.example.ui.components.QuizDialog
 import com.example.ui.components.RevokeCertificateDialog
 import com.example.ui.components.UploadMediaDialog
+import com.example.ui.components.VideoPreviewDialog
 import com.example.ui.screens.AddEditMemberDialog
+import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.ClassDetailScreen
 import com.example.ui.screens.DeveloperProfileScreen
 import com.example.ui.screens.FounderProfileScreen
@@ -93,6 +97,7 @@ import com.example.ui.screens.ModulesScreen
 import com.example.ui.screens.MyLearningScreen
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SplashScreen
+import com.example.ui.screens.TeacherPanelScreen
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.MyApplicationTheme
@@ -131,6 +136,9 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     val issuedCertificates by viewModel.issuedCertificates.collectAsStateWithLifecycle()
     val certificateEligibility by viewModel.certificateEligibility.collectAsStateWithLifecycle()
     val isAdmin by viewModel.isAdminLoggedIn.collectAsStateWithLifecycle()
+    val isTeacher by viewModel.isTeacher.collectAsStateWithLifecycle()
+    val registeredAccounts by viewModel.registeredAccounts.collectAsStateWithLifecycle()
+    val auditLogs by viewModel.auditLogs.collectAsStateWithLifecycle()
 
     val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
@@ -197,6 +205,8 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     val latestCoAdminInviteNotice by viewModel.latestCoAdminInviteNotice.collectAsStateWithLifecycle()
     val previewPdfMedia by viewModel.previewPdfMedia.collectAsStateWithLifecycle()
     val previewImageMedia by viewModel.previewImageMedia.collectAsStateWithLifecycle()
+    val previewVideoMedia by viewModel.previewVideoMedia.collectAsStateWithLifecycle()
+    val previewDocumentMedia by viewModel.previewDocumentMedia.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -244,6 +254,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     var showPhoneInstallDialog by remember { mutableStateOf(false) }
     var showSplashScreen by remember { mutableStateOf(true) }
     var pendingDownloadMedia by remember { mutableStateOf<LessonMedia?>(null) }
+    var pendingDownloadCertificate by remember { mutableStateOf<CertificateRecord?>(null) }
     var pendingUnknownSourcesApkRetry by remember { mutableStateOf(false) }
 
     val unknownSourcesLauncher = rememberLauncherForActivityResult(
@@ -283,6 +294,22 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
         pendingDownloadMedia = null
     }
 
+    val exportCertificatePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        val targetCert = pendingDownloadCertificate
+        if (uri != null && targetCert != null) {
+            viewModel.exportCertificatePdfToUri(targetCert, uri)
+        }
+        pendingDownloadCertificate = null
+    }
+
+    val startDownloadCertificatePdf: (CertificateRecord) -> Unit = { cert ->
+        pendingDownloadCertificate = cert
+        val safeName = cert.certificateId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        exportCertificatePdfLauncher.launch("$safeName.pdf")
+    }
+
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
             context = context,
@@ -297,8 +324,11 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.checkUpdatesOnLifecycleResume()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> viewModel.checkUpdatesOnLifecycleResume()
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> viewModel.pauseAllActiveStudySessions()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -343,6 +373,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             onPhoneInstallClick = {
                                 showPhoneInstallDialog = true
                             },
+                            isTeacher = isTeacher,
                             modifier = Modifier.statusBarsPadding()
                         )
                     }
@@ -368,7 +399,8 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             onTabSelected = { viewModel.setTab(it) },
                             completedCount = progress.completedClassIds.size,
                             totalCount = classes.size,
-                            isAdmin = isAdmin
+                            isAdmin = isAdmin,
+                            isTeacher = isTeacher
                         )
                     } else if (currentScreen is Screen.Main && isExpandedLayout) {
                         AppNavigationRail(
@@ -445,6 +477,10 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             )
                         }
                         NavTab.MY_LEARNING -> {
+                            val passedExamCnt = adminSettings.requiredExamIds.count { reqId ->
+                                examAttempts.any { it.examId == reqId && it.studentId == currentUser.id && it.isPassed }
+                            }
+                            val submittedAsgCnt = assignmentSubmissions.count { it.studentId == currentUser.id }
                             MyLearningScreen(
                                 modules = modules,
                                 classes = classes,
@@ -460,6 +496,15 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                 onVerifyCertificate = { certId ->
                                     viewModel.searchCertificate(certId)
                                     viewModel.navigateTo(Screen.CertificateVerification)
+                                },
+                                passedExamCount = passedExamCnt,
+                                totalRequiredExamCount = adminSettings.requiredExamIds.size.coerceAtLeast(1),
+                                submittedAssignmentCount = submittedAsgCnt,
+                                adminSettings = adminSettings,
+                                onPreviewDemoCertificate = { viewModel.previewDemoCertificate() },
+                                onDownloadCertificatePdf = startDownloadCertificatePdf,
+                                onDownloadDemoCertificatePdf = {
+                                    startDownloadCertificatePdf(viewModel.createDemoCertificateRecord())
                                 }
                             )
                         }
@@ -526,7 +571,48 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                 onDisconnectGoogleCloudClick = triggerGoogleSignOut,
                                 onExportBackupJson = { viewModel.exportWorkspaceBackupJson() },
                                 onImportBackupJson = { viewModel.importWorkspaceBackupJson(it) },
-                                onBackupMessage = { msg -> viewModel.showNotification(msg) }
+                                onBackupMessage = { msg -> viewModel.showNotification(msg) },
+                                registeredAccounts = registeredAccounts,
+                                isTeacher = isTeacher,
+                                modules = modules,
+                                classes = classes,
+                                studentProgressMap = studentProgressMap,
+                                userProgress = progress,
+                                moduleExams = moduleExams,
+                                examAttempts = examAttempts,
+                                moduleAssignments = moduleAssignments,
+                                assignmentSubmissions = assignmentSubmissions,
+                                eligibility = certificateEligibility,
+                                issuedCertificates = issuedCertificates,
+                                onRegisterOrSignInStudent = { fullName, email, org, desig, mobile, program, photoUri ->
+                                    viewModel.registerOrSignInStudentAccount(fullName, email, org, desig, mobile, program, photoUri)
+                                },
+                                onUpdateStudentProfile = { fullName, org, desig, mobile, program, photoUri ->
+                                    viewModel.updateStudentOwnProfile(fullName, org, desig, mobile, program, photoUri)
+                                },
+                                onSignOutAccount = {
+                                    viewModel.signOutStudentAccount()
+                                    triggerGoogleSignOut()
+                                },
+                                onActivateTeacher = { userId -> viewModel.activateTeacherAccount(userId) },
+                                onOpenTeacherPanel = { viewModel.navigateTo(Screen.TeacherPanel) },
+                                onOpenAdminPanel = { viewModel.navigateTo(Screen.AdminPanel) },
+                                onModuleClick = { mod -> viewModel.navigateTo(Screen.ModuleDetail(mod.id)) },
+                                onClassClick = { cls -> viewModel.navigateTo(Screen.ClassDetail(cls.id)) },
+                                onTakeExam = { ex -> viewModel.openExam(ex) },
+                                onOpenAssignment = { asg -> viewModel.openAssignment(asg) },
+                                onGenerateCertificate = { viewModel.generateCertificate() },
+                                onOpenCertificatePdf = { cert -> viewModel.openOrShareCertificate(cert) },
+                                onVerifyCertificate = { certId ->
+                                    viewModel.searchCertificate(certId)
+                                    viewModel.navigateTo(Screen.CertificateVerification)
+                                },
+                                onPreviewDemoCertificate = { viewModel.previewDemoCertificate() },
+                                onDownloadCertificatePdf = startDownloadCertificatePdf,
+                                onDownloadDemoCertificatePdf = {
+                                    startDownloadCertificatePdf(viewModel.createDemoCertificateRecord())
+                                },
+                                demoCertificateEnabled = adminSettings.demoCertificateEnabled
                             )
                         }
                     }
@@ -535,10 +621,12 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 is Screen.ModuleDetail -> {
                     val targetModule = modules.find { it.id == screen.moduleId } ?: modules.firstOrNull()
                     if (targetModule != null) {
+                        val canManageMod = viewModel.canManageModule(targetModule.id)
                         val modExam = moduleExams.find { it.moduleId == targetModule.id }
                         val bestAtt = modExam?.let { ex ->
                             examAttempts.filter { it.examId == ex.id && it.studentId == currentUser.id }.maxByOrNull { it.scoreMarks }
                         }
+                        val attemptsUsed = modExam?.let { viewModel.getStudentExamAttemptsCount(it.id) } ?: 0
                         val modAsg = moduleAssignments.find { it.moduleId == targetModule.id }
                         val asgSub = modAsg?.let { asg ->
                             assignmentSubmissions.find { it.assignmentId == asg.id && it.studentId == currentUser.id }
@@ -572,7 +660,9 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             onMoveClassDown = { cls -> viewModel.reorderClass(cls.id, false) },
                             onToggleClassPublish = { cls -> viewModel.toggleClassPublished(cls.id) },
                             onTakeExam = { ex -> viewModel.openExam(ex) },
-                            onOpenAssignment = { asg -> viewModel.openAssignment(asg) }
+                            onOpenAssignment = { asg -> viewModel.openAssignment(asg) },
+                            canManageModule = canManageMod,
+                            attemptsUsedCount = attemptsUsed
                         )
                     } else {
                         viewModel.handleBack()
@@ -584,6 +674,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                     if (targetClass != null) {
                         val parentModule = modules.find { it.id == targetClass.moduleId }
                         val prog = studentProgressMap[targetClass.id]
+                        val canManageCls = viewModel.canManageModule(targetClass.moduleId)
                         ClassDetailScreen(
                             courseClass = targetClass,
                             module = parentModule,
@@ -625,6 +716,26 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             onLoadDemoMedia = { viewModel.loadSampleMedia(targetClass.id) },
                             onNavigateClass = { nextCls ->
                                 viewModel.navigateTo(Screen.ClassDetail(nextCls.id))
+                            },
+                            canManageClass = canManageCls,
+                            canDownloadMedia = targetClass.allowMediaDownload || canManageCls,
+                            onPdfPageStudyTick = { curPage, totPages, activeDelta, idleDelta ->
+                                viewModel.recordPdfPageStudy(
+                                    classId = targetClass.id,
+                                    currentPage = curPage,
+                                    totalPages = totPages,
+                                    secondsReading = activeDelta,
+                                    explicitConfirm = false,
+                                    idleExcludedSeconds = idleDelta
+                                )
+                            },
+                            onVideoPlaybackProgress = { posMs, durMs, isPlayingNow ->
+                                viewModel.updateVideoPlaybackProgress(
+                                    classId = targetClass.id,
+                                    positionMs = posMs,
+                                    durationMs = durMs,
+                                    isPlaying = isPlayingNow
+                                )
                             }
                         )
                     } else {
@@ -685,6 +796,77 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                         viewModel.handleBack()
                     }
                 }
+
+                is Screen.TeacherPanel -> {
+                    TeacherPanelScreen(
+                        currentUser = currentUser,
+                        isAdmin = isAdmin,
+                        modules = modules,
+                        classes = classes,
+                        moduleExams = moduleExams,
+                        moduleAssignments = moduleAssignments,
+                        examAttempts = examAttempts,
+                        assignmentSubmissions = assignmentSubmissions,
+                        registeredAccounts = registeredAccounts,
+                        onBack = { viewModel.handleBack() },
+                        onOpenModule = { mod -> viewModel.navigateTo(Screen.ModuleDetail(mod.id)) },
+                        onOpenClass = { cls -> viewModel.navigateTo(Screen.ClassDetail(cls.id)) },
+                        onAddClass = { modId ->
+                            activeTargetModuleForClass = modId
+                            viewModel.showCreateClassDialog.value = true
+                        },
+                        onEditClass = { cls -> viewModel.editingClass.value = cls },
+                        onToggleClassPublish = { classId -> viewModel.toggleClassPublished(classId) },
+                        onUploadClassMedia = { cls ->
+                            activeUploadMediaType = MediaType.PDF
+                            activeUploadClassId = cls.id
+                        },
+                        onSaveExam = { exam -> viewModel.createOrUpdateModuleExam(exam) },
+                        onSaveAssignment = { asg -> viewModel.createOrUpdateModuleAssignment(asg) },
+                        onOpenAssignmentForGrading = { asg -> viewModel.openAssignment(asg) },
+                        onGradeSubmission = { subId, marks, feedback ->
+                            viewModel.gradeAssignment(subId, marks, feedback)
+                        }
+                    )
+                }
+
+                is Screen.AdminPanel -> {
+                    AdminPanelScreen(
+                        currentUser = currentUser,
+                        isAdmin = isAdmin,
+                        modules = modules,
+                        registeredAccounts = registeredAccounts,
+                        issuedCertificates = issuedCertificates,
+                        assignmentSubmissions = assignmentSubmissions,
+                        auditLogs = auditLogs,
+                        adminSettings = adminSettings,
+                        onBack = { viewModel.handleBack() },
+                        onOpenAdminSettings = { viewModel.showAdminSettingsDialog.value = true },
+                        onOpenTeacherPanel = { viewModel.navigateTo(Screen.TeacherPanel) },
+                        onOpenVerification = { viewModel.navigateTo(Screen.CertificateVerification) },
+                        onCreateOrUpdateTeacher = { fullName, email, desig, org, assignedIds ->
+                            viewModel.createOrUpdateTeacherAccount(fullName, email, desig, org, assignedIds)
+                        },
+                        onUpdateUserAccess = { userId, role, status, verified, assignedIds ->
+                            viewModel.adminUpdateUserAccess(userId, role, status, verified, assignedIds)
+                        },
+                        onActivateTeacherSession = { userId ->
+                            viewModel.activateTeacherAccount(userId)
+                            viewModel.navigateTo(Screen.TeacherPanel)
+                        },
+                        onReissueCertificate = { studentId, reason -> viewModel.reissueCertificate(studentId, reason) },
+                        onRevokeCertificate = { cert -> viewModel.revokeTargetCert.value = cert },
+                        onReinstateCertificate = { certId -> viewModel.reinstateCertificate(certId) },
+                        onOpenCertificatePdf = { cert -> viewModel.openOrShareCertificate(cert) },
+                        onToggleCertificatesEnabled = { enabled -> viewModel.toggleCertificatesEnabled(enabled) },
+                        onToggleDemoCertificateEnabled = { enabled -> viewModel.toggleDemoCertificateEnabled(enabled) },
+                        onPreviewDemoCertificate = { viewModel.previewDemoCertificate() },
+                        onDownloadDemoCertificatePdf = {
+                            startDownloadCertificatePdf(viewModel.createDemoCertificateRecord())
+                        },
+                        onDownloadCertificatePdf = startDownloadCertificatePdf
+                    )
+                }
             }
                         }
 
@@ -740,7 +922,8 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 viewModel.previewCertificate.value = null
                 viewModel.searchCertificate(certId)
                 viewModel.navigateTo(Screen.CertificateVerification)
-            }
+            },
+            onDownloadPdf = { startDownloadCertificatePdf(cert) }
         )
     }
 
@@ -935,6 +1118,10 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
 
     // In-App Multi-Page PDF Reader Dialog
     previewPdfMedia?.let { pdfItem ->
+        val activePdfClassId = (currentScreen as? Screen.ClassDetail)?.classId
+        val activePdfClass = activePdfClassId?.let { id -> classes.find { it.id == id } }
+        val activePdfProg = activePdfClassId?.let { id -> studentProgressMap[id] }
+        val canDownloadPdf = activePdfClass == null || activePdfClass.allowMediaDownload || viewModel.canManageModule(activePdfClass.moduleId)
         PdfPreviewDialog(
             media = pdfItem,
             onResolvePdfFile = { media -> viewModel.resolveLocalMediaFile(media) },
@@ -943,7 +1130,21 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 pendingDownloadMedia = media
                 exportDocumentLauncher.launch(media.fileName)
             },
-            onDismiss = { viewModel.previewPdfMedia.value = null }
+            onDismiss = { viewModel.previewPdfMedia.value = null },
+            initialPage = (activePdfProg?.lastPdfPage ?: 1).coerceAtLeast(1),
+            canDownload = canDownloadPdf,
+            onPageStudyTick = { curPage, totPages, activeDelta, idleDelta ->
+                if (activePdfClassId != null) {
+                    viewModel.recordPdfPageStudy(
+                        classId = activePdfClassId,
+                        currentPage = curPage,
+                        totalPages = totPages,
+                        secondsReading = activeDelta,
+                        explicitConfirm = false,
+                        idleExcludedSeconds = idleDelta
+                    )
+                }
+            }
         )
     }
 
@@ -957,6 +1158,52 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 exportDocumentLauncher.launch(media.fileName)
             },
             onDismiss = { viewModel.previewImageMedia.value = null }
+        )
+    }
+
+    // In-App Fullscreen Video Player Dialog
+    previewVideoMedia?.let { videoItem ->
+        val activeVideoClassId = (currentScreen as? Screen.ClassDetail)?.classId
+        val activeVideoClass = activeVideoClassId?.let { id -> classes.find { it.id == id } }
+        val canDownloadVideo = activeVideoClass == null || activeVideoClass.allowMediaDownload || viewModel.canManageModule(activeVideoClass.moduleId)
+        VideoPreviewDialog(
+            media = videoItem,
+            onResolveVideoFile = { media -> viewModel.resolveLocalMediaFile(media) },
+            onOpenExternal = { media -> viewModel.openMediaWithExternalViewer(media) },
+            onDownload = { media ->
+                pendingDownloadMedia = media
+                exportDocumentLauncher.launch(media.fileName)
+            },
+            onDismiss = { viewModel.previewVideoMedia.value = null },
+            canDownload = canDownloadVideo,
+            onPlaybackProgress = { posMs, durMs, isPlayingNow ->
+                if (activeVideoClassId != null) {
+                    viewModel.updateVideoPlaybackProgress(
+                        classId = activeVideoClassId,
+                        positionMs = posMs,
+                        durationMs = durMs,
+                        isPlaying = isPlayingNow
+                    )
+                }
+            }
+        )
+    }
+
+    // In-App Document Reader / Viewer Dialog
+    previewDocumentMedia?.let { docItem ->
+        val activeDocClassId = (currentScreen as? Screen.ClassDetail)?.classId
+        val activeDocClass = activeDocClassId?.let { id -> classes.find { it.id == id } }
+        val canDownloadDoc = activeDocClass == null || activeDocClass.allowMediaDownload || viewModel.canManageModule(activeDocClass.moduleId)
+        DocumentPreviewDialog(
+            media = docItem,
+            onResolveDocumentFile = { media -> viewModel.resolveLocalMediaFile(media) },
+            onOpenExternal = { media -> viewModel.openMediaWithExternalViewer(media) },
+            onDownload = { media ->
+                pendingDownloadMedia = media
+                exportDocumentLauncher.launch(media.fileName)
+            },
+            onDismiss = { viewModel.previewDocumentMedia.value = null },
+            canDownload = canDownloadDoc
         )
     }
 
@@ -1004,6 +1251,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
 
     // Active Exam Dialog
     activeExam?.let { currentExam ->
+        val attemptsUsed = viewModel.getStudentExamAttemptsCount(currentExam.id)
         ExamDialog(
             exam = currentExam,
             timeRemainingSeconds = examTimeRemainingSeconds,
@@ -1013,20 +1261,30 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
             onSelectAnswer = { qId, optIdx -> viewModel.selectExamAnswer(qId, optIdx) },
             onSubmit = { viewModel.submitActiveExam(isAutoTimeout = false) },
             onRetake = { viewModel.retakeExam(currentExam) },
-            onDismiss = { viewModel.closeExam() }
+            onDismiss = { viewModel.closeExam() },
+            attemptsUsed = attemptsUsed,
+            canRetake = attemptsUsed < currentExam.maxAttempts
         )
     }
 
     // Active Assignment Dialog
     activeAssignment?.let { currentAsg ->
         val sub = assignmentSubmissions.find { it.assignmentId == currentAsg.id && it.studentId == currentUser.id }
+        val canGradeMod = viewModel.canManageModule(currentAsg.moduleId)
+        val staffSubs = if (canGradeMod) {
+            assignmentSubmissions.filter { it.assignmentId == currentAsg.id }
+        } else {
+            emptyList()
+        }
         AssignmentDialog(
             assignment = currentAsg,
             currentSubmission = sub,
             isAdmin = isAdmin,
             onSubmit = { text, fileName -> viewModel.submitAssignment(currentAsg.id, text, fileName) },
             onGrade = { subId, marks, feedback -> viewModel.gradeAssignment(subId, marks, feedback) },
-            onDismiss = { viewModel.closeAssignment() }
+            onDismiss = { viewModel.closeAssignment() },
+            canGrade = canGradeMod,
+            submissionsForStaff = staffSubs
         )
     }
 

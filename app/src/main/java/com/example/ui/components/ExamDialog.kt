@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,7 +73,9 @@ fun ExamDialog(
     onSelectAnswer: (questionId: String, optionIndex: Int) -> Unit,
     onSubmit: () -> Unit,
     onRetake: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    attemptsUsed: Int = 0,
+    canRetake: Boolean = attemptsUsed < exam.maxAttempts
 ) {
     val minutes = timeRemainingSeconds / 60
     val seconds = timeRemainingSeconds % 60
@@ -111,7 +115,11 @@ fun ExamDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Text(
                                         text = if (exam.isSyllabusFixedMarks) "OFFICIAL SYLLABUS EXAM" else "MODULE ASSESSMENT",
                                         color = GoldMetallic,
@@ -119,20 +127,21 @@ fun ExamDialog(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.5.sp
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
                                             .background(
                                                 if (exam.isSyllabusFixedMarks) GoldMetallic.copy(alpha = 0.2f) else NavySurface,
                                                 RoundedCornerShape(4.dp)
                                             )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .padding(horizontal = 7.dp, vertical = 2.dp)
                                     ) {
                                         Text(
                                             text = "${exam.totalMarks} Marks",
                                             color = if (exam.isSyllabusFixedMarks) GoldSoft else Color.White,
                                             fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -170,7 +179,7 @@ fun ExamDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = exam.scheduledWindowNote,
+                                text = "${exam.scheduledWindowNote} • Attempts: $attemptsUsed/${exam.maxAttempts}",
                                 color = Color.White.copy(alpha = 0.75f),
                                 fontSize = 11.sp
                             )
@@ -258,20 +267,21 @@ fun ExamDialog(
                                     color = NavyPrimary
                                 )
                                 Text(
-                                    text = "Pass Requirement: ${exam.passingPercentage}% • ${if (attemptResult.isAutoSubmittedOnTimeout) "Auto-submitted on time expiry" else "Submitted on time"}",
+                                    text = "Pass: ${exam.passingPercentage}% • Attempts: $attemptsUsed/${exam.maxAttempts} • ${if (attemptResult.isAutoSubmittedOnTimeout) "Auto-submitted" else "Submitted on time"}",
                                     fontSize = 11.sp,
                                     color = Color.Gray
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 OutlinedButton(
                                     onClick = onRetake,
+                                    enabled = canRetake,
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary),
                                     shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier.testTag("btn_retake_exam")
                                 ) {
                                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Retake Examination")
+                                    Text(if (canRetake) "Retake Examination" else "Maximum Attempts Reached")
                                 }
                             }
                         }

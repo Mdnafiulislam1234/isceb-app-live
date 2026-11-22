@@ -1,68 +1,59 @@
 {
   "entities": {
+    "LmsUserAccount": {
+      "title": "LmsUserAccount",
+      "description": "Authenticated ISCEB LMS user profile with role-based access control and unique institutional Student ID",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "studentId": { "type": "string", "description": "Unique ISCEB institutional ID (e.g. ISCEB-PGD-2026-AB12)" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "photoUrl": { "type": "string" },
+        "role": { "type": "string", "enum": ["STUDENT", "TEACHER", "ADMIN"] },
+        "organization": { "type": "string" },
+        "designation": { "type": "string" },
+        "mobileNumber": { "type": "string" },
+        "enrolledProgram": { "type": "string" },
+        "accountStatus": { "type": "string", "enum": ["ACTIVE", "PENDING_VERIFICATION", "SUSPENDED"] },
+        "isVerified": { "type": "boolean" },
+        "assignedModuleIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "studentId",
+        "fullName",
+        "email",
+        "role",
+        "enrolledProgram",
+        "accountStatus",
+        "isVerified",
+        "assignedModuleIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "CurriculumManifest": {
       "title": "CurriculumManifest",
       "description": "Shared live ISCEB curriculum release manifest and native APK version metadata for cross-device auto-sync",
       "type": "object",
       "properties": {
-        "authorUid": {
-          "type": "string",
-          "description": "Firebase UID of the verified administrator who published the manifest"
-        },
-        "versionCode": {
-          "type": "integer",
-          "description": "Monotonically increasing curriculum release version code"
-        },
-        "versionTag": {
-          "type": "string",
-          "description": "Human-readable curriculum release version tag (e.g. v1.1.0)"
-        },
-        "publishedTimestamp": {
-          "type": "integer",
-          "description": "Epoch milliseconds when published"
-        },
-        "publishedBy": {
-          "type": "string",
-          "description": "Publisher display name and designation"
-        },
-        "releaseNotes": {
-          "type": "string",
-          "description": "Summary of syllabus or feature changes"
-        },
-        "announcement": {
-          "type": "string",
-          "description": "Academic notice broadcast to all installed devices"
-        },
-        "minSupportedAppVersion": {
-          "type": "integer",
-          "description": "Minimum supported Android app versionCode"
-        },
-        "latestApkVersionCode": {
-          "type": "integer",
-          "description": "Latest published Android APK versionCode"
-        },
-        "latestApkVersionName": {
-          "type": "string",
-          "description": "Latest published Android APK versionName"
-        },
-        "apkDownloadUrl": {
-          "type": "string",
-          "description": "Official APK download or release URL (unchanged existing installation link)"
-        },
-        "apkReleaseNotes": {
-          "type": "string",
-          "description": "Release notes for native Android APK update"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp (FieldValue.serverTimestamp()) when document was created"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp (FieldValue.serverTimestamp()) when document was last updated"
-        }
+        "authorUid": { "type": "string" },
+        "versionCode": { "type": "integer" },
+        "versionTag": { "type": "string" },
+        "publishedTimestamp": { "type": "integer" },
+        "publishedBy": { "type": "string" },
+        "releaseNotes": { "type": "string" },
+        "announcement": { "type": "string" },
+        "minSupportedAppVersion": { "type": "integer" },
+        "latestApkVersionCode": { "type": "integer" },
+        "latestApkVersionName": { "type": "string" },
+        "apkDownloadUrl": { "type": "string" },
+        "apkReleaseNotes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
         "authorUid",
@@ -84,36 +75,13 @@
       "description": "Live ISCEB modules, lectures, media metadata, and completion settings snapshot",
       "type": "object",
       "properties": {
-        "authorUid": {
-          "type": "string",
-          "description": "Firebase UID of verified administrator"
-        },
-        "versionCode": {
-          "type": "integer",
-          "description": "Matching curriculum manifest versionCode"
-        },
-        "modules": {
-          "type": "array",
-          "description": "List of course module maps (max 50)"
-        },
-        "classes": {
-          "type": "array",
-          "description": "List of course class maps (max 200)"
-        },
-        "settings": {
-          "type": "object",
-          "description": "Institutional and completion governance rules map"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on creation"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on update"
-        }
+        "authorUid": { "type": "string" },
+        "versionCode": { "type": "integer" },
+        "modules": { "type": "array" },
+        "classes": { "type": "array" },
+        "settings": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
         "authorUid",
@@ -130,57 +98,25 @@
       "description": "Per-user per-class learning progress preserved across live updates",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "description": "Owner Firebase Auth UID"
-        },
-        "classId": {
-          "type": "string",
-          "description": "Course class identifier"
-        },
-        "status": {
-          "type": "string",
-          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "LOCKED"],
-          "description": "Current class completion status"
-        },
-        "activeLearningSeconds": {
-          "type": "integer",
-          "description": "Total active learning seconds recorded"
-        },
-        "maxPlaybackPercent": {
-          "type": "number",
-          "description": "Highest audio/video playback completion percent (0-100)"
-        },
-        "isPdfConfirmed": {
-          "type": "boolean",
-          "description": "Whether student confirmed reviewing class PDF"
-        },
-        "pdfReadingSeconds": {
-          "type": "integer",
-          "description": "Total PDF study seconds"
-        },
-        "quizScore": {
-          "type": "integer",
-          "description": "Optional latest quiz percentage score"
-        },
-        "quizPassed": {
-          "type": "boolean",
-          "description": "Whether class quiz threshold was passed"
-        },
-        "completionTimestamp": {
-          "type": "integer",
-          "description": "Optional epoch ms when class completed"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on creation"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on update"
-        }
+        "userId": { "type": "string" },
+        "classId": { "type": "string" },
+        "status": { "type": "string", "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "LOCKED"] },
+        "startTimeMs": { "type": "integer" },
+        "lastActiveTimeMs": { "type": "integer" },
+        "activeLearningSeconds": { "type": "integer" },
+        "idleExcludedSeconds": { "type": "integer" },
+        "maxPlaybackPercent": { "type": "number" },
+        "lastPlaybackPositionMs": { "type": "integer" },
+        "isPdfConfirmed": { "type": "boolean" },
+        "pdfReadingSeconds": { "type": "integer" },
+        "lastPdfPage": { "type": "integer" },
+        "totalPdfPages": { "type": "integer" },
+        "visitedPdfPages": { "type": "array" },
+        "quizScore": { "type": "integer" },
+        "quizPassed": { "type": "boolean" },
+        "completionTimestamp": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
         "userId",
@@ -195,59 +131,236 @@
         "updatedAt"
       ]
     },
+    "CourseAssignment": {
+      "title": "CourseAssignment",
+      "description": "Module assignment or capstone project managed by Admin or assigned module Teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "title": { "type": "string" },
+        "topicDescription": { "type": "string" },
+        "instructions": { "type": "string" },
+        "maxMarks": { "type": "integer" },
+        "isFinalProject": { "type": "boolean" },
+        "isRequired": { "type": "boolean" },
+        "allowFileAttachment": { "type": "boolean" },
+        "dueDateMs": { "type": "integer" },
+        "createdByUid": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "moduleId",
+        "title",
+        "topicDescription",
+        "instructions",
+        "maxMarks",
+        "isFinalProject",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AssignmentSubmission": {
+      "title": "AssignmentSubmission",
+      "description": "Student assignment submission and teacher/admin grade evaluation",
+      "type": "object",
+      "properties": {
+        "submissionId": { "type": "string" },
+        "assignmentId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "submissionText": { "type": "string" },
+        "attachedFileName": { "type": "string" },
+        "submissionTimestamp": { "type": "integer" },
+        "marksAwarded": { "type": "integer" },
+        "feedback": { "type": "string" },
+        "isGraded": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["SUBMITTED", "UNDER_REVIEW", "GRADED"] },
+        "gradedByUid": { "type": "string" },
+        "gradedByName": { "type": "string" },
+        "gradedTimestamp": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "submissionId",
+        "assignmentId",
+        "moduleId",
+        "studentId",
+        "studentName",
+        "submissionText",
+        "submissionTimestamp",
+        "isGraded",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CourseExam": {
+      "title": "CourseExam",
+      "description": "Timed MCQ module or comprehensive examination managed by Admin or assigned Teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "title": { "type": "string" },
+        "totalMarks": { "type": "integer" },
+        "isSyllabusFixedMarks": { "type": "boolean" },
+        "passingPercentage": { "type": "integer" },
+        "durationMinutes": { "type": "integer" },
+        "maxAttempts": { "type": "integer" },
+        "openFromMs": { "type": "integer" },
+        "openUntilMs": { "type": "integer" },
+        "isRequired": { "type": "boolean" },
+        "scheduledWindowNote": { "type": "string" },
+        "questions": { "type": "array" },
+        "createdByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "moduleId",
+        "title",
+        "totalMarks",
+        "passingPercentage",
+        "durationMinutes",
+        "questions",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "Immutable record of a student examination attempt",
+      "type": "object",
+      "properties": {
+        "attemptId": { "type": "string" },
+        "examId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentAnswers": { "type": "object" },
+        "scoreMarks": { "type": "integer" },
+        "totalMarks": { "type": "integer" },
+        "percentage": { "type": "integer" },
+        "isPassed": { "type": "boolean" },
+        "startTimeMs": { "type": "integer" },
+        "submittedTimeMs": { "type": "integer" },
+        "isAutoSubmittedOnTimeout": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "attemptId",
+        "examId",
+        "moduleId",
+        "studentId",
+        "studentAnswers",
+        "scoreMarks",
+        "totalMarks",
+        "percentage",
+        "isPassed",
+        "startTimeMs",
+        "submittedTimeMs",
+        "createdAt"
+      ]
+    },
+    "IssuedCertificate": {
+      "title": "IssuedCertificate",
+      "description": "Official verifiable ISCEB PGD certificate record synced across public registry and user profile",
+      "type": "object",
+      "properties": {
+        "certificateId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentCode": { "type": "string" },
+        "studentName": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "issueDate": { "type": "string" },
+        "issueTimestamp": { "type": "integer" },
+        "institutionName": { "type": "string" },
+        "officialWebsite": { "type": "string" },
+        "authorizedSigner": { "type": "string" },
+        "status": { "type": "string", "enum": ["VALID", "REVOKED"] },
+        "revocationReason": { "type": "string" },
+        "revocationTimestamp": { "type": "integer" },
+        "completedClassesCount": { "type": "integer" },
+        "totalRequiredClasses": { "type": "integer" },
+        "verificationUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "certificateId",
+        "studentId",
+        "studentName",
+        "courseTitle",
+        "issueDate",
+        "issueTimestamp",
+        "institutionName",
+        "officialWebsite",
+        "authorizedSigner",
+        "status",
+        "completedClassesCount",
+        "totalRequiredClasses",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLogEntry": {
+      "title": "AuditLogEntry",
+      "description": "Immutable administrative and academic governance audit trail",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "actionType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "summary": { "type": "string" },
+        "timestampMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "logId",
+        "actorUid",
+        "actorName",
+        "actorRole",
+        "actionType",
+        "targetId",
+        "summary",
+        "timestampMs",
+        "createdAt"
+      ]
+    },
     "AdminRegistry": {
       "title": "AdminRegistry",
       "description": "Authoritative server-managed admin grant records",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string"
-        },
-        "email": {
-          "type": "string",
-          "format": "email"
-        },
-        "role": {
-          "type": "string"
-        }
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string" }
       },
       "required": ["uid", "email", "role"]
     },
     "LessonFileChunk": {
       "title": "LessonFileChunk",
-      "description": "Chunked Base64 binary payload enabling cross-device Firestore distribution of admin-uploaded PDFs, slides, and images without Firebase Storage dependency",
+      "description": "Chunked Base64 binary payload enabling cross-device Firestore distribution of admin or teacher uploaded PDFs, slides, and images",
       "type": "object",
       "properties": {
-        "fileId": {
-          "type": "string",
-          "description": "Logical file identifier matching LessonMedia.cloudFileId"
-        },
-        "chunkIndex": {
-          "type": "integer",
-          "description": "Zero-based chunk index"
-        },
-        "totalChunks": {
-          "type": "integer",
-          "description": "Total chunk count for reassembly"
-        },
-        "dataBase64": {
-          "type": "string",
-          "description": "Base64-encoded chunk bytes"
-        },
-        "authorUid": {
-          "type": "string",
-          "description": "Firebase UID of the verified administrator who uploaded the file"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on creation"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp on update"
-        }
+        "fileId": { "type": "string" },
+        "chunkIndex": { "type": "integer" },
+        "totalChunks": { "type": "integer" },
+        "dataBase64": { "type": "string" },
+        "authorUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
         "fileId",
@@ -261,6 +374,42 @@
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/LmsUserAccount" },
+      "description": "User accounts with strict RBAC roles, unique student IDs, and teacher module assignments"
+    },
+    "/users/{userId}/progress/{classId}": {
+      "schema": { "$ref": "#/entities/StudentProgress" },
+      "description": "User-isolated class completion and progress state synced across devices"
+    },
+    "/users/{userId}/certificates/{certificateId}": {
+      "schema": { "$ref": "#/entities/IssuedCertificate" },
+      "description": "Student-owned issued certificate references"
+    },
+    "/assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/CourseAssignment" },
+      "description": "Course assignments managed by Admin and module-assigned Teachers"
+    },
+    "/submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/AssignmentSubmission" },
+      "description": "Student assignment submissions and teacher/admin grade records"
+    },
+    "/exams/{examId}": {
+      "schema": { "$ref": "#/entities/CourseExam" },
+      "description": "Module and final exams configured by Admin and module-assigned Teachers"
+    },
+    "/exam_attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/ExamAttempt" },
+      "description": "Immutable exam attempt records per student"
+    },
+    "/certificates/{certificateId}": {
+      "schema": { "$ref": "#/entities/IssuedCertificate" },
+      "description": "Official institutional certificate registry for public ID and QR verification"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLogEntry" },
+      "description": "Append-only governance and grading audit log"
+    },
     "/curriculum_manifests/{manifestId}": {
       "schema": { "$ref": "#/entities/CurriculumManifest" },
       "description": "Live published curriculum manifest and APK release info (document ID: live)"
@@ -271,11 +420,7 @@
     },
     "/lesson_files/{chunkId}": {
       "schema": { "$ref": "#/entities/LessonFileChunk" },
-      "description": "Chunked class PDF/media attachments synced from admin devices to all students"
-    },
-    "/users/{userId}/progress/{classId}": {
-      "schema": { "$ref": "#/entities/StudentProgress" },
-      "description": "User-isolated class completion and progress state synced across devices"
+      "description": "Chunked class PDF/media attachments synced across devices"
     },
     "/admins/{userId}": {
       "schema": { "$ref": "#/entities/AdminRegistry" },

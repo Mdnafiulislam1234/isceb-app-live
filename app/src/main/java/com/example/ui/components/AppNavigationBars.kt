@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.UserProfile
+import com.example.model.UserRole
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.GoldSoft
 import com.example.ui.theme.NavyDark
@@ -77,10 +78,16 @@ fun AppTopBar(
     onSettingsClick: () -> Unit,
     onFirebaseClick: () -> Unit,
     onPhoneInstallClick: () -> Unit = {},
+    isTeacher: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val activeAdminRole = currentUser.designation.ifBlank {
         if (currentUser.id == "admin-2") "Founder of ISCEB" else "Developer of ISCEB App"
+    }
+    val nonAdminSubtitle = when {
+        currentUser.id == "guest-unauthenticated" -> "Guest Preview • Sign in on Profile"
+        isTeacher || currentUser.role == UserRole.TEACHER -> "${currentUser.fullName} • Faculty"
+        else -> "${currentUser.fullName} • ${currentUser.studentId.ifBlank { "PGD Candidate" }}"
     }
 
     Surface(
@@ -194,7 +201,7 @@ fun AppTopBar(
                                 modifier = Modifier.testTag("txt_topbar_brand_title")
                             )
                             Text(
-                                text = "${currentUser.fullName} • Candidate",
+                                text = nonAdminSubtitle,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = Color(0xFFB0C2D6),
                                     fontSize = 10.sp
@@ -459,6 +466,7 @@ fun AppDesktopSidebar(
     completedCount: Int,
     totalCount: Int,
     isAdmin: Boolean,
+    isTeacher: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -570,7 +578,11 @@ fun AppDesktopSidebar(
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
                     Text(
-                        text = if (isAdmin) "ADMIN PORTAL ACTIVE" else "DESKTOP / TABLET MODE",
+                        text = when {
+                            isAdmin -> "ADMIN PORTAL ACTIVE"
+                            isTeacher -> "TEACHER PORTAL ACTIVE"
+                            else -> "DESKTOP / TABLET MODE"
+                        },
                         color = GoldMetallic,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.ExtraBold

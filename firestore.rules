@@ -30,11 +30,54 @@ service cloud.firestore {
         (
           request.auth.token.email == 'www.mdnafiulislam@gmail.com' &&
           request.auth.token.email_verified == true
+        ) ||
+        (
+          request.auth.token.email == 'amirul.islam@isceb.org' &&
+          request.auth.token.email_verified == true
         )
       );
     }
 
+    function userAccountExists(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function getUserAccount(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function isActiveTeacher() {
+      return isSignedIn() &&
+             userAccountExists(request.auth.uid) &&
+             getUserAccount(request.auth.uid).role == 'TEACHER' &&
+             getUserAccount(request.auth.uid).accountStatus == 'ACTIVE';
+    }
+
+    function isTeacherForModule(moduleId) {
+      return isActiveTeacher() &&
+             getUserAccount(request.auth.uid).assignedModuleIds is list &&
+             moduleId in getUserAccount(request.auth.uid).assignedModuleIds;
+    }
+
     // 3. Entity Validation Helpers
+    function isValidLmsUserAccount(data) {
+      return data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+             data.studentId is string && data.studentId.size() >= 4 && data.studentId.size() <= 64 &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 160 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+             (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 1000)) &&
+             data.role is string && data.role in ['STUDENT', 'TEACHER', 'ADMIN'] &&
+             (!('organization' in data) || data.organization == null || (data.organization is string && data.organization.size() <= 200)) &&
+             (!('designation' in data) || data.designation == null || (data.designation is string && data.designation.size() <= 200)) &&
+             (!('mobileNumber' in data) || data.mobileNumber == null || (data.mobileNumber is string && data.mobileNumber.size() <= 64)) &&
+             data.enrolledProgram is string && data.enrolledProgram.size() >= 1 && data.enrolledProgram.size() <= 200 &&
+             data.accountStatus is string && data.accountStatus in ['ACTIVE', 'PENDING_VERIFICATION', 'SUSPENDED'] &&
+             data.isVerified is bool &&
+             data.assignedModuleIds is list && data.assignedModuleIds.size() <= 50 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
     function isValidCurriculumManifest(data) {
       return data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
              data.versionCode is int && data.versionCode >= 1 && data.versionCode <= 1000000 &&
@@ -66,10 +109,17 @@ service cloud.firestore {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.classId is string && data.classId.size() >= 1 && data.classId.size() <= 128 &&
              data.status is string && data.status in ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'LOCKED'] &&
+             (!('startTimeMs' in data) || (data.startTimeMs is int && data.startTimeMs >= 0)) &&
+             (!('lastActiveTimeMs' in data) || (data.lastActiveTimeMs is int && data.lastActiveTimeMs >= 0)) &&
              data.activeLearningSeconds is int && data.activeLearningSeconds >= 0 && data.activeLearningSeconds <= 10000000 &&
+             (!('idleExcludedSeconds' in data) || (data.idleExcludedSeconds is int && data.idleExcludedSeconds >= 0 && data.idleExcludedSeconds <= 10000000)) &&
              data.maxPlaybackPercent is number && data.maxPlaybackPercent >= 0 && data.maxPlaybackPercent <= 100 &&
+             (!('lastPlaybackPositionMs' in data) || (data.lastPlaybackPositionMs is int && data.lastPlaybackPositionMs >= 0)) &&
              data.isPdfConfirmed is bool &&
              data.pdfReadingSeconds is int && data.pdfReadingSeconds >= 0 && data.pdfReadingSeconds <= 10000000 &&
+             (!('lastPdfPage' in data) || (data.lastPdfPage is int && data.lastPdfPage >= 0 && data.lastPdfPage <= 10000)) &&
+             (!('totalPdfPages' in data) || (data.totalPdfPages is int && data.totalPdfPages >= 0 && data.totalPdfPages <= 10000)) &&
+             (!('visitedPdfPages' in data) || (data.visitedPdfPages is list && data.visitedPdfPages.size() <= 500)) &&
              (!('quizScore' in data) || data.quizScore == null || (data.quizScore is int && data.quizScore >= 0 && data.quizScore <= 100)) &&
              data.quizPassed is bool &&
              (!('completionTimestamp' in data) || data.completionTimestamp == null || (data.completionTimestamp is int && data.completionTimestamp >= 0)) &&
@@ -77,7 +127,401 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidCourseAssignment(data) {
+      return data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+             data.moduleId is string && data.moduleId.size() >= 1 && data.moduleId.size() <= 64 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+             data.topicDescription is string && data.topicDescription.size() <= 4000 &&
+             data.instructions is string && data.instructions.size() <= 4000 &&
+             data.maxMarks is int && data.maxMarks >= 1 && data.maxMarks <= 1000 &&
+             data.isFinalProject is bool &&
+             (!('isRequired' in data) || data.isRequired is bool) &&
+             (!('allowFileAttachment' in data) || data.allowFileAttachment is bool) &&
+             (!('dueDateMs' in data) || data.dueDateMs == null || (data.dueDateMs is int && data.dueDateMs >= 0)) &&
+             data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+             (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 160)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAssignmentSubmission(data) {
+      return data.submissionId is string && data.submissionId.size() >= 1 && data.submissionId.size() <= 128 &&
+             data.assignmentId is string && data.assignmentId.size() >= 1 && data.assignmentId.size() <= 128 &&
+             data.moduleId is string && data.moduleId.size() >= 1 && data.moduleId.size() <= 64 &&
+             data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 128 &&
+             data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 160 &&
+             data.submissionText is string && data.submissionText.size() >= 1 && data.submissionText.size() <= 15000 &&
+             (!('attachedFileName' in data) || data.attachedFileName == null || (data.attachedFileName is string && data.attachedFileName.size() <= 500)) &&
+             data.submissionTimestamp is int && data.submissionTimestamp >= 0 &&
+             (!('marksAwarded' in data) || data.marksAwarded == null || (data.marksAwarded is int && data.marksAwarded >= 0 && data.marksAwarded <= 1000)) &&
+             (!('feedback' in data) || data.feedback == null || (data.feedback is string && data.feedback.size() <= 4000)) &&
+             data.isGraded is bool &&
+             data.status is string && data.status in ['SUBMITTED', 'UNDER_REVIEW', 'GRADED'] &&
+             (!('gradedByUid' in data) || data.gradedByUid == null || (data.gradedByUid is string && data.gradedByUid.size() <= 128)) &&
+             (!('gradedByName' in data) || data.gradedByName == null || (data.gradedByName is string && data.gradedByName.size() <= 160)) &&
+             (!('gradedTimestamp' in data) || data.gradedTimestamp == null || (data.gradedTimestamp is int && data.gradedTimestamp >= 0)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCourseExam(data) {
+      return data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+             data.moduleId is string && data.moduleId.size() >= 1 && data.moduleId.size() <= 64 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+             data.totalMarks is int && data.totalMarks >= 1 && data.totalMarks <= 1000 &&
+             (!('isSyllabusFixedMarks' in data) || data.isSyllabusFixedMarks is bool) &&
+             data.passingPercentage is int && data.passingPercentage >= 1 && data.passingPercentage <= 100 &&
+             data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 600 &&
+             (!('maxAttempts' in data) || (data.maxAttempts is int && data.maxAttempts >= 1 && data.maxAttempts <= 100)) &&
+             (!('openFromMs' in data) || data.openFromMs == null || (data.openFromMs is int && data.openFromMs >= 0)) &&
+             (!('openUntilMs' in data) || data.openUntilMs == null || (data.openUntilMs is int && data.openUntilMs >= 0)) &&
+             (!('isRequired' in data) || data.isRequired is bool) &&
+             (!('scheduledWindowNote' in data) || (data.scheduledWindowNote is string && data.scheduledWindowNote.size() <= 500)) &&
+             data.questions is list && data.questions.size() <= 200 &&
+             data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidExamAttempt(data) {
+      return data.attemptId is string && data.attemptId.size() >= 1 && data.attemptId.size() <= 128 &&
+             data.examId is string && data.examId.size() >= 1 && data.examId.size() <= 128 &&
+             data.moduleId is string && data.moduleId.size() >= 1 && data.moduleId.size() <= 64 &&
+             data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 128 &&
+             data.studentAnswers is map &&
+             data.scoreMarks is int && data.scoreMarks >= 0 && data.scoreMarks <= 1000 &&
+             data.totalMarks is int && data.totalMarks >= 1 && data.totalMarks <= 1000 &&
+             data.percentage is int && data.percentage >= 0 && data.percentage <= 100 &&
+             data.isPassed is bool &&
+             data.startTimeMs is int && data.startTimeMs >= 0 &&
+             data.submittedTimeMs is int && data.submittedTimeMs >= 0 &&
+             (!('isAutoSubmittedOnTimeout' in data) || data.isAutoSubmittedOnTimeout is bool) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidCertificate(data) {
+      return data.certificateId is string && data.certificateId.size() >= 6 && data.certificateId.size() <= 128 &&
+             data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 128 &&
+             (!('studentCode' in data) || (data.studentCode is string && data.studentCode.size() <= 64)) &&
+             data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 160 &&
+             data.courseTitle is string && data.courseTitle.size() >= 1 && data.courseTitle.size() <= 300 &&
+             data.issueDate is string && data.issueDate.size() >= 1 && data.issueDate.size() <= 100 &&
+             data.issueTimestamp is int && data.issueTimestamp >= 0 &&
+             data.institutionName is string && data.institutionName.size() >= 1 && data.institutionName.size() <= 200 &&
+             data.officialWebsite is string && data.officialWebsite.size() >= 1 && data.officialWebsite.size() <= 200 &&
+             data.authorizedSigner is string && data.authorizedSigner.size() >= 1 && data.authorizedSigner.size() <= 300 &&
+             data.status is string && data.status in ['VALID', 'REVOKED'] &&
+             (!('revocationReason' in data) || data.revocationReason == null || (data.revocationReason is string && data.revocationReason.size() <= 500)) &&
+             (!('revocationTimestamp' in data) || data.revocationTimestamp == null || (data.revocationTimestamp is int && data.revocationTimestamp >= 0)) &&
+             data.completedClassesCount is int && data.completedClassesCount >= 0 && data.completedClassesCount <= 500 &&
+             data.totalRequiredClasses is int && data.totalRequiredClasses >= 1 && data.totalRequiredClasses <= 500 &&
+             (!('verificationUrl' in data) || data.verificationUrl == null || (data.verificationUrl is string && data.verificationUrl.size() <= 500)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLessonFileChunk(data) {
+      return data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
+             data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex <= 50 &&
+             data.totalChunks is int && data.totalChunks >= 1 && data.totalChunks <= 50 &&
+             data.chunkIndex < data.totalChunks &&
+             data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 600000 &&
+             data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAuditLog(data) {
+      return data.logId is string && data.logId.size() >= 1 && data.logId.size() <= 128 &&
+             data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
+             data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 160 &&
+             data.actorRole is string && data.actorRole in ['TEACHER', 'ADMIN'] &&
+             data.actionType is string && data.actionType.size() >= 1 && data.actionType.size() <= 100 &&
+             data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
+             data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 1000 &&
+             data.timestampMs is int && data.timestampMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     // 4. Collection Rules
+
+    // User Accounts (Strict Owner / Teacher-Read / Admin RBAC - Zero Self-Escalation)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (
+        request.auth.uid == userId || isActiveTeacher() || isAdmin()
+      );
+      allow list: if isActiveTeacher() || isAdmin();
+
+      // Self-registration is strictly restricted to STUDENT role, unverified, empty assignedModuleIds
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       incoming().uid == userId &&
+                       incoming().keys().hasAll([
+                         'uid', 'studentId', 'fullName', 'email', 'role',
+                         'enrolledProgram', 'accountStatus', 'isVerified',
+                         'assignedModuleIds', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'uid', 'studentId', 'fullName', 'email', 'photoUrl', 'role',
+                         'organization', 'designation', 'mobileNumber', 'enrolledProgram',
+                         'accountStatus', 'isVerified', 'assignedModuleIds',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLmsUserAccount(incoming()) &&
+                       (
+                         isAdmin() ||
+                         (
+                           request.auth.uid == userId &&
+                           incoming().role == 'STUDENT' &&
+                           incoming().accountStatus == 'ACTIVE' &&
+                           incoming().isVerified == false &&
+                           incoming().assignedModuleIds.size() == 0
+                         )
+                       );
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidLmsUserAccount(incoming()) &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           request.auth.uid == userId &&
+                           existing().accountStatus == 'ACTIVE' &&
+                           incoming().role == existing().role &&
+                           incoming().studentId == existing().studentId &&
+                           incoming().email == existing().email &&
+                           incoming().accountStatus == existing().accountStatus &&
+                           incoming().isVerified == existing().isVerified &&
+                           incoming().assignedModuleIds == existing().assignedModuleIds &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'fullName', 'photoUrl', 'organization', 'designation',
+                             'mobileNumber', 'enrolledProgram', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if false;
+    }
+
+    // Per-User Student Progress Subcollection (Owner Read/Write + Teacher/Admin Oversight)
+    match /users/{userId}/progress/{classId} {
+      allow get: if isSignedIn() && isValidId(classId) && (
+        request.auth.uid == userId || isActiveTeacher() || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid == userId || isActiveTeacher() || isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(classId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().classId == classId &&
+                       incoming().keys().hasAll([
+                         'userId', 'classId', 'status', 'activeLearningSeconds',
+                         'maxPlaybackPercent', 'isPdfConfirmed', 'pdfReadingSeconds',
+                         'quizPassed', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'classId', 'status', 'startTimeMs', 'lastActiveTimeMs',
+                         'activeLearningSeconds', 'idleExcludedSeconds', 'maxPlaybackPercent',
+                         'lastPlaybackPositionMs', 'isPdfConfirmed', 'pdfReadingSeconds',
+                         'lastPdfPage', 'totalPdfPages', 'visitedPdfPages',
+                         'quizScore', 'quizPassed', 'completionTimestamp', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidStudentProgress(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(classId) &&
+                       isValidStudentProgress(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().classId == existing().classId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'startTimeMs', 'lastActiveTimeMs', 'activeLearningSeconds',
+                         'idleExcludedSeconds', 'maxPlaybackPercent', 'lastPlaybackPositionMs',
+                         'isPdfConfirmed', 'pdfReadingSeconds', 'lastPdfPage', 'totalPdfPages',
+                         'visitedPdfPages', 'quizScore', 'quizPassed', 'completionTimestamp', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(classId);
+    }
+
+    // Per-User Certificate Subcollection
+    match /users/{userId}/certificates/{certificateId} {
+      allow get: if isSignedIn() && isValidId(certificateId) && (
+        request.auth.uid == userId || isAdmin() || isActiveTeacher()
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin()
+      );
+      allow create: if isSignedIn() &&
+                       isValidId(certificateId) &&
+                       (request.auth.uid == userId || isAdmin()) &&
+                       incoming().studentId == userId &&
+                       incoming().certificateId == certificateId &&
+                       incoming().status == 'VALID' &&
+                       (!('revocationReason' in incoming()) || incoming().revocationReason == null) &&
+                       (!('revocationTimestamp' in incoming()) || incoming().revocationTimestamp == null) &&
+                       isValidCertificate(incoming());
+      allow update: if isAdmin() &&
+                       isValidId(certificateId) &&
+                       isValidCertificate(incoming()) &&
+                       incoming().studentId == existing().studentId &&
+                       incoming().certificateId == existing().certificateId &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    // Global Verifiable Certificate Registry
+    match /certificates/{certificateId} {
+      allow get: if isSignedIn() && isValidId(certificateId);
+      allow list: if isAdmin() || isActiveTeacher();
+      allow create: if isSignedIn() &&
+                       isValidId(certificateId) &&
+                       incoming().certificateId == certificateId &&
+                       (incoming().studentId == request.auth.uid || isAdmin()) &&
+                       incoming().status == 'VALID' &&
+                       (!('revocationReason' in incoming()) || incoming().revocationReason == null) &&
+                       (!('revocationTimestamp' in incoming()) || incoming().revocationTimestamp == null) &&
+                       isValidCertificate(incoming());
+      allow update: if isAdmin() &&
+                       isValidId(certificateId) &&
+                       isValidCertificate(incoming()) &&
+                       incoming().certificateId == existing().certificateId &&
+                       incoming().studentId == existing().studentId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'revocationReason', 'revocationTimestamp', 'updatedAt'
+                       ]);
+      allow delete: if false;
+    }
+
+    // Assignments (Signed-in Read; Admin or Teacher assigned to moduleId Create/Update)
+    match /assignments/{assignmentId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       isValidId(assignmentId) &&
+                       incoming().id == assignmentId &&
+                       (isAdmin() || (incoming().createdByUid == request.auth.uid && isTeacherForModule(incoming().moduleId))) &&
+                       isValidCourseAssignment(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(assignmentId) &&
+                       (isAdmin() || isTeacherForModule(existing().moduleId)) &&
+                       incoming().id == existing().id &&
+                       incoming().moduleId == existing().moduleId &&
+                       incoming().createdByUid == existing().createdByUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidCourseAssignment(incoming());
+      allow delete: if isAdmin() && isValidId(assignmentId);
+    }
+
+    // Submissions (Student creates/edits ungraded own submission; Assigned Teacher or Admin grades)
+    match /submissions/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId) && (
+        existing().studentId == request.auth.uid ||
+        isAdmin() ||
+        isTeacherForModule(existing().moduleId)
+      );
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(submissionId) &&
+                       incoming().submissionId == submissionId &&
+                       incoming().studentId == request.auth.uid &&
+                       incoming().isGraded == false &&
+                       incoming().status == 'SUBMITTED' &&
+                       (!('marksAwarded' in incoming()) || incoming().marksAwarded == null) &&
+                       (!('feedback' in incoming()) || incoming().feedback == null) &&
+                       (!('gradedByUid' in incoming()) || incoming().gradedByUid == null) &&
+                       isValidAssignmentSubmission(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(submissionId) &&
+                       isValidAssignmentSubmission(incoming()) &&
+                       incoming().submissionId == existing().submissionId &&
+                       incoming().assignmentId == existing().assignmentId &&
+                       incoming().moduleId == existing().moduleId &&
+                       incoming().studentId == existing().studentId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (
+                           request.auth.uid == existing().studentId &&
+                           existing().isGraded == false &&
+                           incoming().isGraded == false &&
+                           incoming().status == 'SUBMITTED' &&
+                           (!('marksAwarded' in incoming()) || incoming().marksAwarded == null) &&
+                           (!('feedback' in incoming()) || incoming().feedback == null) &&
+                           (!('gradedByUid' in incoming()) || incoming().gradedByUid == null) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'studentName', 'submissionText', 'attachedFileName',
+                             'submissionTimestamp', 'updatedAt'
+                           ])
+                         ) ||
+                         (
+                           (isAdmin() || isTeacherForModule(existing().moduleId)) &&
+                           incoming().submissionText == existing().submissionText &&
+                           incoming().attachedFileName == existing().attachedFileName &&
+                           incoming().submissionTimestamp == existing().submissionTimestamp &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'marksAwarded', 'feedback', 'isGraded', 'status',
+                             'gradedByUid', 'gradedByName', 'gradedTimestamp', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isAdmin() && isValidId(submissionId);
+    }
+
+    // Exams (Signed-in Read; Admin or Teacher assigned to moduleId Create/Update)
+    match /exams/{examId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       isValidId(examId) &&
+                       incoming().id == examId &&
+                       (isAdmin() || (incoming().createdByUid == request.auth.uid && isTeacherForModule(incoming().moduleId))) &&
+                       isValidCourseExam(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(examId) &&
+                       (isAdmin() || isTeacherForModule(existing().moduleId)) &&
+                       incoming().id == existing().id &&
+                       incoming().moduleId == existing().moduleId &&
+                       incoming().createdByUid == existing().createdByUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidCourseExam(incoming());
+      allow delete: if isAdmin() && isValidId(examId);
+    }
+
+    // Exam Attempts (Student writes own once; Student/Teacher/Admin read)
+    match /exam_attempts/{attemptId} {
+      allow get: if isSignedIn() && isValidId(attemptId) && (
+        existing().studentId == request.auth.uid ||
+        isAdmin() ||
+        isTeacherForModule(existing().moduleId)
+      );
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       isValidId(attemptId) &&
+                       incoming().attemptId == attemptId &&
+                       incoming().studentId == request.auth.uid &&
+                       isValidExamAttempt(incoming());
+      allow update, delete: if false;
+    }
+
+    // Audit Logs (Append-only for Admin/Teacher; Read by Admin)
+    match /audit_logs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isSignedIn() &&
+                       isValidId(logId) &&
+                       incoming().logId == logId &&
+                       incoming().actorUid == request.auth.uid &&
+                       (isAdmin() || isActiveTeacher()) &&
+                       isValidAuditLog(incoming());
+      allow update, delete: if false;
+    }
 
     // Shared Live Curriculum Manifest (Single-doc get by signed-in users; write by verified Admin only)
     match /curriculum_manifests/{manifestId} {
@@ -150,63 +594,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Per-User Student Progress Subcollection (Strict User Isolation)
-    match /users/{userId}/progress/{classId} {
-      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(classId);
-      allow list: if isSignedIn() && request.auth.uid == userId;
-
-      allow create: if isSignedIn() &&
-                       request.auth.uid == userId &&
-                       isValidId(classId) &&
-                       incoming().userId == request.auth.uid &&
-                       incoming().classId == classId &&
-                       incoming().keys().hasAll([
-                         'userId', 'classId', 'status', 'activeLearningSeconds',
-                         'maxPlaybackPercent', 'isPdfConfirmed', 'pdfReadingSeconds',
-                         'quizPassed', 'createdAt', 'updatedAt'
-                       ]) &&
-                       incoming().keys().hasOnly([
-                         'userId', 'classId', 'status', 'activeLearningSeconds',
-                         'maxPlaybackPercent', 'isPdfConfirmed', 'pdfReadingSeconds',
-                         'quizScore', 'quizPassed', 'completionTimestamp', 'createdAt', 'updatedAt'
-                       ]) &&
-                       isValidStudentProgress(incoming());
-
-      allow update: if isSignedIn() &&
-                       request.auth.uid == userId &&
-                       isValidId(classId) &&
-                       isValidStudentProgress(incoming()) &&
-                       incoming().userId == existing().userId &&
-                       incoming().classId == existing().classId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly([
-                         'status', 'activeLearningSeconds', 'maxPlaybackPercent',
-                         'isPdfConfirmed', 'pdfReadingSeconds', 'quizScore',
-                         'quizPassed', 'completionTimestamp', 'updatedAt'
-                       ]);
-
-      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(classId);
-    }
-
-    function isValidLessonFileChunk(data) {
-      return data.fileId is string && data.fileId.size() >= 1 && data.fileId.size() <= 128 &&
-             data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex <= 50 &&
-             data.totalChunks is int && data.totalChunks >= 1 && data.totalChunks <= 50 &&
-             data.chunkIndex < data.totalChunks &&
-             data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 600000 &&
-             data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
-    }
-
-    // Chunked Class Media Payloads (Single-doc get by signed-in users; create/update/delete by verified Admin only)
+    // Chunked Class Media Payloads (Signed-in get; create/update/delete by verified Admin or Active Teacher)
     match /lesson_files/{chunkId} {
       allow get: if isSignedIn() && isValidId(chunkId);
       allow list: if false;
 
       allow create: if isSignedIn() &&
                        isValidId(chunkId) &&
-                       isAdmin() &&
+                       (isAdmin() || isActiveTeacher()) &&
                        incoming().authorUid == request.auth.uid &&
                        incoming().keys().hasAll([
                          'fileId', 'chunkIndex', 'totalChunks', 'dataBase64',
@@ -220,7 +615,7 @@ service cloud.firestore {
 
       allow update: if isSignedIn() &&
                        isValidId(chunkId) &&
-                       isAdmin() &&
+                       (isAdmin() || (isActiveTeacher() && existing().authorUid == request.auth.uid)) &&
                        isValidLessonFileChunk(incoming()) &&
                        incoming().authorUid == existing().authorUid &&
                        incoming().createdAt == existing().createdAt &&

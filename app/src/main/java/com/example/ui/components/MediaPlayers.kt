@@ -1,6 +1,8 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import android.net.Uri
+import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -38,11 +41,14 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,15 +58,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.model.LessonMedia
+import com.example.ui.icons.Article
 import com.example.ui.icons.Audiotrack
 import com.example.ui.icons.ChevronLeft
 import com.example.ui.icons.ChevronRight
@@ -70,6 +80,7 @@ import com.example.ui.icons.Forward10
 import com.example.ui.icons.Image as ImageIcon
 import com.example.ui.icons.OpenInNew
 import com.example.ui.icons.Pause
+import com.example.ui.icons.PlayCircle
 import com.example.ui.icons.Replay10
 import com.example.ui.icons.SwapHoriz
 import com.example.ui.icons.Videocam
@@ -82,8 +93,10 @@ import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
 import com.example.util.MediaFileManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 // ======================= PDF VIEWER CARD =======================
 @Composable
@@ -96,15 +109,23 @@ fun PdfViewerCard(
     onOpenFullscreen: (LessonMedia) -> Unit = {},
     onOpenExternal: (LessonMedia) -> Unit = {},
     onDownload: (LessonMedia) -> Unit = {},
+    initialPage: Int = 1,
+    canDownload: Boolean = true,
+    onPageStudyTick: (currentPage: Int, totalPages: Int, activeDeltaSec: Long, idleDeltaSec: Long) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var currentPage by remember(pdfMedia.id, pdfMedia.url) { mutableIntStateOf(1) }
+    var currentPage by remember(pdfMedia.id, pdfMedia.url) { mutableIntStateOf(initialPage.coerceAtLeast(1)) }
     var totalPages by remember(pdfMedia.id, pdfMedia.url) { mutableIntStateOf(0) }
     var resolvedFile by remember(pdfMedia.id, pdfMedia.url, pdfMedia.cloudFileId) { mutableStateOf<File?>(null) }
     var pageBitmap by remember(pdfMedia.id, pdfMedia.url) { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember(pdfMedia.id, pdfMedia.url, pdfMedia.cloudFileId) { mutableStateOf(true) }
     var statusMessage by remember(pdfMedia.id, pdfMedia.url, pdfMedia.cloudFileId) { mutableStateOf<String?>(null) }
+    var lastInteractionMs by remember(pdfMedia.id, pdfMedia.url) {
+        androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis())
+    }
+
+    val latestOnPageStudyTick by rememberUpdatedState(onPageStudyTick)
 
     LaunchedEffect(pdfMedia.id, pdfMedia.url, pdfMedia.cloudFileId) {
         isLoading = true
@@ -116,6 +137,9 @@ fun PdfViewerCard(
         if (file != null && file.exists()) {
             val pages = withContext(Dispatchers.IO) { MediaFileManager.getPdfPageCount(file) }
             totalPages = pages
+            if (pages > 0 && currentPage > pages) {
+                currentPage = pages
+            }
             if (pages <= 0) {
                 statusMessage = "Unable to decode PDF pages. Tap Open PDF to view with an installed reader or Download."
             }
@@ -129,17 +153,34 @@ fun PdfViewerCard(
             }
         }
         isLoading = false
+        lastInteractionMs = System.currentTimeMillis()
     }
 
     LaunchedEffect(resolvedFile?.absolutePath, currentPage, totalPages) {
         val file = resolvedFile
         if (file != null && file.exists() && totalPages > 0) {
+            lastInteractionMs = System.currentTimeMillis()
+            latestOnPageStudyTick(currentPage, totalPages, 0L, 0L)
             val idx = (currentPage - 1).coerceIn(0, totalPages - 1)
             pageBitmap = withContext(Dispatchers.IO) {
                 MediaFileManager.renderPdfPageBitmap(file, idx, targetWidthPx = 960)
             }
         } else {
             pageBitmap = null
+        }
+    }
+
+    LaunchedEffect(pdfMedia.id, totalPages, isLoading) {
+        if (!isLoading && totalPages > 0) {
+            while (true) {
+                kotlinx.coroutines.delay(1000L)
+                val now = System.currentTimeMillis()
+                if (now - lastInteractionMs < 45_000L) {
+                    latestOnPageStudyTick(currentPage, totalPages, 1L, 0L)
+                } else {
+                    latestOnPageStudyTick(currentPage, totalPages, 0L, 1L)
+                }
+            }
         }
     }
 
@@ -237,7 +278,10 @@ fun PdfViewerCard(
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color(0xFFF8FAFC))
                     .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                    .clickable { onOpenFullscreen(pdfMedia) }
+                    .clickable {
+                        lastInteractionMs = System.currentTimeMillis()
+                        onOpenFullscreen(pdfMedia)
+                    }
                     .padding(8.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -346,19 +390,21 @@ fun PdfViewerCard(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    IconButton(
-                        onClick = { onDownload(pdfMedia) },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFF1F5F9))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = "Download PDF",
-                            tint = NavyPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    if (canDownload) {
+                        IconButton(
+                            onClick = { onDownload(pdfMedia) },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFF1F5F9))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Download PDF",
+                                tint = NavyPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
 
                     OutlinedButton(
@@ -389,15 +435,23 @@ fun PdfPreviewDialog(
     onResolvePdfFile: suspend (LessonMedia) -> File?,
     onOpenExternal: (LessonMedia) -> Unit,
     onDownload: (LessonMedia) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialPage: Int = 1,
+    canDownload: Boolean = true,
+    onPageStudyTick: (currentPage: Int, totalPages: Int, activeDeltaSec: Long, idleDeltaSec: Long) -> Unit = { _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     var resolvedFile by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<File?>(null) }
-    var currentPage by remember(media.id, media.url) { mutableIntStateOf(1) }
+    var currentPage by remember(media.id, media.url) { mutableIntStateOf(initialPage.coerceAtLeast(1)) }
     var totalPages by remember(media.id, media.url) { mutableIntStateOf(0) }
     var bitmap by remember(media.id, media.url) { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember(media.id, media.url, media.cloudFileId) { mutableStateOf(true) }
     var errorMsg by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<String?>(null) }
+    var lastInteractionMs by remember(media.id, media.url) {
+        androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis())
+    }
+
+    val latestOnPageStudyTick by rememberUpdatedState(onPageStudyTick)
 
     LaunchedEffect(media.id, media.url, media.cloudFileId) {
         isLoading = true
@@ -409,6 +463,9 @@ fun PdfPreviewDialog(
         if (file != null && file.exists()) {
             val pages = withContext(Dispatchers.IO) { MediaFileManager.getPdfPageCount(file) }
             totalPages = pages
+            if (pages > 0 && currentPage > pages) {
+                currentPage = pages
+            }
             if (pages <= 0) {
                 errorMsg = "Could not render PDF inside built-in reader. Try Download or Open External App."
             }
@@ -416,14 +473,31 @@ fun PdfPreviewDialog(
             errorMsg = "Document file could not be downloaded or found locally. Verify internet & Google Sync."
         }
         isLoading = false
+        lastInteractionMs = System.currentTimeMillis()
     }
 
     LaunchedEffect(resolvedFile?.absolutePath, currentPage, totalPages) {
         val file = resolvedFile
         if (file != null && file.exists() && totalPages > 0) {
+            lastInteractionMs = System.currentTimeMillis()
+            latestOnPageStudyTick(currentPage, totalPages, 0L, 0L)
             val idx = (currentPage - 1).coerceIn(0, totalPages - 1)
             bitmap = withContext(Dispatchers.IO) {
                 MediaFileManager.renderPdfPageBitmap(file, idx, targetWidthPx = 1400)
+            }
+        }
+    }
+
+    LaunchedEffect(media.id, totalPages, isLoading) {
+        if (!isLoading && totalPages > 0) {
+            while (true) {
+                kotlinx.coroutines.delay(1000L)
+                val now = System.currentTimeMillis()
+                if (now - lastInteractionMs < 45_000L) {
+                    latestOnPageStudyTick(currentPage, totalPages, 1L, 0L)
+                } else {
+                    latestOnPageStudyTick(currentPage, totalPages, 0L, 1L)
+                }
             }
         }
     }
@@ -466,8 +540,10 @@ fun PdfPreviewDialog(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { onDownload(media) }) {
-                            Icon(imageVector = Icons.Default.Download, contentDescription = "Download PDF", tint = GoldMetallic)
+                        if (canDownload) {
+                            IconButton(onClick = { onDownload(media) }) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = "Download PDF", tint = GoldMetallic)
+                            }
                         }
                         IconButton(onClick = { onOpenExternal(media) }) {
                             Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open in External Viewer", tint = Color.White)
@@ -528,14 +604,16 @@ fun PdfPreviewDialog(
                                     fontSize = 13.sp,
                                     textAlign = TextAlign.Center
                                 )
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Button(
-                                    onClick = { onDownload(media) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark)
-                                ) {
-                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Save / Download File", fontWeight = FontWeight.Bold)
+                                if (canDownload) {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    Button(
+                                        onClick = { onDownload(media) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Save / Download File", fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
@@ -553,7 +631,10 @@ fun PdfPreviewDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
-                            onClick = { if (currentPage > 1) currentPage-- },
+                            onClick = {
+                                lastInteractionMs = System.currentTimeMillis()
+                                if (currentPage > 1) currentPage--
+                            },
                             enabled = currentPage > 1,
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                         ) {
@@ -570,7 +651,10 @@ fun PdfPreviewDialog(
                         )
 
                         Button(
-                            onClick = { if (currentPage < totalPages) currentPage++ },
+                            onClick = {
+                                lastInteractionMs = System.currentTimeMillis()
+                                if (currentPage < totalPages) currentPage++
+                            },
                             enabled = currentPage < totalPages,
                             colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark)
                         ) {
@@ -926,9 +1010,94 @@ fun VideoPlayerCard(
     onSeek: (Long) -> Unit,
     onReplace: () -> Unit,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onResolveVideoFile: suspend (LessonMedia) -> File? = { null },
+    onOpenFullscreen: (LessonMedia) -> Unit = {},
+    onOpenExternal: (LessonMedia) -> Unit = {},
+    onDownload: (LessonMedia) -> Unit = {},
+    canDownload: Boolean = true,
+    onPlaybackProgress: (positionMs: Long, durationMs: Long, isPlaying: Boolean) -> Unit = { _, _, _ -> }
 ) {
-    val totalMs = if (durationMs > 0) durationMs else 12 * 60 * 1000L + 30 * 1000L
+    val context = LocalContext.current
+    val isInspection = LocalInspectionMode.current
+    var resolvedFile by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableStateOf<File?>(null) }
+    var isResolving by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableStateOf(true) }
+    var actualDurationMs by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableLongStateOf(0L) }
+    var isPrepared by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableStateOf(false) }
+    var playbackError by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableStateOf<String?>(null) }
+    var videoViewRef by remember(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) { mutableStateOf<VideoView?>(null) }
+
+    val latestOnPlaybackProgress by rememberUpdatedState(onPlaybackProgress)
+    val latestPositionMs by rememberUpdatedState(positionMs)
+
+    LaunchedEffect(videoMedia.id, videoMedia.url, videoMedia.cloudFileId) {
+        isResolving = true
+        playbackError = null
+        isPrepared = false
+        val file = withContext(Dispatchers.IO) {
+            onResolveVideoFile(videoMedia) ?: MediaFileManager.findExistingLocalFile(context, videoMedia)
+        }
+        resolvedFile = file
+        isResolving = false
+    }
+
+    val trimmedUrl = videoMedia.url.trim()
+    val playableUri: Uri? = remember(resolvedFile?.absolutePath, trimmedUrl) {
+        when {
+            resolvedFile != null && resolvedFile?.exists() == true && (resolvedFile?.length() ?: 0L) > 0L ->
+                Uri.fromFile(resolvedFile)
+            trimmedUrl.startsWith("http://", ignoreCase = true) || trimmedUrl.startsWith("https://", ignoreCase = true) ->
+                Uri.parse(trimmedUrl)
+            else -> null
+        }
+    }
+
+    LaunchedEffect(isPlaying, isPrepared, videoViewRef) {
+        val vv = videoViewRef ?: return@LaunchedEffect
+        if (!isPrepared) return@LaunchedEffect
+        runCatching {
+            if (isPlaying && !vv.isPlaying) {
+                vv.start()
+            } else if (!isPlaying && vv.isPlaying) {
+                vv.pause()
+            }
+        }
+    }
+
+    LaunchedEffect(positionMs, isPrepared, videoViewRef) {
+        val vv = videoViewRef ?: return@LaunchedEffect
+        if (!isPrepared) return@LaunchedEffect
+        val current = runCatching { vv.currentPosition.toLong() }.getOrDefault(positionMs)
+        if (abs(current - positionMs) > 1500L) {
+            runCatching { vv.seekTo(positionMs.toInt()) }
+        }
+    }
+
+    LaunchedEffect(isPlaying, isPrepared, videoViewRef) {
+        val vv = videoViewRef ?: return@LaunchedEffect
+        if (isPrepared && isPlaying) {
+            while (true) {
+                delay(500L)
+                val pos = runCatching { vv.currentPosition.toLong() }.getOrNull() ?: break
+                val dur = (runCatching { vv.duration.toLong() }.getOrDefault(actualDurationMs)).coerceAtLeast(1000L)
+                val playingNow = runCatching { vv.isPlaying }.getOrDefault(false)
+                latestOnPlaybackProgress(pos, dur, playingNow)
+                if (!playingNow) break
+            }
+        }
+    }
+
+    DisposableEffect(videoMedia.id, videoViewRef) {
+        onDispose {
+            runCatching { videoViewRef?.stopPlayback() }
+        }
+    }
+
+    val totalMs = when {
+        actualDurationMs > 0L -> actualDurationMs
+        durationMs > 0L -> durationMs
+        else -> 1000L
+    }
     val progressRatio = (positionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
 
     Card(
@@ -971,7 +1140,7 @@ fun VideoPlayerCard(
 
                     Column {
                         Text(
-                            text = videoMedia.fileName,
+                            text = videoMedia.displayTitle,
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
@@ -979,7 +1148,14 @@ fun VideoPlayerCard(
                             maxLines = 1
                         )
                         Text(
-                            text = "Executive Video • ${videoMedia.fileSizeFormatted}",
+                            text = buildString {
+                                append("Video Lecture • ${videoMedia.fileSizeFormatted}")
+                                if (actualDurationMs > 0L) {
+                                    append(" • ${formatTime(actualDurationMs)}")
+                                } else if (!videoMedia.durationFormatted.isNullOrBlank()) {
+                                    append(" • ${videoMedia.durationFormatted}")
+                                }
+                            },
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = GoldSoft,
                                 fontSize = 11.sp
@@ -1010,106 +1186,229 @@ fun VideoPlayerCard(
                 }
             }
 
-            // Video Screen Canvas Container
+            // Real Video Canvas / Surface
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(210.dp)
-                    .background(Color.Black)
-                    .clickable { onPlayPause() },
+                    .height(220.dp)
+                    .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                // Gradient backdrop
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    NavyPrimary.copy(alpha = 0.8f),
-                                    NavyDark,
-                                    Color.Black
-                                )
-                            )
-                        )
-                )
+                if (playableUri != null && !isInspection && playbackError == null) {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                runCatching {
+                                    setVideoURI(playableUri)
+                                    setOnPreparedListener { mp ->
+                                        val dur = mp.duration.toLong().coerceAtLeast(1000L)
+                                        actualDurationMs = dur
+                                        isPrepared = true
+                                        val resumePos = latestPositionMs
+                                        if (resumePos in 1L until dur) {
+                                            runCatching { seekTo(resumePos.toInt()) }
+                                        }
+                                        latestOnPlaybackProgress(resumePos, dur, isPlaying)
+                                        if (isPlaying) {
+                                            runCatching { start() }
+                                        }
+                                    }
+                                    setOnCompletionListener {
+                                        val dur = actualDurationMs.coerceAtLeast(1000L)
+                                        latestOnPlaybackProgress(dur, dur, false)
+                                    }
+                                    setOnErrorListener { _, what, extra ->
+                                        playbackError = "Codec/network error ($what/$extra). Try Open External App or Download."
+                                        isPrepared = false
+                                        true
+                                    }
+                                }
+                                videoViewRef = this
+                            }
+                        },
+                        update = { vv ->
+                            if (videoViewRef !== vv) {
+                                videoViewRef = vv
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
 
-                // Visual telemetry overlay
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(enabled = isPrepared) { onPlayPause() }
+                    )
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(Color.Red)
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .background(if (isPlaying) Color(0xFFDC2626) else NavyPrimary.copy(alpha = 0.85f))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = if (isPlaying) "STREAMING LIVE" else "READY",
+                                text = when {
+                                    !isPrepared -> "PREPARING..."
+                                    isPlaying -> "PLAYING"
+                                    else -> "PAUSED / READY"
+                                },
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 9.sp
                             )
                         }
 
-                        Text(
-                            text = "1080p HD • BROWSER STREAMING",
-                            color = GoldSoft,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            IconButton(
+                                onClick = { onOpenFullscreen(videoMedia) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(NavyDark.copy(alpha = 0.75f))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = "Fullscreen Video",
+                                    tint = GoldMetallic,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
 
-                    // Center Play/Pause Indicator
+                    if (!isPlaying) {
+                        Box(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(CircleShape)
+                                .background(GoldMetallic.copy(alpha = 0.92f))
+                                .clickable { onPlayPause() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play Video",
+                                tint = NavyPrimary,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                } else {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .background(GoldMetallic.copy(alpha = 0.9f)),
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        NavyPrimary.copy(alpha = 0.85f),
+                                        NavyDark,
+                                        Color.Black
+                                    )
+                                )
+                            )
+                            .padding(16.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = NavyPrimary,
-                            modifier = Modifier.size(30.dp)
-                        )
+                        when {
+                            isResolving -> {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(color = GoldMetallic, modifier = Modifier.size(32.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text("Loading video stream...", color = Color.White, fontSize = 12.sp)
+                                }
+                            }
+                            else -> {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayCircle,
+                                        contentDescription = null,
+                                        tint = GoldMetallic,
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = playbackError ?: when {
+                                            videoMedia.cloudFileId.isNotBlank() ->
+                                                "Cloud video could not be downloaded offline. Connect to internet & Google Sync."
+                                            else ->
+                                                "Video file is on the uploader's device only. Re-upload under 18 MB or attach an HTTPS video URL."
+                                        },
+                                        color = Color(0xFFE2E8F0),
+                                        fontSize = 11.5.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
                     }
+                }
+            }
 
-                    // Bottom Seek & Duration inside player
-                    Column {
-                        Slider(
-                            value = progressRatio,
-                            onValueChange = { ratio -> onSeek((ratio * totalMs).toLong()) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = SliderDefaults.colors(
-                                thumbColor = GoldMetallic,
-                                activeTrackColor = GoldMetallic,
-                                inactiveTrackColor = Color.DarkGray
-                            )
-                        )
+            // Seek Bar & Video Actions
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Slider(
+                    value = progressRatio,
+                    onValueChange = { ratio -> onSeek((ratio * totalMs).toLong()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = GoldMetallic,
+                        activeTrackColor = GoldMetallic,
+                        inactiveTrackColor = NavySecondary
+                    )
+                )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${formatTime(positionMs)} / ${if (actualDurationMs > 0L || durationMs > 0L) formatTime(totalMs) else (videoMedia.durationFormatted ?: "00:00")}",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onOpenFullscreen(videoMedia) },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldSoft)
                         ) {
-                            Text(
-                                text = "${formatTime(positionMs)} / ${formatTime(totalMs)}",
-                                color = Color.White,
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                text = "Auto-bandwidth Adaptive",
-                                color = Color(0xFFA0B4CB),
-                                fontSize = 10.sp
+                            Icon(imageVector = Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Fullscreen", fontSize = 11.sp)
+                        }
+                        if (canDownload) {
+                            OutlinedButton(
+                                onClick = { onDownload(videoMedia) },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldMetallic)
+                            ) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Save", fontSize = 11.sp)
+                            }
+                        }
+                        IconButton(
+                            onClick = { onOpenExternal(videoMedia) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = "Open Video Externally",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -1119,8 +1418,450 @@ fun VideoPlayerCard(
     }
 }
 
+// ======================= FULLSCREEN VIDEO DIALOG =======================
+@Composable
+fun VideoPreviewDialog(
+    media: LessonMedia,
+    onResolveVideoFile: suspend (LessonMedia) -> File?,
+    onOpenExternal: (LessonMedia) -> Unit,
+    onDownload: (LessonMedia) -> Unit,
+    onDismiss: () -> Unit,
+    canDownload: Boolean = true,
+    onPlaybackProgress: (positionMs: Long, durationMs: Long, isPlaying: Boolean) -> Unit = { _, _, _ -> }
+) {
+    val context = LocalContext.current
+    val isInspection = LocalInspectionMode.current
+    var resolvedFile by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<File?>(null) }
+    var isLoading by remember(media.id, media.url, media.cloudFileId) { mutableStateOf(true) }
+    var playbackError by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<String?>(null) }
+    var isPlaying by remember(media.id, media.url, media.cloudFileId) { mutableStateOf(true) }
+    var isPrepared by remember(media.id, media.url, media.cloudFileId) { mutableStateOf(false) }
+    var posMs by remember(media.id, media.url, media.cloudFileId) { mutableLongStateOf(0L) }
+    var durMs by remember(media.id, media.url, media.cloudFileId) { mutableLongStateOf(1000L) }
+    var videoViewRef by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<VideoView?>(null) }
+
+    val latestOnProgress by rememberUpdatedState(onPlaybackProgress)
+
+    LaunchedEffect(media.id, media.url, media.cloudFileId) {
+        isLoading = true
+        playbackError = null
+        resolvedFile = withContext(Dispatchers.IO) {
+            onResolveVideoFile(media) ?: MediaFileManager.findExistingLocalFile(context, media)
+        }
+        isLoading = false
+    }
+
+    val trimmedUrl = media.url.trim()
+    val playableUri: Uri? = remember(resolvedFile?.absolutePath, trimmedUrl) {
+        when {
+            resolvedFile != null && resolvedFile?.exists() == true && (resolvedFile?.length() ?: 0L) > 0L ->
+                Uri.fromFile(resolvedFile)
+            trimmedUrl.startsWith("http://", ignoreCase = true) || trimmedUrl.startsWith("https://", ignoreCase = true) ->
+                Uri.parse(trimmedUrl)
+            else -> null
+        }
+    }
+
+    LaunchedEffect(isPlaying, isPrepared, videoViewRef) {
+        val vv = videoViewRef ?: return@LaunchedEffect
+        if (isPrepared && isPlaying) {
+            while (true) {
+                delay(500L)
+                val p = runCatching { vv.currentPosition.toLong() }.getOrNull() ?: break
+                val d = runCatching { vv.duration.toLong() }.getOrDefault(durMs).coerceAtLeast(1000L)
+                val active = runCatching { vv.isPlaying }.getOrDefault(false)
+                posMs = p
+                durMs = d
+                latestOnProgress(p, d, active)
+                if (!active) break
+            }
+        }
+    }
+
+    DisposableEffect(media.id, videoViewRef) {
+        onDispose {
+            runCatching { videoViewRef?.stopPlayback() }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+                .testTag("dialog_video_preview"),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF020617)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(NavyPrimary)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(media.displayTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                        Text("Video • ${media.fileSizeFormatted}", color = GoldSoft, fontSize = 11.sp, maxLines = 1)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (canDownload) {
+                            IconButton(onClick = { onDownload(media) }) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = "Download Video", tint = GoldMetallic)
+                            }
+                        }
+                        IconButton(onClick = { onOpenExternal(media) }) {
+                            Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open External Player", tint = Color.White)
+                        }
+                        IconButton(onClick = onDismiss, modifier = Modifier.testTag("btn_close_video_preview")) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close Video", tint = Color.White)
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        isLoading -> {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = GoldMetallic)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("Downloading video stream...", color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                        playableUri != null && !isInspection && playbackError == null -> {
+                            AndroidView(
+                                factory = { ctx ->
+                                    VideoView(ctx).apply {
+                                        runCatching {
+                                            setVideoURI(playableUri)
+                                            setOnPreparedListener { mp ->
+                                                durMs = mp.duration.toLong().coerceAtLeast(1000L)
+                                                isPrepared = true
+                                                if (isPlaying) start()
+                                            }
+                                            setOnCompletionListener {
+                                                isPlaying = false
+                                                posMs = durMs
+                                                latestOnProgress(durMs, durMs, false)
+                                            }
+                                            setOnErrorListener { _, what, extra ->
+                                                playbackError = "Unable to decode video stream ($what/$extra). Try Open External Player."
+                                                isPrepared = false
+                                                true
+                                            }
+                                        }
+                                        videoViewRef = this
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        else -> {
+                            Column(
+                                modifier = Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(imageVector = Icons.Default.Videocam, contentDescription = null, tint = GoldMetallic, modifier = Modifier.size(46.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = playbackError ?: "Video file could not be loaded offline. Connect to internet & Google Sync or open externally.",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = { onOpenExternal(media) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark)
+                                ) {
+                                    Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Open External Player", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (playableUri != null && playbackError == null) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(NavyDark)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        val ratio = (posMs.toFloat() / durMs.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+                        Slider(
+                            value = ratio,
+                            onValueChange = { r ->
+                                val target = (r * durMs).toLong()
+                                posMs = target
+                                runCatching { videoViewRef?.seekTo(target.toInt()) }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = GoldMetallic,
+                                activeTrackColor = GoldMetallic,
+                                inactiveTrackColor = NavySecondary
+                            )
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${formatTime(posMs)} / ${formatTime(durMs)}", color = Color.White, fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    val target = (posMs - 10_000L).coerceAtLeast(0L)
+                                    posMs = target
+                                    runCatching { videoViewRef?.seekTo(target.toInt()) }
+                                }) {
+                                    Icon(imageVector = Icons.Default.Replay10, contentDescription = "Back 10s", tint = Color.White)
+                                }
+                                Button(
+                                    onClick = {
+                                        val vv = videoViewRef ?: return@Button
+                                        if (isPlaying) {
+                                            runCatching { vv.pause() }
+                                            isPlaying = false
+                                        } else {
+                                            runCatching { vv.start() }
+                                            isPlaying = true
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = if (isPlaying) "Pause" else "Play"
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(if (isPlaying) "Pause" else "Play", fontWeight = FontWeight.Bold)
+                                }
+                                IconButton(onClick = {
+                                    val target = (posMs + 10_000L).coerceAtMost(durMs)
+                                    posMs = target
+                                    runCatching { videoViewRef?.seekTo(target.toInt()) }
+                                }) {
+                                    Icon(imageVector = Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ======================= IN-APP DOCUMENT PREVIEW & VIEWER =======================
+@Composable
+fun DocumentPreviewDialog(
+    media: LessonMedia,
+    onResolveDocumentFile: suspend (LessonMedia) -> File?,
+    onOpenExternal: (LessonMedia) -> Unit,
+    onDownload: (LessonMedia) -> Unit,
+    onDismiss: () -> Unit,
+    canDownload: Boolean = true
+) {
+    val context = LocalContext.current
+    var resolvedFile by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<File?>(null) }
+    var textPreview by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<String?>(null) }
+    var isLoading by remember(media.id, media.url, media.cloudFileId) { mutableStateOf(true) }
+
+    LaunchedEffect(media.id, media.url, media.cloudFileId) {
+        isLoading = true
+        val file = withContext(Dispatchers.IO) {
+            onResolveDocumentFile(media) ?: MediaFileManager.findExistingLocalFile(context, media)
+        }
+        resolvedFile = file
+        textPreview = if (file != null && file.exists() && MediaFileManager.isPlainTextDocument(media)) {
+            withContext(Dispatchers.IO) { MediaFileManager.readTextPreview(file) }
+        } else {
+            null
+        }
+        isLoading = false
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp)
+                .testTag("dialog_document_preview"),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFF8FAFC)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(NavyPrimary)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(media.displayTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                        Text("${media.type.displayLabel} • ${media.fileSizeFormatted} • ${media.fileName}", color = GoldSoft, fontSize = 11.sp, maxLines = 1)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.testTag("btn_close_document_preview")) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close Document", tint = Color.White)
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    when {
+                        isLoading -> {
+                            Column(
+                                modifier = Modifier.align(Alignment.Center),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator(color = NavyPrimary)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("Syncing document file...", color = NavyPrimary, fontSize = 12.sp)
+                            }
+                        }
+                        textPreview != null -> {
+                            Card(
+                                modifier = Modifier.fillMaxSize(),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                SelectionContainer {
+                                    Text(
+                                        text = textPreview.orEmpty().ifBlank { "(Empty text document)" },
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        lineHeight = 18.sp,
+                                        color = Color(0xFF0F172A),
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(14.dp)
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White)
+                                    .border(1.dp, Color(0xFFD6E2F0), RoundedCornerShape(14.dp))
+                                    .padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Article,
+                                    contentDescription = null,
+                                    tint = GoldDark,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = media.displayTitle,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NavyPrimary,
+                                    fontSize = 15.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "${media.fileName} • ${media.fileSizeFormatted}",
+                                    color = Color(0xFF64748B),
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                if (media.description.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = media.description,
+                                        color = Color(0xFF334155),
+                                        fontSize = 12.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                val statusText = when {
+                                    resolvedFile != null && resolvedFile?.exists() == true ->
+                                        "Ready offline on your phone. Open with your installed document app or save a copy."
+                                    media.url.startsWith("http", ignoreCase = true) ->
+                                        "Hosted via HTTPS link. Open in browser / document app."
+                                    media.cloudFileId.isNotBlank() ->
+                                        "Cloud attachment could not be downloaded yet. Verify internet & Google Sync."
+                                    else ->
+                                        "Attachment stored on uploader's device only."
+                                }
+                                Text(
+                                    text = statusText,
+                                    color = Color(0xFF475569),
+                                    fontSize = 11.5.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { onOpenExternal(media) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Open External App", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                    }
+                    if (canDownload) {
+                        Button(
+                            onClick = { onDownload(media) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Download Copy", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun formatTime(millis: Long): String {
-    val totalSeconds = millis / 1000
+    val totalSeconds = (millis.coerceAtLeast(0L)) / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format("%02d:%02d", minutes, seconds)

@@ -1,14 +1,14 @@
 {
   "id": "./",
-  "name": "ISCEB Supply Chain Management — Desktop Portal",
-  "short_name": "ISCEB Desktop",
-  "description": "Official PC & Desktop Portal for International Supply Chain Education Board (ISCEB) — Connect. learn. Achieve.",
+  "name": "ISCEB — Institute of Supply Chain Excellence Bangladesh",
+  "short_name": "ISCEB",
+  "description": "Official LMS & PWA Portal for Institute of Supply Chain Excellence Bangladesh (ISCEB) — Connect. learn. Achieve.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#041022",
   "theme_color": "#071A33",
-  "orientation": "landscape",
+  "orientation": "any",
   "icons": [
     {
       "src": "./isceb-icon-192.png",

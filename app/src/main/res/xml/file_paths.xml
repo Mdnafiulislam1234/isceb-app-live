@@ -4,5 +4,6 @@
     <cache-path name="apk_updates" path="apk_updates/" />
     <cache-path name="shared_files" path="." />
     <files-path name="uploaded_media" path="uploaded_media/" />
+    <files-path name="cached_cloud_media" path="cached_cloud_media/" />
     <files-path name="internal_files" path="." />
 </paths>

@@ -145,7 +145,7 @@ test("Firestore payload builders strictly comply with firestore.rules create/upd
 });
 
 test("Self-contained QR generator renders valid ISO finder patterns and SVG for permanent download URLs", () => {
-  const url = "https://gen-lang-client-0901479759.web.app/";
+  const url = "https://mdnafiulislam1234.github.io/isceb-app-live/";
   const matrix = generateQrMatrix(url);
   assert.ok(matrix.length >= 25 && matrix.length % 4 === 1);
   assert.equal(matrix[0][0], true);
@@ -353,4 +353,24 @@ test("GitHub Pages PWA setup configures permanent manifest, auto-updating Servic
   assert.ok(workflow.includes("actions/deploy-pages@v4"));
 });
 
+test("Root index launches unified PWA workspace and apk.html preserves permanent Android APK portal", () => {
+  assert.ok(fs.existsSync("./public/index.html"), "Missing public/index.html");
+  assert.ok(fs.existsSync("./public/apk.html"), "Missing public/apk.html");
+
+  const rootHtml = fs.readFileSync("./public/index.html", "utf8");
+  assert.ok(rootHtml.includes("./desktop/"), "Root index must launch ./desktop/ unified PWA");
+  assert.ok(rootHtml.includes("./apk.html"), "Root index must include ./apk.html fallback");
+
+  const apkHtml = fs.readFileSync("./public/apk.html", "utf8");
+  assert.ok(apkHtml.includes("ISCEB-latest.apk"), "apk.html must preserve direct APK download");
+  assert.ok(apkHtml.includes("version.json"), "apk.html must read version.json metadata");
+
+  const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  assert.ok(desktopHtml.includes("../apk.html"), "Desktop/PWA portal must link Android APK Portal to ../apk.html");
+
+  const versionJson = JSON.parse(fs.readFileSync("./public/version.json", "utf8"));
+  assert.ok(versionJson.desktopPortalUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/desktop/"));
+  assert.ok(versionJson.apkUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/"));
+  assert.ok(FIREBASE_CONFIG.versionJsonUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/"));
+});
 

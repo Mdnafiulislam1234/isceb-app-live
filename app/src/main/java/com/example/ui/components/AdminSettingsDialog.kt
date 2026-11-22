@@ -914,7 +914,7 @@ fun AdminSettingsDialog(
                     value = remoteSyncUrl,
                     onValueChange = { remoteSyncUrl = it },
                     label = { Text("HTTPS Update Manifest (version.json / GitHub JSON)") },
-                    placeholder = { Text("https://gen-lang-client-0901479759.web.app/version.json") },
+                    placeholder = { Text("https://mdnafiulislam1234.github.io/isceb-app-live/version.json") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("input_remote_sync_manifest_url"),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)

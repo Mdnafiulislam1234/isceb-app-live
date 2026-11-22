@@ -3,8 +3,8 @@ export const FIREBASE_CONFIG = {
   databaseId: "ai-studio-android-supplych-513b51f6-bde3-4175-87ec-0f32026fdb7f",
   authDomain: "gen-lang-client-0901479759.firebaseapp.com",
   appId: "com.aistudio.supplychain.scm",
-  versionJsonUrl: "https://gen-lang-client-0901479759.web.app/version.json",
-  apkDownloadUrl: "https://gen-lang-client-0901479759.web.app/downloads/ISCEB-latest.apk"
+  versionJsonUrl: "https://mdnafiulislam1234.github.io/isceb-app-live/version.json",
+  apkDownloadUrl: "https://mdnafiulislam1234.github.io/isceb-app-live/downloads/ISCEB-latest.apk"
 };
 
 export const AVAILABLE_USERS = [
@@ -393,13 +393,13 @@ export function buildFirestoreManifestPayload({
 }) {
   const payload = {
     versionCode: Number(versionCode),
-    versionTag: String(versionTag || "v1.5.0").slice(0, 64),
+    versionTag: String(versionTag || "v1.6.0").slice(0, 64),
     publishedTimestamp: Date.now(),
     publishedBy: String(publishedBy || "Md. Nafiul Islam Nahin (Developer of ISCEB App)").slice(0, 200),
     releaseNotes: String(releaseNotes || "").slice(0, 4000),
     minSupportedAppVersion: 1,
-    latestApkVersionCode: Number(latestApkVersionCode || 6),
-    latestApkVersionName: String(latestApkVersionName || "1.5").slice(0, 64),
+    latestApkVersionCode: Number(latestApkVersionCode || 7),
+    latestApkVersionName: String(latestApkVersionName || "1.6").slice(0, 64),
     apkDownloadUrl: String(apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl).slice(0, 1000)
   };
   if (announcement) {

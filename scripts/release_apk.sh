@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-HOSTING_BASE_URL="${ISCEB_HOSTING_BASE_URL:-https://gen-lang-client-0901479759.web.app}"
+HOSTING_BASE_URL="${ISCEB_HOSTING_BASE_URL:-https://mdnafiulislam1234.github.io/isceb-app-live}"
 HOSTING_BASE_URL="${HOSTING_BASE_URL%/}"
 RELEASE_NOTES="${1:-ISCEB v1.6: Universal v1/v2/v3 APK signing compatibility, pre-update workspace backup, QR web download portal & automated release sync.}"
 VERSION_CODE_OVERRIDE="${2:-}"

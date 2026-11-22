@@ -77,6 +77,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.example.ui.components.HeroSection
+import com.example.ui.components.IscebWorkspaceCard
 import com.example.ui.components.ModuleCard
 import com.example.ui.theme.BgLight
 import com.example.ui.theme.GoldDark
@@ -86,6 +87,7 @@ import com.example.ui.theme.NavyDark
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.SuccessGreen
+import com.example.viewmodel.NavTab
 
 @Composable
 fun HomeScreen(
@@ -120,6 +122,14 @@ fun HomeScreen(
     onOpenMembers: () -> Unit = {},
     onOpenFounderProfile: () -> Unit = {},
     onOpenDeveloperProfile: () -> Unit = {},
+    isTeacher: Boolean = false,
+    examCount: Int = 5,
+    assignmentCount: Int = 4,
+    certificateStatusLabel: String = "PGD",
+    showInlineWorkspaceCard: Boolean = true,
+    onNavigateTab: (NavTab) -> Unit = {},
+    onOpenExamsAndAssignments: () -> Unit = {},
+    onOpenAdminGovernance: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val visibleClasses = remember(classes, isAdmin) {
@@ -199,6 +209,51 @@ fun HomeScreen(
                             fontSize = 9.5.sp,
                             letterSpacing = 0.5.sp
                         )
+                    )
+                }
+            }
+        }
+
+        // Unified ISCEB Workspace Hub (matches Live Web/PWA Workspace)
+        if (showInlineWorkspaceCard) {
+            item {
+                val completedCount = progress.completedClassIds.size
+                val totalClassesCount = classes.size.coerceAtLeast(1)
+                val progressPct = ((completedCount * 100f) / totalClassesCount).toInt().coerceIn(0, 100)
+                val apkLabel = run {
+                    val apkVer = appUpdateInfo.latestAvailableApkVersionName.ifBlank {
+                        publishManifest.latestApkVersionName.ifBlank { "1.6" }
+                    }
+                    val sizeMb = if (appUpdateInfo.fileSizeBytes > 0L) {
+                        String.format(Locale.US, "%.1f MB", appUpdateInfo.fileSizeBytes / (1024.0 * 1024.0))
+                    } else "18.5 MB"
+                    "v$apkVer ($sizeMb)"
+                }
+                val syncLabel = if (!cloudUserEmail.isNullOrBlank()) "Cloud: $cloudUserEmail" else "Local + Web Ready"
+
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    IscebWorkspaceCard(
+                        currentTab = NavTab.HOME,
+                        onTabSelected = { tab ->
+                            if (tab == NavTab.MODULES) onSeeAllModules() else onNavigateTab(tab)
+                        },
+                        progressPercent = progressPct,
+                        moduleCount = modules.size,
+                        totalClassesCount = classes.size,
+                        examCount = examCount,
+                        assignmentCount = assignmentCount,
+                        certificateStatusLabel = certificateStatusLabel,
+                        membersCount = membersCount,
+                        isAdmin = isAdmin,
+                        isTeacher = isTeacher,
+                        curriculumVersionTag = publishManifest.versionTag.ifBlank { "v1.6.0" },
+                        latestApkLabel = apkLabel,
+                        syncStatusLabel = syncLabel,
+                        isCloudSynced = !cloudUserEmail.isNullOrBlank(),
+                        onOpenExamsAndAssignments = onOpenExamsAndAssignments,
+                        onOpenAdminGovernance = onOpenAdminGovernance,
+                        onCheckAppUpdateClick = onCheckUpdatesClick,
+                        onOpenApkPortalClick = onPhoneInstallClick
                     )
                 }
             }

@@ -28,9 +28,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -76,6 +80,7 @@ import com.example.ui.components.CreateEditModuleDialog
 import com.example.ui.components.DeleteConfirmDialog
 import com.example.ui.components.DocumentPreviewDialog
 import com.example.ui.components.ExamDialog
+import com.example.ui.components.ExamsAssignmentsHubDialog
 import com.example.ui.components.FirebaseGuideDialog
 import com.example.ui.components.ImagePreviewDialog
 import com.example.ui.components.PdfPreviewDialog
@@ -107,6 +112,7 @@ import com.example.util.ApkInstallLaunchResult
 import com.example.viewmodel.NavTab
 import com.example.viewmodel.Screen
 import com.example.viewmodel.SupplyChainViewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -252,10 +258,12 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     var activeUploadClassId by remember { mutableStateOf<String?>(null) }
     var activeTargetModuleForClass by remember { mutableStateOf<String?>(null) }
     var showPhoneInstallDialog by remember { mutableStateOf(false) }
+    var showExamsAssignmentsHub by remember { mutableStateOf(false) }
     var showSplashScreen by remember { mutableStateOf(true) }
     var pendingDownloadMedia by remember { mutableStateOf<LessonMedia?>(null) }
     var pendingDownloadCertificate by remember { mutableStateOf<CertificateRecord?>(null) }
     var pendingUnknownSourcesApkRetry by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     val unknownSourcesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -347,6 +355,82 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
             val isDesktopLayout = maxWidth >= 840.dp
             val isExpandedLayout = maxWidth >= 600.dp
 
+            val totalClassesCount = classes.size
+            val completedClassesCount = progress.completedClassIds.size
+            val workspaceProgressPct = if (totalClassesCount > 0) {
+                ((completedClassesCount * 100f) / totalClassesCount).toInt().coerceIn(0, 100)
+            } else 0
+            val hasIssuedCert = issuedCertificates.any { it.studentId == currentUser.id }
+            val workspaceCertLabel = when {
+                hasIssuedCert -> "Issued"
+                certificateEligibility.isEligible -> "Ready"
+                else -> "PGD"
+            }
+            val workspaceApkLabel = run {
+                val apkVer = appUpdateInfo.latestAvailableApkVersionName.ifBlank {
+                    publishManifest.latestApkVersionName.ifBlank { "1.6" }
+                }
+                val sizeMb = if (appUpdateInfo.fileSizeBytes > 0L) {
+                    String.format(java.util.Locale.US, "%.1f MB", appUpdateInfo.fileSizeBytes / (1024.0 * 1024.0))
+                } else "18.5 MB"
+                "v$apkVer ($sizeMb)"
+            }
+            val workspaceSyncLabel = cloudAuthUser?.email?.let { "Cloud: $it" } ?: "Local + Web Ready"
+            val handleOpenAdminGovernance: () -> Unit = {
+                when {
+                    isAdmin -> viewModel.navigateTo(Screen.AdminPanel)
+                    isTeacher -> viewModel.navigateTo(Screen.TeacherPanel)
+                    else -> viewModel.showAdminLoginDialog.value = true
+                }
+            }
+
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                gesturesEnabled = !isDesktopLayout,
+                drawerContent = {
+                    if (!isDesktopLayout) {
+                        ModalDrawerSheet(drawerContainerColor = NavyDark) {
+                            AppDesktopSidebar(
+                                currentTab = currentTab,
+                                onTabSelected = { tab ->
+                                    scope.launch { drawerState.close() }
+                                    viewModel.setTab(tab)
+                                },
+                                completedCount = completedClassesCount,
+                                totalCount = totalClassesCount,
+                                isAdmin = isAdmin,
+                                isTeacher = isTeacher,
+                                progressPercent = workspaceProgressPct,
+                                moduleCount = modules.size,
+                                examCount = moduleExams.size,
+                                assignmentCount = moduleAssignments.size,
+                                certificateStatusLabel = workspaceCertLabel,
+                                membersCount = iscebMembers.size,
+                                curriculumVersionTag = publishManifest.versionTag.ifBlank { "v1.6.0" },
+                                latestApkLabel = workspaceApkLabel,
+                                syncStatusLabel = workspaceSyncLabel,
+                                isCloudSynced = cloudAuthUser != null,
+                                onOpenExamsAndAssignments = {
+                                    scope.launch { drawerState.close() }
+                                    showExamsAssignmentsHub = true
+                                },
+                                onOpenAdminGovernance = {
+                                    scope.launch { drawerState.close() }
+                                    handleOpenAdminGovernance()
+                                },
+                                onCheckAppUpdateClick = {
+                                    scope.launch { drawerState.close() }
+                                    viewModel.checkForUpdates(silentOnError = false)
+                                },
+                                onOpenApkPortalClick = {
+                                    scope.launch { drawerState.close() }
+                                    showPhoneInstallDialog = true
+                                }
+                            )
+                        }
+                    }
+                }
+            ) {
             Scaffold(
                 topBar = {
                     if (currentScreen !is Screen.CertificateVerification) {
@@ -374,6 +458,9 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                 showPhoneInstallDialog = true
                             },
                             isTeacher = isTeacher,
+                            onWorkspaceMenuClick = if (!isDesktopLayout) {
+                                { scope.launch { drawerState.open() } }
+                            } else null,
                             modifier = Modifier.statusBarsPadding()
                         )
                     }
@@ -397,10 +484,24 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                         AppDesktopSidebar(
                             currentTab = currentTab,
                             onTabSelected = { viewModel.setTab(it) },
-                            completedCount = progress.completedClassIds.size,
-                            totalCount = classes.size,
+                            completedCount = completedClassesCount,
+                            totalCount = totalClassesCount,
                             isAdmin = isAdmin,
-                            isTeacher = isTeacher
+                            isTeacher = isTeacher,
+                            progressPercent = workspaceProgressPct,
+                            moduleCount = modules.size,
+                            examCount = moduleExams.size,
+                            assignmentCount = moduleAssignments.size,
+                            certificateStatusLabel = workspaceCertLabel,
+                            membersCount = iscebMembers.size,
+                            curriculumVersionTag = publishManifest.versionTag.ifBlank { "v1.6.0" },
+                            latestApkLabel = workspaceApkLabel,
+                            syncStatusLabel = workspaceSyncLabel,
+                            isCloudSynced = cloudAuthUser != null,
+                            onOpenExamsAndAssignments = { showExamsAssignmentsHub = true },
+                            onOpenAdminGovernance = handleOpenAdminGovernance,
+                            onCheckAppUpdateClick = { viewModel.checkForUpdates(silentOnError = false) },
+                            onOpenApkPortalClick = { showPhoneInstallDialog = true }
                         )
                     } else if (currentScreen is Screen.Main && isExpandedLayout) {
                         AppNavigationRail(
@@ -460,7 +561,15 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                 membersCount = iscebMembers.size,
                                 onOpenMembers = { viewModel.setTab(NavTab.MEMBERS) },
                                 onOpenFounderProfile = { viewModel.navigateTo(Screen.FounderProfileScreenRoute) },
-                                onOpenDeveloperProfile = { viewModel.navigateTo(Screen.DeveloperProfileScreenRoute) }
+                                onOpenDeveloperProfile = { viewModel.navigateTo(Screen.DeveloperProfileScreenRoute) },
+                                isTeacher = isTeacher,
+                                examCount = moduleExams.size,
+                                assignmentCount = moduleAssignments.size,
+                                certificateStatusLabel = workspaceCertLabel,
+                                showInlineWorkspaceCard = !isDesktopLayout,
+                                onNavigateTab = { tab -> viewModel.setTab(tab) },
+                                onOpenExamsAndAssignments = { showExamsAssignmentsHub = true },
+                                onOpenAdminGovernance = handleOpenAdminGovernance
                             )
                         }
                         NavTab.MODULES -> {
@@ -1306,6 +1415,27 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
             onConnectGoogleSync = triggerGoogleSignIn
         )
     }
+
+    if (showExamsAssignmentsHub) {
+        ExamsAssignmentsHubDialog(
+            modules = modules,
+            exams = moduleExams,
+            assignments = moduleAssignments,
+            examAttempts = examAttempts,
+            assignmentSubmissions = assignmentSubmissions,
+            currentUserId = currentUser.id,
+            onTakeExam = { ex ->
+                showExamsAssignmentsHub = false
+                viewModel.openExam(ex)
+            },
+            onOpenAssignment = { asg ->
+                showExamsAssignmentsHub = false
+                viewModel.openAssignment(asg)
+            },
+            onDismiss = { showExamsAssignmentsHub = false }
+        )
+    }
+            }
     }
 }
 

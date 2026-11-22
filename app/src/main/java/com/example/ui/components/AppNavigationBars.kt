@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -19,8 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import com.example.ui.icons.AdminPanelSettings
 import com.example.ui.icons.Bookmark
@@ -29,6 +33,7 @@ import com.example.ui.icons.GridView
 import com.example.ui.icons.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -43,6 +48,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,11 +68,13 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.UserProfile
 import com.example.model.UserRole
+import com.example.ui.theme.GoldDark
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.GoldSoft
 import com.example.ui.theme.NavyDark
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
+import com.example.ui.theme.SuccessGreen
 import com.example.viewmodel.NavTab
 
 @Composable
@@ -79,6 +88,7 @@ fun AppTopBar(
     onFirebaseClick: () -> Unit,
     onPhoneInstallClick: () -> Unit = {},
     isTeacher: Boolean = false,
+    onWorkspaceMenuClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val activeAdminRole = currentUser.designation.ifBlank {
@@ -101,7 +111,7 @@ fun AppTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = if (isWideTopBar) 12.dp else 10.dp, vertical = 10.dp),
+                    .padding(horizontal = if (isWideTopBar) 12.dp else 8.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -109,6 +119,22 @@ fun AppTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
+                    if (onWorkspaceMenuClick != null) {
+                        IconButton(
+                            onClick = onWorkspaceMenuClick,
+                            modifier = Modifier
+                                .size(30.dp)
+                                .testTag("btn_top_workspace_drawer")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Menu,
+                                contentDescription = "Open ISCEB Workspace Menu",
+                                tint = GoldSoft,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     if (isAdmin) {
                         val photoRes = if (currentUser.id == "admin-2") {
                             R.drawable.img_admin_amirul
@@ -467,133 +493,392 @@ fun AppDesktopSidebar(
     totalCount: Int,
     isAdmin: Boolean,
     isTeacher: Boolean = false,
+    progressPercent: Int = if (totalCount > 0) ((completedCount * 100f) / totalCount).toInt().coerceIn(0, 100) else 0,
+    moduleCount: Int = 12,
+    examCount: Int = 5,
+    assignmentCount: Int = 4,
+    certificateStatusLabel: String = "Issued",
+    membersCount: Int = 8,
+    curriculumVersionTag: String = "v1.6.0",
+    latestApkLabel: String = "v1.6 (18.5 MB)",
+    syncStatusLabel: String = "Local + Web Ready",
+    isCloudSynced: Boolean = false,
+    onOpenExamsAndAssignments: () -> Unit = { onTabSelected(NavTab.MODULES) },
+    onOpenAdminGovernance: () -> Unit = { onTabSelected(NavTab.PROFILE) },
+    onCheckAppUpdateClick: () -> Unit = {},
+    onOpenApkPortalClick: () -> Unit = {},
+    isAdminSectionHighlighted: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier
-            .width(236.dp)
+            .width(280.dp)
             .fillMaxHeight()
             .testTag("desktop_sidebar"),
         color = NavyDark,
-        shadowElevation = 8.dp
+        shadowElevation = 10.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.White,
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White,
+                shadowElevation = 3.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.img_isceb_logo),
                         contentDescription = "ISCEB Desktop Portal",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .height(54.dp),
                         contentScale = ContentScale.Fit
                     )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "ISCEB WORKSPACE",
-                    color = Color(0xFF8FA1B7),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-
-                val items = listOf(
-                    Triple(NavTab.HOME, "Dashboard", Pair(Icons.Filled.Home, Icons.Outlined.Home)),
-                    Triple(NavTab.MODULES, "All 12 Modules", Pair(Icons.Filled.GridView, Icons.Outlined.GridView)),
-                    Triple(NavTab.MY_LEARNING, "My Learning", Pair(Icons.Filled.Bookmark, Icons.Outlined.Bookmark)),
-                    Triple(NavTab.MEMBERS, "ISCEB Directory", Pair(Icons.Filled.Groups, Icons.Outlined.Groups)),
-                    Triple(NavTab.PROFILE, "Account & Sync", Pair(Icons.Filled.Person, Icons.Outlined.Person))
-                )
-
-                items.forEach { (tab, label, icons) ->
-                    val selected = currentTab == tab
-                    Surface(
-                        onClick = { onTabSelected(tab) },
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (selected) NavySecondary else Color.Transparent,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("desktop_nav_${tab.name.lowercase()}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = if (selected) icons.first else icons.second,
-                                    contentDescription = label,
-                                    tint = if (selected) GoldMetallic else Color(0xFFA0B3C8),
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = label,
-                                    color = if (selected) GoldMetallic else Color(0xFFE2E8F0),
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 13.sp,
-                                    maxLines = 1
-                                )
-                            }
-                            if (tab == NavTab.MY_LEARNING && totalCount > 0) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (selected) GoldMetallic else NavyPrimary
-                                ) {
-                                    Text(
-                                        text = "$completedCount/$totalCount",
-                                        color = if (selected) NavyDark else GoldSoft,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "PGD IN SUPPLY CHAIN MANAGEMENT",
+                        color = GoldDark,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.6.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
 
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = NavyPrimary,
-                modifier = Modifier.fillMaxWidth()
+            IscebWorkspaceMenuSection(
+                currentTab = currentTab,
+                onTabSelected = onTabSelected,
+                progressPercent = progressPercent,
+                moduleCount = moduleCount,
+                totalClassesCount = totalCount,
+                examCount = examCount,
+                assignmentCount = assignmentCount,
+                certificateStatusLabel = certificateStatusLabel,
+                membersCount = membersCount,
+                isAdmin = isAdmin,
+                isTeacher = isTeacher,
+                isAdminSectionHighlighted = isAdminSectionHighlighted,
+                curriculumVersionTag = curriculumVersionTag,
+                latestApkLabel = latestApkLabel,
+                syncStatusLabel = syncStatusLabel,
+                isCloudSynced = isCloudSynced,
+                onOpenExamsAndAssignments = onOpenExamsAndAssignments,
+                onOpenAdminGovernance = onOpenAdminGovernance,
+                onCheckAppUpdateClick = onCheckAppUpdateClick,
+                onOpenApkPortalClick = onOpenApkPortalClick
+            )
+        }
+    }
+}
+
+@Composable
+fun IscebWorkspaceCard(
+    currentTab: NavTab,
+    onTabSelected: (NavTab) -> Unit,
+    progressPercent: Int,
+    moduleCount: Int,
+    totalClassesCount: Int,
+    examCount: Int,
+    assignmentCount: Int,
+    certificateStatusLabel: String,
+    membersCount: Int,
+    isAdmin: Boolean,
+    isTeacher: Boolean,
+    curriculumVersionTag: String,
+    latestApkLabel: String,
+    syncStatusLabel: String,
+    isCloudSynced: Boolean,
+    onOpenExamsAndAssignments: () -> Unit,
+    onOpenAdminGovernance: () -> Unit,
+    onCheckAppUpdateClick: () -> Unit,
+    onOpenApkPortalClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("card_isceb_workspace_hub"),
+        shape = RoundedCornerShape(18.dp),
+        color = NavyDark,
+        shadowElevation = 6.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            IscebWorkspaceMenuSection(
+                currentTab = currentTab,
+                onTabSelected = onTabSelected,
+                progressPercent = progressPercent,
+                moduleCount = moduleCount,
+                totalClassesCount = totalClassesCount,
+                examCount = examCount,
+                assignmentCount = assignmentCount,
+                certificateStatusLabel = certificateStatusLabel,
+                membersCount = membersCount,
+                isAdmin = isAdmin,
+                isTeacher = isTeacher,
+                isAdminSectionHighlighted = true,
+                curriculumVersionTag = curriculumVersionTag,
+                latestApkLabel = latestApkLabel,
+                syncStatusLabel = syncStatusLabel,
+                isCloudSynced = isCloudSynced,
+                onOpenExamsAndAssignments = onOpenExamsAndAssignments,
+                onOpenAdminGovernance = onOpenAdminGovernance,
+                onCheckAppUpdateClick = onCheckAppUpdateClick,
+                onOpenApkPortalClick = onOpenApkPortalClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun IscebWorkspaceMenuSection(
+    currentTab: NavTab,
+    onTabSelected: (NavTab) -> Unit,
+    progressPercent: Int,
+    moduleCount: Int,
+    totalClassesCount: Int,
+    examCount: Int,
+    assignmentCount: Int,
+    certificateStatusLabel: String,
+    membersCount: Int,
+    isAdmin: Boolean,
+    isTeacher: Boolean,
+    isAdminSectionHighlighted: Boolean,
+    curriculumVersionTag: String,
+    latestApkLabel: String,
+    syncStatusLabel: String,
+    isCloudSynced: Boolean,
+    onOpenExamsAndAssignments: () -> Unit,
+    onOpenAdminGovernance: () -> Unit,
+    onCheckAppUpdateClick: () -> Unit,
+    onOpenApkPortalClick: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            text = "WORKSPACE",
+            color = Color(0xFF8FA1B7),
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+
+        WorkspaceMenuItemRow(
+            label = "Dashboard",
+            badgeText = "$progressPercent%",
+            isHighlighted = !isAdminSectionHighlighted && currentTab == NavTab.HOME,
+            testTag = "desktop_nav_home",
+            onClick = { onTabSelected(NavTab.HOME) }
+        )
+        WorkspaceMenuItemRow(
+            label = "Courses & Lectures",
+            badgeText = "$moduleCount / $totalClassesCount",
+            isHighlighted = !isAdminSectionHighlighted && currentTab == NavTab.MODULES,
+            testTag = "desktop_nav_modules",
+            onClick = { onTabSelected(NavTab.MODULES) }
+        )
+        WorkspaceMenuItemRow(
+            label = "Exams & Assignments",
+            badgeText = "$examCount / $assignmentCount",
+            isHighlighted = false,
+            testTag = "desktop_nav_exams_assignments",
+            onClick = onOpenExamsAndAssignments
+        )
+        WorkspaceMenuItemRow(
+            label = "My Learning & Certificate",
+            badgeText = certificateStatusLabel,
+            isHighlighted = !isAdminSectionHighlighted && currentTab == NavTab.MY_LEARNING,
+            testTag = "desktop_nav_my_learning",
+            onClick = { onTabSelected(NavTab.MY_LEARNING) }
+        )
+        WorkspaceMenuItemRow(
+            label = "ISCEB Directory & Team",
+            badgeText = "$membersCount",
+            isHighlighted = !isAdminSectionHighlighted && currentTab == NavTab.MEMBERS,
+            testTag = "desktop_nav_members",
+            onClick = { onTabSelected(NavTab.MEMBERS) }
+        )
+        WorkspaceMenuItemRow(
+            label = "Admin Governance",
+            badgeText = when {
+                isAdmin -> "Admin"
+                isTeacher -> "Teacher"
+                else -> "Student"
+            },
+            isHighlighted = isAdminSectionHighlighted || currentTab == NavTab.PROFILE,
+            testTag = "desktop_nav_profile",
+            onClick = onOpenAdminGovernance
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF0A172B),
+            border = BorderStroke(1.dp, Color(0xFF213656)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Text(
-                        text = when {
-                            isAdmin -> "ADMIN PORTAL ACTIVE"
-                            isTeacher -> "TEACHER PORTAL ACTIVE"
-                            else -> "DESKTOP / TABLET MODE"
-                        },
-                        color = GoldMetallic,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(if (isCloudSynced) SuccessGreen else GoldMetallic)
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Synced with ISCEB Live Cloud",
-                        color = Color(0xFFC0D2E5),
-                        fontSize = 11.sp
+                        text = syncStatusLabel,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp
                     )
                 }
+                Text(
+                    text = "Curriculum: $curriculumVersionTag",
+                    color = Color(0xFFC0D2E5),
+                    fontSize = 11.5.sp
+                )
+                Text(
+                    text = "Latest APK: $latestApkLabel",
+                    color = GoldSoft,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Cloud & OTA Auto-Update: Active",
+                    color = Color(0xFF4ADE80),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        OutlinedButton(
+            onClick = onCheckAppUpdateClick,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, Color(0xFF2B4163)),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = Color(0xFF10223C),
+                contentColor = Color.White
+            ),
+            contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("btn_workspace_check_update")
+        ) {
+            Text(
+                text = "Check App Update",
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.5.sp
+            )
+        }
+
+        OutlinedButton(
+            onClick = onOpenApkPortalClick,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, GoldMetallic.copy(alpha = 0.5f)),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = Color(0xFF10223C),
+                contentColor = GoldSoft
+            ),
+            contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("btn_workspace_apk_portal")
+        ) {
+            Text(
+                text = "Android APK Portal",
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.5.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceMenuItemRow(
+    label: String,
+    badgeText: String,
+    isHighlighted: Boolean,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (isHighlighted) NavySecondary else Color.Transparent,
+        border = if (isHighlighted) BorderStroke(1.dp, GoldMetallic.copy(alpha = 0.45f)) else null,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                if (isHighlighted) {
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(18.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(GoldMetallic)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = label,
+                    color = if (isHighlighted) GoldMetallic else Color(0xFFE2E8F0),
+                    fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color(0xFF0A1629),
+                border = BorderStroke(1.dp, GoldMetallic.copy(alpha = 0.55f))
+            ) {
+                Text(
+                    text = badgeText,
+                    color = GoldSoft,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
             }
         }
     }

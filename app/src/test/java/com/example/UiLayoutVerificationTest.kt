@@ -383,4 +383,61 @@ class UiLayoutVerificationTest {
         val header = String(bytes.copyOfRange(0, minOf(5, bytes.size)))
         assertEquals("%PDF-", header)
     }
+
+    @Test
+    fun `unified ISCEB Workspace card and compact TopBar menu button render cleanly at 360dp`() {
+        val student = repository.currentUser.value
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                Box(modifier = Modifier.width(360.dp)) {
+                    androidx.compose.foundation.layout.Column {
+                        com.example.ui.components.AppTopBar(
+                            title = "ISCEB",
+                            currentUser = student,
+                            isAdmin = false,
+                            onAdminClick = {},
+                            onVerificationClick = {},
+                            onSettingsClick = {},
+                            onFirebaseClick = {},
+                            onPhoneInstallClick = {},
+                            onWorkspaceMenuClick = {}
+                        )
+                        com.example.ui.components.IscebWorkspaceCard(
+                            currentTab = com.example.viewmodel.NavTab.HOME,
+                            onTabSelected = {},
+                            progressPercent = 0,
+                            moduleCount = 12,
+                            totalClassesCount = 48,
+                            examCount = 5,
+                            assignmentCount = 4,
+                            certificateStatusLabel = "Issued",
+                            membersCount = 8,
+                            isAdmin = false,
+                            isTeacher = false,
+                            curriculumVersionTag = "v1.6.0",
+                            latestApkLabel = "v1.6 (18.5 MB)",
+                            syncStatusLabel = "Local + Web Ready",
+                            isCloudSynced = false,
+                            onOpenExamsAndAssignments = {},
+                            onOpenAdminGovernance = {},
+                            onCheckAppUpdateClick = {},
+                            onOpenApkPortalClick = {}
+                        )
+                    }
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("btn_top_workspace_drawer", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("txt_topbar_brand_title", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("card_isceb_workspace_hub", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Courses & Lectures", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Exams & Assignments", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("My Learning & Certificate", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("ISCEB Directory & Team", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Admin Governance", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_workspace_check_update", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_workspace_apk_portal", useUnmergedTree = true).assertIsDisplayed()
+    }
 }

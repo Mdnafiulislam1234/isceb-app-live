@@ -24,7 +24,7 @@ android {
     val hostingBaseUrl = ((project.findProperty("ISCEB_HOSTING_BASE_URL") as String?) ?: "")
       .trim()
       .trimEnd('/')
-      .ifEmpty { "https://gen-lang-client-0901479759.web.app" }
+      .ifEmpty { "https://mdnafiulislam1234.github.io/isceb-app-live" }
     buildConfigField("String", "HOSTING_BASE_URL", "\"$hostingBaseUrl\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

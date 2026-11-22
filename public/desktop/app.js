@@ -144,17 +144,31 @@ function loadState() {
         examAttemptsByUser: parsed.examAttemptsByUser || {},
         assignmentSubmissionsByUser: parsed.assignmentSubmissionsByUser || {},
         certificatesByUser: parsed.certificatesByUser || {},
-        manifest: parsed.manifest || {
-          versionCode: 105,
-          versionTag: "v1.5.0",
-          publishedTimestamp: Date.now(),
-          publishedBy: "Md. Nafiul Islam Nahin (Developer of ISCEB App)",
-          releaseNotes: "ISCEB v1.5: Fast non-blocking startup, optimized APK size, adaptive desktop layout & PC Web Portal.",
-          announcement: "PGD Supply Chain Classes Live • Fridays 9:00 PM",
-          latestApkVersionCode: 6,
-          latestApkVersionName: "1.5",
-          apkDownloadUrl: FIREBASE_CONFIG.apkDownloadUrl
-        },
+        manifest: parsed.manifest
+          ? {
+              ...parsed.manifest,
+              versionTag:
+                !parsed.manifest.versionTag || parsed.manifest.versionTag === "v1.5.0"
+                  ? "v1.6.0"
+                  : parsed.manifest.versionTag,
+              versionCode: Math.max(Number(parsed.manifest.versionCode || 106), 106),
+              latestApkVersionCode: Math.max(Number(parsed.manifest.latestApkVersionCode || 7), 7),
+              latestApkVersionName:
+                !parsed.manifest.latestApkVersionName || parsed.manifest.latestApkVersionName === "1.5"
+                  ? "1.6"
+                  : parsed.manifest.latestApkVersionName
+            }
+          : {
+              versionCode: 106,
+              versionTag: "v1.6.0",
+              publishedTimestamp: Date.now(),
+              publishedBy: "Md. Nafiul Islam Nahin (Developer of ISCEB App)",
+              releaseNotes: "ISCEB v1.6: Live auto-updating PWA, 18 MB cloud media sync, and verified certificate workflow.",
+              announcement: "PGD Supply Chain Classes Live • Fridays 9:00 PM",
+              latestApkVersionCode: 7,
+              latestApkVersionName: "1.6",
+              apkDownloadUrl: FIREBASE_CONFIG.apkDownloadUrl
+            },
         settings: normalizeSettings(parsed.settings)
       };
     }
@@ -179,14 +193,14 @@ function loadState() {
     assignmentSubmissionsByUser: {},
     certificatesByUser: {},
     manifest: {
-      versionCode: 105,
-      versionTag: "v1.5.0",
+      versionCode: 106,
+      versionTag: "v1.6.0",
       publishedTimestamp: Date.now(),
       publishedBy: "Md. Nafiul Islam Nahin (Developer of ISCEB App)",
-      releaseNotes: "ISCEB v1.5: Fast non-blocking startup, optimized APK size, adaptive desktop layout & PC Web Portal.",
+      releaseNotes: "ISCEB v1.6: Live auto-updating PWA, 18 MB cloud media sync, and verified certificate workflow.",
       announcement: "PGD Supply Chain Classes Live • Fridays 9:00 PM",
-      latestApkVersionCode: 6,
-      latestApkVersionName: "1.5",
+      latestApkVersionCode: 7,
+      latestApkVersionName: "1.6",
       apkDownloadUrl: FIREBASE_CONFIG.apkDownloadUrl
     },
     settings: normalizeSettings()
@@ -658,13 +672,13 @@ function updateChromeBadges() {
   document.getElementById("navCertStatus").textContent = state.certificatesByUser[user.id] ? "Issued" : stats.certEligible ? "Ready" : "PGD";
   document.getElementById("navMembersCount").textContent = String(state.members.length);
   document.getElementById("navAdminRoleBadge").textContent = user.role === "ADMIN" ? "Admin" : "Student";
-  document.getElementById("sidebarCurriculumVer").textContent = `Curriculum: ${state.manifest.versionTag || "v1.5.0"}`;
+  document.getElementById("sidebarCurriculumVer").textContent = `Curriculum: ${state.manifest.versionTag || "v1.6.0"}`;
 
   const apkVerEl = document.getElementById("sidebarApkVer");
   if (remoteVersionInfo) {
     apkVerEl.textContent = `Latest APK: v${remoteVersionInfo.versionName} (${formatBytes(remoteVersionInfo.fileSizeBytes)})`;
   } else {
-    apkVerEl.textContent = `Latest APK: v${state.manifest.latestApkVersionName || "1.5"}`;
+    apkVerEl.textContent = `Latest APK: v${state.manifest.latestApkVersionName || "1.6"}`;
   }
 
   const syncDot = document.getElementById("syncDot");
@@ -691,12 +705,12 @@ function renderDashboard() {
   const apkUrl = remoteVersionInfo?.apkUrl || state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl;
   const apkLabel = remoteVersionInfo
     ? `v${remoteVersionInfo.versionName} (Build ${remoteVersionInfo.versionCode}) • ${formatBytes(remoteVersionInfo.fileSizeBytes)}`
-    : `v${state.manifest.latestApkVersionName || "1.5"} (Build ${state.manifest.latestApkVersionCode || 6})`;
+    : `v${state.manifest.latestApkVersionName || "1.6"} (Build ${state.manifest.latestApkVersionCode || 7})`;
 
   return `
     <div class="card card-navy" style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; align-items: center;">
       <div>
-        <span class="badge badge-gold">ISCEB PC & Desktop Workspace • ${escapeHtml(state.manifest.versionTag || "v1.5.0")}</span>
+        <span class="badge badge-gold">ISCEB PC & Desktop Workspace • ${escapeHtml(state.manifest.versionTag || "v1.6.0")}</span>
         <h2 style="margin: 10px 0 6px; font-size: 24px; color: #fff;">Welcome back, ${escapeHtml(user.fullName)}</h2>
         <p style="margin: 0 0 12px; color: #CBD5E1; font-size: 13.5px;">
           ${escapeHtml(user.designation)} • ${escapeHtml(user.organization)}
@@ -1516,10 +1530,10 @@ function renderAdmin() {
         <h3 style="margin: 8px 0 12px; color: var(--navy);">Publish Live Curriculum & APK Metadata</h3>
         <div style="display: grid; gap: 10px;">
           <label style="font-size: 12px; font-weight: 700;">Curriculum Version Tag
-            <input type="text" id="admVerTag" class="input" value="${escapeHtml(state.manifest.versionTag || "v1.5.0")}" required />
+            <input type="text" id="admVerTag" class="input" value="${escapeHtml(state.manifest.versionTag || "v1.6.0")}" required />
           </label>
           <label style="font-size: 12px; font-weight: 700;">Curriculum Build Code
-            <input type="number" id="admVerCode" class="input" value="${Number(state.manifest.versionCode || 105) + 1}" required />
+            <input type="number" id="admVerCode" class="input" value="${Number(state.manifest.versionCode || 106) + 1}" required />
           </label>
           <label style="font-size: 12px; font-weight: 700;">Release Notes
             <textarea id="admNotes" class="textarea" rows="3">${escapeHtml(state.manifest.releaseNotes || "")}</textarea>
@@ -1529,10 +1543,10 @@ function renderAdmin() {
           </label>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
             <label style="font-size: 12px; font-weight: 700;">Latest APK Version Name
-              <input type="text" id="admApkVerName" class="input" value="${escapeHtml(remoteVersionInfo?.versionName || state.manifest.latestApkVersionName || "1.5")}" required />
+              <input type="text" id="admApkVerName" class="input" value="${escapeHtml(remoteVersionInfo?.versionName || state.manifest.latestApkVersionName || "1.6")}" required />
             </label>
             <label style="font-size: 12px; font-weight: 700;">Latest APK Version Code
-              <input type="number" id="admApkVerCode" class="input" value="${Number(remoteVersionInfo?.versionCode || state.manifest.latestApkVersionCode || 6)}" required />
+              <input type="number" id="admApkVerCode" class="input" value="${Number(remoteVersionInfo?.versionCode || state.manifest.latestApkVersionCode || 7)}" required />
             </label>
           </div>
           <label style="font-size: 12px; font-weight: 700;">Official APK Download URL

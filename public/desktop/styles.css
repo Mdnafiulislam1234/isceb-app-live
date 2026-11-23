@@ -584,12 +584,88 @@ button, input, select, textarea {
 
 /* Official Printable Certificate Preview */
 .cert-sheet {
-  background: #FFFDF7;
+  background: radial-gradient(circle at 50% 45%, #FDF7F3 0%, #FBF0E9 65%, #F3DDD1 100%);
   border: 6px double var(--gold);
+  box-shadow: 0 12px 32px rgba(90, 48, 32, 0.12), inset 0 0 0 2px var(--navy);
   border-radius: 12px;
-  padding: 28px;
+  padding: 24px;
   text-align: center;
   position: relative;
+  overflow: hidden;
+}
+
+.cert-sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: 380px 380px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Cg fill='none' stroke='%23DFC1B2' opacity='0.34'%3E%3Ccircle cx='160' cy='160' r='134' stroke-width='1.5'/%3E%3Ccircle cx='160' cy='160' r='114' stroke-width='1' stroke-dasharray='6 6'/%3E%3Ccircle cx='160' cy='160' r='90' stroke-width='1.2'/%3E%3Ccircle cx='160' cy='160' r='64' stroke-width='1'/%3E%3Cline x1='160' y1='14' x2='160' y2='306' stroke-width='0.9'/%3E%3Cline x1='14' y1='160' x2='306' y2='160' stroke-width='0.9'/%3E%3Cline x1='56' y1='56' x2='264' y2='264' stroke-width='0.9'/%3E%3Cline x1='264' y1='56' x2='56' y2='264' stroke-width='0.9'/%3E%3C/g%3E%3Ctext x='160' y='170' text-anchor='middle' font-family='Georgia,serif' font-size='38' font-weight='bold' fill='%23DFC1B2' opacity='0.28' letter-spacing='6'%3EISCEB%3C/text%3E%3C/svg%3E");
+}
+
+.cert-sheet-inner {
+  position: relative;
+  z-index: 1;
+  border: 1px solid rgba(166, 124, 0, 0.35);
+  border-radius: 8px;
+  padding: 20px 18px;
+}
+
+.cert-institution {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--navy);
+  text-transform: uppercase;
+  overflow-wrap: break-word;
+}
+
+.cert-subtitle {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  color: var(--gold-dark);
+  text-transform: uppercase;
+}
+
+.cert-title {
+  margin: 10px auto 6px;
+  max-width: 720px;
+  font-size: clamp(16px, 2.4vw, 24px);
+  line-height: 1.25;
+  color: var(--navy);
+  font-weight: 800;
+  overflow-wrap: break-word;
+}
+
+.cert-confer {
+  margin: 0 0 10px;
+  color: #5C4B45;
+  font-style: italic;
+  font-size: 13.5px;
+}
+
+.cert-recipient {
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 800;
+  color: var(--navy);
+  border-bottom: 2px solid var(--gold);
+  display: inline-block;
+  padding: 0 24px 6px;
+  margin-bottom: 12px;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.cert-narrative {
+  max-width: 680px;
+  margin: 0 auto 20px;
+  font-size: 13.5px;
+  color: #3E332F;
+  line-height: 1.55;
 }
 
 .cert-demo-pill {
@@ -610,7 +686,7 @@ button, input, select, textarea {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 20px;
   align-items: end;
-  margin-top: 26px;
+  margin-top: 22px;
   font-size: 12.5px;
 }
 
@@ -620,14 +696,21 @@ button, input, select, textarea {
 }
 
 .cert-sig-space {
-  height: 36px;
+  height: 30px;
 }
 
 .cert-sig-line {
-  border-top: 1px solid #94A3B8;
+  border-top: 1px solid #8C7A72;
   padding-top: 6px;
   font-weight: 800;
   color: var(--navy);
+}
+
+.cert-sig-title {
+  color: var(--gold-dark);
+  font-weight: 700;
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 @media (max-width: 1024px) {

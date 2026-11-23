@@ -1159,7 +1159,9 @@ class CloudSyncRepository(
             leftSignerName = (rawSettings["leftSignerName"] as? String)
                 ?.takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) }
                 ?: "Hasina Khan",
-            leftSignerTitle = rawSettings["leftSignerTitle"] as? String ?: "",
+            leftSignerTitle = (rawSettings["leftSignerTitle"] as? String)
+                ?.takeIf { it.isNotBlank() && !it.contains("Developer", ignoreCase = true) }
+                ?: "Chairman & CEO",
             authorizedSignerName = (rawSettings["authorizedSignerName"] as? String)
                 ?.let {
                     if (it.isBlank() || it.contains("Nafiul", ignoreCase = true) || it.contains("Developer", ignoreCase = true) || it.contains("Academic", ignoreCase = true)) {

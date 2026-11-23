@@ -357,6 +357,7 @@ class UiLayoutVerificationTest {
         rightNode.assertIsDisplayed()
 
         composeTestRule.onNodeWithText("Hasina Khan", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Chairman & CEO", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Amirul Islam", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Founder of ISCEB", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Nafiul", substring = true, useUnmergedTree = true).assertDoesNotExist()
@@ -372,7 +373,9 @@ class UiLayoutVerificationTest {
     fun `demo certificate pdf generation creates non-empty PDF with official name and signatories`() {
         val demoRecord = repository.createDemoCertificateRecord()
         assertEquals(CertificatePdfGenerator.DEMO_CERTIFICATE_ID, demoRecord.certificateId)
-        assertEquals("Hasina Khan", CertificatePdfGenerator.resolveLeftSignatory(repository.adminSettings.value).name)
+        val leftSig = CertificatePdfGenerator.resolveLeftSignatory(repository.adminSettings.value)
+        assertEquals("Hasina Khan", leftSig.name)
+        assertEquals("Chairman & CEO", leftSig.title)
         assertEquals("Amirul Islam", CertificatePdfGenerator.resolveRightSignatory(demoRecord, repository.adminSettings.value).name)
         assertEquals("Founder of ISCEB", CertificatePdfGenerator.resolveRightSignatory(demoRecord, repository.adminSettings.value).title)
 

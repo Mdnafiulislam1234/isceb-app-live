@@ -92,7 +92,7 @@ function normalizeSettings(raw) {
     certificatesEnabled: true,
     demoCertificateEnabled: true,
     leftSignerName: "Hasina Khan",
-    leftSignerTitle: "",
+    leftSignerTitle: "Chairman & CEO",
     authorizedSignerName: "Amirul Islam",
     authorizedSignerTitle: "Founder of ISCEB",
     ...(raw || {})
@@ -103,7 +103,7 @@ function normalizeSettings(raw) {
     s.leftSignerName = "Hasina Khan";
   }
   if (!s.leftSignerTitle || /developer/i.test(s.leftSignerTitle)) {
-    s.leftSignerTitle = "";
+    s.leftSignerTitle = "Chairman & CEO";
   }
   if (!s.authorizedSignerName || /nafiul|hasina/i.test(s.authorizedSignerName)) {
     s.authorizedSignerName = "Amirul Islam";
@@ -116,13 +116,27 @@ function normalizeSettings(raw) {
   return s;
 }
 
-function sanitizeDeveloperProfile(raw) {
-  const dev = { ...structuredClone(DEFAULT_DEVELOPER), ...(raw || {}) };
+function sanitizeDeveloperProfile(raw, forceUpgrade = false) {
+  const defaults = structuredClone(DEFAULT_DEVELOPER);
+  const dev = { ...defaults, ...(raw || {}) };
   if (dev.biography) {
     dev.biography = dev.biography.replaceAll(
       "International Supply Chain Education Board",
       "Institute of Supply Chain Excellence Bangladesh"
     );
+  }
+  const hasLegacyBio =
+    !raw ||
+    !raw.biography ||
+    raw.biography.startsWith("App Developer for ISCEB") ||
+    !raw.headline ||
+    !raw.personalPhilosophy;
+  if (forceUpgrade || hasLegacyBio) {
+    return {
+      ...defaults,
+      contactEmail: dev.contactEmail || defaults.contactEmail,
+      location: dev.location || defaults.location
+    };
   }
   return dev;
 }
@@ -174,7 +188,10 @@ function loadState() {
         members: effectiveMembers,
         membersRosterVersion: DEFAULT_MEMBERS_ROSTER_VERSION,
         founderProfile: effectiveFounder,
-        developerProfile: sanitizeDeveloperProfile(parsed.developerProfile),
+        developerProfile: sanitizeDeveloperProfile(
+          parsed.developerProfile,
+          savedRosterVer < DEFAULT_MEMBERS_ROSTER_VERSION
+        ),
         progressByUser: parsed.progressByUser || {},
         examAttemptsByUser: parsed.examAttemptsByUser || {},
         assignmentSubmissionsByUser: parsed.assignmentSubmissionsByUser || {},
@@ -956,12 +973,12 @@ function renderDashboard() {
               <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(state.founderProfile.professionalIdentity)}</div>
             </div>
           </div>
-          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;" data-action="view-member" data-member-id="member-developer-nafiul">
             <img src="./admin-nafiul.webp" alt="Md. Nafiul Islam Nahin" class="portrait-avatar" style="width: 52px; height: 52px; object-fit: cover; object-position: center 20%; border: 2px solid var(--navy);" />
-            <div>
+            <div style="min-width: 0;">
               <div style="font-weight: 800; color: var(--navy); font-size: 13.5px;">${escapeHtml(state.developerProfile.name)}</div>
               <div style="font-size: 12px; color: var(--navy-soft); font-weight: 700;">${escapeHtml(state.developerProfile.designation)}</div>
-              <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(state.developerProfile.contactEmail)}</div>
+              <div style="font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(state.developerProfile.headline || state.developerProfile.contactEmail)}</div>
             </div>
           </div>
         </div>
@@ -1333,7 +1350,7 @@ function renderLearning() {
   };
   const displayedCert = demoCertificateActive && demoCertEnabled ? demoRecord : cert;
   const leftSignerName = state.settings.leftSignerName || "Hasina Khan";
-  const leftSignerTitle = state.settings.leftSignerTitle || "";
+  const leftSignerTitle = state.settings.leftSignerTitle || "Chairman & CEO";
   const rightSignerName = state.settings.authorizedSignerName || "Amirul Islam";
   const rightSignerTitle = state.settings.authorizedSignerTitle || "Founder of ISCEB";
 
@@ -1385,33 +1402,36 @@ function renderLearning() {
       displayedCert
         ? `
       <div class="cert-sheet">
-        <img src="./isceb-logo.webp" alt="ISCEB" style="height: 68px; object-fit: contain; margin-bottom: 8px;" />
-        ${displayedCert.isDemo ? `<div class="cert-demo-pill">DEMO CERTIFICATE PREVIEW</div>` : ""}
-        <div style="font-size: 12px; font-weight: 800; letter-spacing: 1.4px; color: var(--gold-dark); text-transform: uppercase;">
-          Institute of Supply Chain Excellence Bangladesh (ISCEB)
-        </div>
-        <h2 style="margin: 8px 0 4px; font-size: 28px; color: var(--navy);">Post Graduate Diploma in Supply Chain Management</h2>
-        <p style="margin: 0 0 14px; color: var(--muted); font-size: 14px;">This certifies that</p>
-        <div style="font-size: 30px; font-weight: 800; color: var(--navy); border-bottom: 2px solid var(--gold); display: inline-block; padding: 0 28px 6px; margin-bottom: 14px;">
-          ${escapeHtml(displayedCert.recipientName)}
-        </div>
-        <p style="max-width: 680px; margin: 0 auto 22px; font-size: 14px; color: #334155;">
-          has successfully fulfilled the executive academic requirements across the 12-module, 48-lecture Post Graduate Diploma curriculum in Strategic & Operational Supply Chain Management.
-        </p>
-        <div class="cert-signatories-grid">
-          <div class="cert-sig-col">
-            <div class="cert-sig-space" aria-hidden="true"></div>
-            <div class="cert-sig-line">${escapeHtml(leftSignerName)}</div>
-            ${leftSignerTitle ? `<div style="color: var(--muted);">${escapeHtml(leftSignerTitle)}</div>` : ""}
+        <div class="cert-sheet-inner">
+          <img src="./isceb-logo.webp" alt="ISCEB" style="height: 62px; object-fit: contain; margin-bottom: 6px;" />
+          ${displayedCert.isDemo ? `<div class="cert-demo-pill">DEMO CERTIFICATE PREVIEW</div>` : ""}
+          <div class="cert-institution">
+            Institute of Supply Chain Excellence Bangladesh (ISCEB)
           </div>
-          <div class="cert-sig-col">
-            <div style="font-weight: 800; color: var(--gold-dark);">Serial: ${escapeHtml(displayedCert.serial)}</div>
-            <div style="color: var(--muted);">Issued: ${escapeHtml(displayedCert.issuedDate)}</div>
+          <div class="cert-subtitle">Post Graduate Diploma (PGD) in Supply Chain Management</div>
+          <h2 class="cert-title">POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT (SCM)</h2>
+          <p class="cert-confer">This authoritative academic credential is officially conferred upon</p>
+          <div class="cert-recipient">
+            ${escapeHtml(displayedCert.recipientName)}
           </div>
-          <div class="cert-sig-col">
-            <div class="cert-sig-space" aria-hidden="true"></div>
-            <div class="cert-sig-line">${escapeHtml(rightSignerName)}</div>
-            <div style="color: var(--gold-dark); font-weight: 700;">${escapeHtml(rightSignerTitle)}</div>
+          <p class="cert-narrative">
+            in recognition of successfully completing all 12 Specialization Modules and 48 Executive Lessons, Part 1: Basic (Foundation Level) &amp; Part 2: Advance (Strategic &amp; Analytical Level), Module Examinations, Capstone Project, and Final Comprehensive Assessment.
+          </p>
+          <div class="cert-signatories-grid">
+            <div class="cert-sig-col">
+              <div class="cert-sig-space" aria-hidden="true"></div>
+              <div class="cert-sig-line">${escapeHtml(leftSignerName)}</div>
+              ${leftSignerTitle ? `<div class="cert-sig-title">${escapeHtml(leftSignerTitle)}</div>` : ""}
+            </div>
+            <div class="cert-sig-col">
+              <div style="font-weight: 800; color: var(--gold-dark);">Serial: ${escapeHtml(displayedCert.serial)}</div>
+              <div style="color: var(--muted);">Issued: ${escapeHtml(displayedCert.issuedDate)}</div>
+            </div>
+            <div class="cert-sig-col">
+              <div class="cert-sig-space" aria-hidden="true"></div>
+              <div class="cert-sig-line">${escapeHtml(rightSignerName)}</div>
+              <div class="cert-sig-title">${escapeHtml(rightSignerTitle)}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1456,13 +1476,14 @@ function renderMemberDetailHtml(member) {
         .map((s) => `<span class="badge badge-navy" style="font-size: 11px;">${escapeHtml(s)}</span>`)
         .join("")}</div>`
     : `<span style="color: var(--muted); font-style: italic; font-size: 12.5px;">Not specified</span>`;
+  const devExtra = member.id === "member-developer-nafiul" ? state.developerProfile : null;
 
   return `
     <div style="display: grid; gap: 14px;">
       <div class="card-navy" style="border-radius: 14px; padding: 18px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
         ${renderMemberAvatarHtml(member, 92)}
         <div style="flex: 1; min-width: 220px;">
-          <span class="badge badge-gold">#${Number(member.displayOrder || 1)} ${escapeHtml(member.designation || "ISCEB Member")}</span>
+          <span class="badge badge-gold">${escapeHtml(member.designation || "ISCEB Member")}</span>
           <h3 style="margin: 6px 0 3px; color: #fff; font-size: 20px;">${escapeHtml(member.fullName)}</h3>
           <div style="font-size: 13px; color: var(--gold-soft); font-weight: 700;">${escapeHtml(member.professionalIdentity || "")}</div>
           ${member.roleInIsceb ? `<div style="font-size: 12px; color: #CBD5E1; margin-top: 4px;">${escapeHtml(member.roleInIsceb)}</div>` : ""}
@@ -1478,7 +1499,7 @@ function renderMemberDetailHtml(member) {
 
       ${member.educationalQualification ? `
         <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
-          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Educational Qualification & Certifications</div>
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Education</div>
           <div style="font-size: 13px; color: #334155; white-space: pre-line;">${escapeHtml(member.educationalQualification)}</div>
         </div>` : ""}
 
@@ -1489,15 +1510,35 @@ function renderMemberDetailHtml(member) {
         </div>` : ""}
 
       <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
-        <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 6px;">Skills & Expertise</div>
+        <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 6px;">Core Competencies & Skills</div>
         ${skillsHtml}
       </div>
 
       ${member.biography ? `
         <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
-          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">Personal & Professional Biography</div>
+          <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">About Me & Biography</div>
           <div style="font-size: 13px; color: #334155; white-space: pre-line; line-height: 1.55;">${escapeHtml(member.biography)}</div>
         </div>` : ""}
+
+      ${devExtra ? `
+        ${devExtra.mission || devExtra.vision ? `
+          <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px;">
+            <div style="font-weight: 800; color: var(--navy); font-size: 13px;">Mission &amp; Vision</div>
+            ${devExtra.mission ? `<div style="font-size: 13px; color: #334155;"><strong>Mission:</strong> ${escapeHtml(devExtra.mission)}</div>` : ""}
+            ${devExtra.vision ? `<div style="font-size: 13px; color: #334155;"><strong>Vision:</strong> ${escapeHtml(devExtra.vision)}</div>` : ""}
+          </div>` : ""}
+        ${devExtra.projectInformation ? `
+          <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
+            <div style="font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 4px;">About This Project (ISCEB App)</div>
+            <div style="font-size: 13px; color: #334155; line-height: 1.5;">${escapeHtml(devExtra.projectInformation)}</div>
+          </div>` : ""}
+        ${devExtra.personalPhilosophy || devExtra.personalInterests ? `
+          <div style="background: #FDF7F3; border: 1px solid #EBD3C5; border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px;">
+            <div style="font-weight: 800; color: var(--navy); font-size: 13px;">Personal Philosophy &amp; Interests</div>
+            ${devExtra.personalPhilosophy ? `<div style="font-size: 13px; color: #1E293B; font-style: italic;">“${escapeHtml(devExtra.personalPhilosophy)}”</div>` : ""}
+            ${devExtra.personalInterests ? `<div style="font-size: 12.5px; color: #475569;"><strong>Interests:</strong> ${escapeHtml(devExtra.personalInterests)}</div>` : ""}
+          </div>` : ""}
+      ` : ""}
 
       ${member.contactInformation ? `
         <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;">
@@ -1526,16 +1567,13 @@ function renderDirectory() {
     <div class="two-col-grid" style="gap: 14px;">
       ${sortedMembers
         .map(
-          (m, i) => `
+          (m) => `
         <div class="card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid #E2E8F0; transition: box-shadow .15s ease;">
           <div>
             <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 10px;">
               ${renderMemberAvatarHtml(m, 72)}
               <div style="min-width: 0; flex: 1;">
-                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px;">
-                  <span class="badge badge-navy">#${Number(m.displayOrder || i + 1)}</span>
-                  ${m.designation ? `<span class="badge badge-gold">${escapeHtml(m.designation)}</span>` : ""}
-                </div>
+                ${m.designation ? `<div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px;"><span class="badge badge-gold">${escapeHtml(m.designation)}</span></div>` : ""}
                 <h4 style="margin: 2px 0; color: var(--navy); font-size: 16px; line-height: 1.25;">${escapeHtml(m.fullName)}</h4>
                 <div style="font-size: 12px; font-weight: 700; color: var(--gold-dark); margin-top: 2px;">${escapeHtml(m.roleInIsceb || m.currentOrganization || "")}</div>
               </div>
@@ -1773,7 +1811,7 @@ function renderAdmin() {
             </button>
           </div>
           <div style="font-size: 11.5px; color: var(--muted);">
-            Signatories — Left: <strong>${escapeHtml(state.settings.leftSignerName || "Hasina Khan")}</strong> • Right: <strong>${escapeHtml(state.settings.authorizedSignerName || "Amirul Islam")}</strong> (${escapeHtml(state.settings.authorizedSignerTitle || "Founder of ISCEB")})
+            Signatories — Left: <strong>${escapeHtml(state.settings.leftSignerName || "Hasina Khan")}</strong> (${escapeHtml(state.settings.leftSignerTitle || "Chairman & CEO")}) • Right: <strong>${escapeHtml(state.settings.authorizedSignerName || "Amirul Islam")}</strong> (${escapeHtml(state.settings.authorizedSignerTitle || "Founder of ISCEB")})
           </div>
         </div>
 

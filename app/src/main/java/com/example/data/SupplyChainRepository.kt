@@ -73,7 +73,7 @@ class SupplyChainRepository(
     }
 
     private val CURRENT_SYLLABUS_VERSION = "v8_isceb_exact_syllabus_48"
-    private val CURRENT_MEMBERS_ROSTER_VERSION = 2
+    private val CURRENT_MEMBERS_ROSTER_VERSION = 3
 
     private val DEMO_ACCOUNT_IDS = setOf("student-1", "student-2", "student-3")
     private val DEMO_ACCOUNT_NAMES = setOf("Sarah Jenkins", "Alex Rivera", "Tanvir Ahmed")
@@ -261,6 +261,9 @@ class SupplyChainRepository(
                     !it.contains("Academic Directorate", ignoreCase = true) &&
                     !it.contains("Lead Trainer", ignoreCase = true)
             } ?: "Founder of ISCEB"
+        val cleanLeftTitle = existingSettings.leftSignerTitle
+            .takeIf { it.isNotBlank() && !it.contains("Developer", ignoreCase = true) }
+            ?: "Chairman & CEO"
         val migratedSettings = existingSettings.copy(
             institutionName = if (existingSettings.institutionName.contains("SCM Global", ignoreCase = true) ||
                 existingSettings.institutionName.contains("International Supply Chain", ignoreCase = true) ||
@@ -268,6 +271,7 @@ class SupplyChainRepository(
             ) "ISCEB" else existingSettings.institutionName,
             officialWebsite = existingSettings.officialWebsite.ifBlank { "www.isceb.org" },
             leftSignerName = cleanLeftSigner,
+            leftSignerTitle = cleanLeftTitle,
             authorizedSignerName = cleanRightSigner,
             authorizedSignerTitle = cleanRightTitle,
             remoteSyncManifestUrl = existingSettings.remoteSyncManifestUrl.ifBlank { AppUpdateConfig.DEFAULT_VERSION_JSON_URL },
@@ -363,17 +367,30 @@ class SupplyChainRepository(
             _moduleAssignments.value = if (!savedAssignmentsJson.isNullOrBlank()) deserializeAssignments(savedAssignmentsJson) else getInitialModuleAssignments()
         }
 
-        // Load Developer Profile (and sanitize legacy Founder phrase for Nahin)
+        // Load Developer Profile (and sanitize legacy Founder phrase for Nahin + upgrade default bio in roster v3)
+        val savedRosterVersion = prefs.getInt("isceb_members_roster_version", 1)
         val devProfileJson = prefs.getString("developer_profile_json", null)
         val loadedDev = try {
             if (!devProfileJson.isNullOrBlank()) deserializeDeveloperProfile(devProfileJson) else DeveloperProfile()
         } catch (_: Exception) {
             DeveloperProfile()
         }
-        val sanitizedDev = sanitizeDeveloperProfile(loadedDev)
-        _developerProfile.value = sanitizedDev
-        if (devProfileJson.isNullOrBlank() || sanitizedDev != loadedDev) {
-            prefs.edit().putString("developer_profile_json", serializeDeveloperProfile(sanitizedDev)).apply()
+        val sanitizedLoadedDev = sanitizeDeveloperProfile(loadedDev)
+        val defaultsDev = DeveloperProfile()
+        val effectiveDev = if (savedRosterVersion < CURRENT_MEMBERS_ROSTER_VERSION &&
+            (sanitizedLoadedDev.biography.startsWith("App Developer for ISCEB") ||
+                sanitizedLoadedDev.educationBackground.startsWith("Post Graduate Diploma (PGD) in Supply Chain Management • Specialization"))
+        ) {
+            defaultsDev.copy(
+                photoUri = sanitizedLoadedDev.photoUri,
+                contactPhone = sanitizedLoadedDev.contactPhone
+            )
+        } else {
+            sanitizedLoadedDev
+        }
+        _developerProfile.value = effectiveDev
+        if (devProfileJson.isNullOrBlank() || effectiveDev != loadedDev) {
+            prefs.edit().putString("developer_profile_json", serializeDeveloperProfile(effectiveDev)).apply()
         }
 
         // Load Founder Profile
@@ -383,7 +400,6 @@ class SupplyChainRepository(
         } catch (_: Exception) {
             FounderProfile()
         }
-        val savedRosterVersion = prefs.getInt("isceb_members_roster_version", 1)
         val effectiveFounder = if (savedRosterVersion < CURRENT_MEMBERS_ROSTER_VERSION && loadedFounder.educationBackground.isBlank()) {
             val defaults = FounderProfile()
             val upgraded = loadedFounder.copy(
@@ -399,7 +415,7 @@ class SupplyChainRepository(
         }
         _founderProfile.value = effectiveFounder
 
-        // Load ISCEB Members Directory (always honoring exact 1..8 official order when upgrading roster v1 -> v2)
+        // Load ISCEB Members Directory (always honoring exact 1..8 official order when upgrading roster)
         val membersJson = prefs.getString("isceb_members_json", null)
         val loadedMembers = try {
             if (!membersJson.isNullOrBlank()) {
@@ -1969,27 +1985,30 @@ class SupplyChainRepository(
                 biography = "Tonmoy Khan serves as the ISCEB Web Developer. As a Senior Web Developer and DIU CSE alumnus with 4+ years of hands-on experience in core IT environments and certified plugin development, he specializes in building scalable, high-performance solutions that bridge the gap between complex code and seamless user experiences across the web ecosystem.",
                 displayOrder = 7
             ),
-            // 8. Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin)
+            // 8. Md. Nafiul Islam Nahin
             IscebMember(
                 id = "member-developer-nafiul",
                 photoUri = "",
                 builtInPhotoKey = "nafiul",
-                fullName = "Developer Mohammad Nafiul Islam",
+                fullName = "Md. Nafiul Islam Nahin",
                 designation = "Developer of ISCEB App",
-                professionalIdentity = "Md. Nafiul Islam Nahin • Lead Android, Web & Cloud LMS Architect",
-                currentOrganization = "ISCEB App Engineering & Cloud Systems",
-                educationalQualification = "Android Systems Engineering (Kotlin / Jetpack Compose) & Cloud-Connected LMS Architecture",
-                professionalExperience = "Lead architect and developer of the ISCEB LMS platform across Android and Web/PC Portals, designing real-time Cloud Firestore synchronization, role-based student/teacher/admin workflows, study telemetry, timed examinations, and QR-verifiable automated PDF executive diploma certification.",
+                professionalIdentity = "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional",
+                currentOrganization = "Institute of Supply Chain & Excellence Bangladesh (ISCEB)",
+                educationalQualification = "• B.Sc. (Honours) in Botany – National University (2023)\n• PGD in Supply Chain Management – ISCEB (Ongoing)",
+                professionalExperience = "• Bank Asia – Customer Service & Loan Disbursement\n• National Life Insurance Company – Financial Advisor\n• vivo Customer Care – Brand Advisor\n• Genki Health Services – Teleconsultation Coordinator\n• S2 Computer & Training Center – IT Trainer",
                 skillsAndExpertise = listOf(
-                    "Android Kotlin & Jetpack Compose",
-                    "Cloud Firestore & Security Rules",
-                    "PC/Web PWA Portal Engineering",
-                    "Verifiable Digital Certification",
-                    "EdTech & Supply Chain LMS Architecture"
+                    "Supply Chain Management",
+                    "Import & Commercial Operations",
+                    "Banking Operations",
+                    "Customer Relationship Management",
+                    "Microsoft Office & Data Analysis",
+                    "Communication & Problem Solving",
+                    "Teamwork & Leadership",
+                    "Digital Technology"
                 ),
-                roleInIsceb = "App Developer & Chief Systems Architect • ISCEB",
+                roleInIsceb = "Developer of ISCEB App • PGD-SCM Candidate",
                 contactInformation = "Email: www.mdnafiulislam@gmail.com • Web: https://www.isceb.org • Dhaka, Bangladesh",
-                biography = "Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin) is the Lead App Developer of the Institute of Supply Chain Excellence Bangladesh (ISCEB) LMS. He architected and engineered the unified Android and PC/Web platforms with offline-first persistence, live over-the-air curriculum publishing, role-scoped faculty and student dashboards, and automated QR-verified PGD certification.",
+                biography = "I am a multidisciplinary professional with an academic background in Botany and practical experience in Banking, Financial Services, Customer Relationship Management, Sales, IT Training, and Operational Coordination.\n\nCurrently, I am pursuing a Postgraduate Diploma (PGD) in Supply Chain Management at the Institute of Supply Chain & Excellence Bangladesh (ISCEB). I am passionate about professional development, business operations, technology, and continuous learning.\n\nPersonal Philosophy: \"Learn Continuously, Think Strategically, and Grow Professionally.\"\nPersonal Interests: Technology, Digital Innovation, Learning, Portrait Sketching, Singing, Poetry Recitation, and Traveling.",
                 displayOrder = 8
             )
         )
@@ -2469,7 +2488,7 @@ class SupplyChainRepository(
             officialWebsite = obj.optString("officialWebsite", "www.isceb.org"),
             institutionAccreditation = obj.optString("institutionAccreditation", "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)"),
             leftSignerName = safeLeftSigner,
-            leftSignerTitle = obj.optString("leftSignerTitle", ""),
+            leftSignerTitle = obj.optString("leftSignerTitle", "Chairman & CEO").ifBlank { "Chairman & CEO" },
             authorizedSignerName = safeRightSigner,
             authorizedSignerTitle = safeRightTitle,
             certificateTitle = obj.optString("certificateTitle", "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)"),
@@ -2714,11 +2733,16 @@ class SupplyChainRepository(
         val obj = JSONObject().apply {
             put("name", profile.name)
             put("designation", profile.designation)
+            put("headline", profile.headline)
             put("biography", profile.biography)
             put("educationBackground", profile.educationBackground)
             put("workExperience", profile.workExperience)
             put("skillsAndExpertise", JSONArray(profile.skillsAndExpertise))
+            put("mission", profile.mission)
+            put("vision", profile.vision)
             put("projectInformation", profile.projectInformation)
+            put("personalPhilosophy", profile.personalPhilosophy)
+            put("personalInterests", profile.personalInterests)
             put("contactEmail", profile.contactEmail)
             put("contactPhone", profile.contactPhone)
             put("contactWebsite", profile.contactWebsite)
@@ -2743,11 +2767,16 @@ class SupplyChainRepository(
                 DeveloperProfile(
                     name = obj.optString("name", defaults.name),
                     designation = obj.optString("designation", defaults.designation),
+                    headline = obj.optString("headline", defaults.headline).ifBlank { defaults.headline },
                     biography = obj.optString("biography", defaults.biography),
                     educationBackground = obj.optString("educationBackground", defaults.educationBackground),
                     workExperience = obj.optString("workExperience", defaults.workExperience),
                     skillsAndExpertise = if (skills.isEmpty()) defaults.skillsAndExpertise else skills,
+                    mission = obj.optString("mission", defaults.mission).ifBlank { defaults.mission },
+                    vision = obj.optString("vision", defaults.vision).ifBlank { defaults.vision },
                     projectInformation = obj.optString("projectInformation", defaults.projectInformation),
+                    personalPhilosophy = obj.optString("personalPhilosophy", defaults.personalPhilosophy).ifBlank { defaults.personalPhilosophy },
+                    personalInterests = obj.optString("personalInterests", defaults.personalInterests).ifBlank { defaults.personalInterests },
                     contactEmail = obj.optString("contactEmail", defaults.contactEmail),
                     contactPhone = obj.optString("contactPhone", defaults.contactPhone),
                     contactWebsite = obj.optString("contactWebsite", defaults.contactWebsite),

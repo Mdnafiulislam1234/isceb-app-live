@@ -243,6 +243,19 @@ fun DeveloperProfileScreen(
                             }
                         }
 
+                        if (developerProfile.headline.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = developerProfile.headline,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color(0xFFE2E8F0),
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 12.sp
+                                ),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+
                         if (isAdmin) {
                             Spacer(modifier = Modifier.height(14.dp))
                             Button(
@@ -272,11 +285,11 @@ fun DeveloperProfileScreen(
             }
         }
 
-        // Short Biography
+        // About Me / Biography
         item {
             DeveloperSectionCard(
                 icon = Icons.Default.Person,
-                title = "Short Biography"
+                title = "About Me"
             ) {
                 Text(
                     text = developerProfile.biography,
@@ -289,28 +302,28 @@ fun DeveloperProfileScreen(
             }
         }
 
-        // Educational Background
+        // Education
         item {
             DeveloperSectionCard(
                 icon = Icons.Default.School,
-                title = "Educational Background"
+                title = "Education"
             ) {
                 Text(
                     text = developerProfile.educationBackground,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = Color(0xFF334155),
-                        lineHeight = 20.sp,
+                        lineHeight = 21.sp,
                         fontSize = 13.sp
                     )
                 )
             }
         }
 
-        // Skills & Expertise
+        // Core Competencies / Skills & Expertise
         item {
             DeveloperSectionCard(
                 icon = Icons.Default.Build,
-                title = "Skills & Expertise"
+                title = "Core Competencies"
             ) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -338,28 +351,89 @@ fun DeveloperProfileScreen(
             }
         }
 
-        // Work & Project Experience
+        // Professional Experience
         item {
             DeveloperSectionCard(
                 icon = Icons.Default.WorkOutline,
-                title = "Work & Project Experience"
+                title = "Professional Experience"
             ) {
                 Text(
                     text = developerProfile.workExperience,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = Color(0xFF334155),
-                        lineHeight = 20.sp,
+                        lineHeight = 21.sp,
                         fontSize = 13.sp
                     )
                 )
             }
         }
 
-        // Project Information
+        // Mission & Vision
+        if (developerProfile.mission.isNotBlank() || developerProfile.vision.isNotBlank()) {
+            item {
+                DeveloperSectionCard(
+                    icon = Icons.Default.Verified,
+                    title = "Mission & Vision"
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (developerProfile.mission.isNotBlank()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFF8FAFC))
+                                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Text(
+                                    text = "MY MISSION",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = GoldDark
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = developerProfile.mission,
+                                    color = Color(0xFF334155),
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
+                        }
+                        if (developerProfile.vision.isNotBlank()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFF8FAFC))
+                                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Text(
+                                    text = "MY VISION",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = NavySecondary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = developerProfile.vision,
+                                    color = Color(0xFF334155),
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // About This Project — ISCEB App
         item {
             DeveloperSectionCard(
                 icon = Icons.Default.WorkOutline,
-                title = "Project Information — ISCEB App"
+                title = "About This Project — ISCEB App"
             ) {
                 Row(
                     modifier = Modifier
@@ -388,6 +462,61 @@ fun DeveloperProfileScreen(
                         ),
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // Personal Philosophy & Interests
+        if (developerProfile.personalPhilosophy.isNotBlank() || developerProfile.personalInterests.isNotBlank()) {
+            item {
+                DeveloperSectionCard(
+                    icon = Icons.Default.Person,
+                    title = "Personal Philosophy & Interests"
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (developerProfile.personalPhilosophy.isNotBlank()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFFEF9EB))
+                                    .border(1.dp, GoldMetallic.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Text(
+                                    text = "PERSONAL PHILOSOPHY",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = GoldDark
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "\"${developerProfile.personalPhilosophy}\"",
+                                    color = NavyPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
+                        }
+                        if (developerProfile.personalInterests.isNotBlank()) {
+                            Column {
+                                Text(
+                                    text = "PERSONAL INTERESTS",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NavyPrimary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = developerProfile.personalInterests,
+                                    color = Color(0xFF334155),
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -537,16 +666,33 @@ private fun EditDeveloperProfileDialog(
 ) {
     var name by remember { mutableStateOf(initialProfile.name) }
     var designation by remember { mutableStateOf(initialProfile.designation) }
+    var headline by remember { mutableStateOf(initialProfile.headline) }
     var biography by remember { mutableStateOf(initialProfile.biography) }
     var education by remember { mutableStateOf(initialProfile.educationBackground) }
     var workExperience by remember { mutableStateOf(initialProfile.workExperience) }
     var skillsText by remember { mutableStateOf(initialProfile.skillsAndExpertise.joinToString(", ")) }
+    var mission by remember { mutableStateOf(initialProfile.mission) }
+    var vision by remember { mutableStateOf(initialProfile.vision) }
     var projectInfo by remember { mutableStateOf(initialProfile.projectInformation) }
+    var philosophy by remember { mutableStateOf(initialProfile.personalPhilosophy) }
+    var interests by remember { mutableStateOf(initialProfile.personalInterests) }
     var email by remember { mutableStateOf(initialProfile.contactEmail) }
     var phone by remember { mutableStateOf(initialProfile.contactPhone) }
     var website by remember { mutableStateOf(initialProfile.contactWebsite) }
     var location by remember { mutableStateOf(initialProfile.location) }
     var pickedPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color(0xFF0F172A),
+        unfocusedTextColor = Color(0xFF0F172A),
+        focusedContainerColor = Color.White,
+        unfocusedContainerColor = Color.White,
+        focusedBorderColor = GoldMetallic,
+        unfocusedBorderColor = Color(0xFFCBD5E1),
+        focusedLabelColor = NavyPrimary,
+        unfocusedLabelColor = Color(0xFF475569),
+        cursorColor = NavyPrimary
+    )
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -558,6 +704,7 @@ private fun EditDeveloperProfileDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = Color.White,
         title = {
             Text(
                 text = "Edit Developer Profile",
@@ -606,7 +753,7 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Full Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("input_dev_name"),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = designation,
@@ -614,43 +761,70 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Designation") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("input_dev_designation"),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
+                )
+                OutlinedTextField(
+                    value = headline,
+                    onValueChange = { headline = it },
+                    label = { Text("Professional Headline") },
+                    minLines = 2,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = biography,
                     onValueChange = { biography = it },
-                    label = { Text("Short Biography") },
+                    label = { Text("About Me / Biography") },
                     minLines = 3,
-                    maxLines = 5,
+                    maxLines = 6,
                     modifier = Modifier.fillMaxWidth().testTag("input_dev_bio"),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = education,
                     onValueChange = { education = it },
-                    label = { Text("Educational Background") },
+                    label = { Text("Education") },
                     minLines = 2,
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = workExperience,
                     onValueChange = { workExperience = it },
-                    label = { Text("Work & Project Experience") },
-                    minLines = 2,
-                    maxLines = 4,
+                    label = { Text("Professional Experience") },
+                    minLines = 3,
+                    maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = skillsText,
                     onValueChange = { skillsText = it },
-                    label = { Text("Skills & Expertise (comma-separated)") },
+                    label = { Text("Core Competencies (comma-separated)") },
                     minLines = 2,
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
+                )
+                OutlinedTextField(
+                    value = mission,
+                    onValueChange = { mission = it },
+                    label = { Text("Mission") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors
+                )
+                OutlinedTextField(
+                    value = vision,
+                    onValueChange = { vision = it },
+                    label = { Text("Vision") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = projectInfo,
@@ -659,7 +833,24 @@ private fun EditDeveloperProfileDialog(
                     minLines = 2,
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
+                )
+                OutlinedTextField(
+                    value = philosophy,
+                    onValueChange = { philosophy = it },
+                    label = { Text("Personal Philosophy") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors
+                )
+                OutlinedTextField(
+                    value = interests,
+                    onValueChange = { interests = it },
+                    label = { Text("Personal Interests") },
+                    minLines = 2,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = email,
@@ -667,7 +858,7 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Contact Email") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = phone,
@@ -675,7 +866,7 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Contact Phone (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = website,
@@ -683,7 +874,7 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Website") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = location,
@@ -691,7 +882,7 @@ private fun EditDeveloperProfileDialog(
                     label = { Text("Location") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
+                    colors = fieldColors
                 )
             }
         },
@@ -703,11 +894,16 @@ private fun EditDeveloperProfileDialog(
                         initialProfile.copy(
                             name = name.trim().ifBlank { initialProfile.name },
                             designation = designation.trim().ifBlank { initialProfile.designation },
+                            headline = headline.trim(),
                             biography = biography.trim().ifBlank { initialProfile.biography },
                             educationBackground = education.trim(),
                             workExperience = workExperience.trim(),
                             skillsAndExpertise = if (parsedSkills.isNotEmpty()) parsedSkills else initialProfile.skillsAndExpertise,
+                            mission = mission.trim(),
+                            vision = vision.trim(),
                             projectInformation = projectInfo.trim(),
+                            personalPhilosophy = philosophy.trim(),
+                            personalInterests = interests.trim(),
                             contactEmail = email.trim(),
                             contactPhone = phone.trim(),
                             contactWebsite = website.trim(),

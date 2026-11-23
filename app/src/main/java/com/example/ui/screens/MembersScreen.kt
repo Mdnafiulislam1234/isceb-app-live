@@ -552,34 +552,16 @@ private fun MemberDirectoryCard(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = NavyPrimary
-                        ) {
-                            Text(
-                                text = "#${member.displayOrder}",
-                                color = GoldMetallic,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                        Text(
-                            text = member.fullName,
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = NavyPrimary,
-                                fontSize = 14.5.sp
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    Text(
+                        text = member.fullName,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = NavyPrimary,
+                            fontSize = 14.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Spacer(modifier = Modifier.height(2.dp))
                     if (member.designation.isNotBlank()) {
                         Text(
@@ -630,7 +612,7 @@ private fun MemberDirectoryCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Order #${member.displayOrder}",
+                        text = "Position ${member.displayOrder}",
                         fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF64748B),

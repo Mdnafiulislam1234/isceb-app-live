@@ -458,6 +458,14 @@ class ExampleRobolectricTest {
         val defaultProfile = repository.developerProfile.value
         assertEquals("Md. Nafiul Islam Nahin", defaultProfile.name)
         assertEquals("Developer of ISCEB App", defaultProfile.designation)
+        assertEquals(
+            "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional",
+            defaultProfile.headline
+        )
+        assertEquals(
+            "Learn Continuously, Think Strategically, and Grow Professionally.",
+            defaultProfile.personalPhilosophy
+        )
         assertFalse(defaultProfile.designation.contains("Founder", ignoreCase = true))
         assertFalse(defaultProfile.biography.contains("Founder", ignoreCase = true))
         assertEquals("www.mdnafiulislam@gmail.com", defaultProfile.contactEmail)
@@ -529,7 +537,11 @@ class ExampleRobolectricTest {
         assertEquals("Mr. Md. Mashiur Rahman", initialMembers[4].fullName)
         assertEquals("Shajibul Hasan", initialMembers[5].fullName)
         assertEquals("Tonmoy Khan", initialMembers[6].fullName)
-        assertEquals("Developer Mohammad Nafiul Islam", initialMembers[7].fullName)
+        assertEquals("Md. Nafiul Islam Nahin", initialMembers[7].fullName)
+        assertEquals(
+            "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional",
+            initialMembers[7].professionalIdentity
+        )
 
         // Verify all 6 new member portrait drawables are valid resources
         listOf(

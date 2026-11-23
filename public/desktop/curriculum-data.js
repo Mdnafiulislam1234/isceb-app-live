@@ -33,13 +33,37 @@ export const DEFAULT_FOUNDER = {
 export const DEFAULT_DEVELOPER = {
   name: "Md. Nafiul Islam Nahin",
   designation: "Developer of ISCEB App",
+  headline: "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional",
   biography:
-    "App Developer for ISCEB (Institute of Supply Chain Excellence Bangladesh), architecting Android, Web, and PC/Desktop platforms with real-time cloud synchronization, encrypted assessments, and verified executive diploma issuance.",
+    "I am a multidisciplinary professional with an academic background in Botany and practical experience in Banking, Financial Services, Customer Relationship Management, Sales, IT Training, and Operational Coordination.\n\nCurrently, I am pursuing a Postgraduate Diploma (PGD) in Supply Chain Management at the Institute of Supply Chain & Excellence Bangladesh (ISCEB). I am passionate about professional development, business operations, technology, and continuous learning.",
+  educationBackground:
+    "• B.Sc. (Honours) in Botany – National University (2023)\n• PGD in Supply Chain Management – ISCEB (Ongoing)",
+  workExperience:
+    "• Bank Asia – Customer Service & Loan Disbursement\n• National Life Insurance Company – Financial Advisor\n• vivo Customer Care – Brand Advisor\n• Genki Health Services – Teleconsultation Coordinator\n• S2 Computer & Training Center – IT Trainer",
+  skillsAndExpertise: [
+    "Supply Chain Management",
+    "Import & Commercial Operations",
+    "Banking Operations",
+    "Customer Relationship Management",
+    "Microsoft Office & Data Analysis",
+    "Communication & Problem Solving",
+    "Teamwork & Leadership",
+    "Digital Technology"
+  ],
+  mission:
+    "To bridge operational supply chain excellence and modern digital technology by engineering reliable learning tools, streamlining workflows, and empowering aspiring corporate professionals.",
+  vision:
+    "To grow into an impactful Supply Chain & Operations leader while contributing innovative, accessible digital ecosystems that elevate professional education across Bangladesh.",
+  projectInformation:
+    "Designed, developed, and maintaining the official ISCEB App (Android & Live Web PWA) featuring all 12 PGD modules, 48 structured classes, cloud media streaming, timed examinations, QR-verified PDF certificates, and instant OTA auto-updates.",
+  personalPhilosophy: "Learn Continuously, Think Strategically, and Grow Professionally.",
+  personalInterests:
+    "Technology, Digital Innovation, Learning, Portrait Sketching, Singing, Poetry Recitation, and Traveling.",
   contactEmail: "www.mdnafiulislam@gmail.com",
   location: "Dhaka, Bangladesh"
 };
 
-export const DEFAULT_MEMBERS_ROSTER_VERSION = 2;
+export const DEFAULT_MEMBERS_ROSTER_VERSION = 3;
 
 export const DEFAULT_MEMBERS = [
   {
@@ -222,24 +246,28 @@ export const DEFAULT_MEMBERS = [
     id: "member-developer-nafiul",
     builtInPhotoKey: "nafiul",
     photoUrl: "./admin-nafiul.webp",
-    fullName: "Developer Mohammad Nafiul Islam",
+    fullName: "Md. Nafiul Islam Nahin",
     designation: "Developer of ISCEB App",
-    professionalIdentity: "Md. Nafiul Islam Nahin • Lead Android, Web & Cloud LMS Architect",
-    currentOrganization: "ISCEB App Engineering & Cloud Systems",
-    educationalQualification: "Android Systems Engineering (Kotlin / Jetpack Compose) & Cloud-Connected LMS Architecture",
+    professionalIdentity: "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional",
+    currentOrganization: "Institute of Supply Chain Excellence Bangladesh (ISCEB) — App Engineering",
+    educationalQualification:
+      "• B.Sc. (Honours) in Botany – National University (2023)\n• PGD in Supply Chain Management – ISCEB (Ongoing)",
     professionalExperience:
-      "Lead architect and developer of the ISCEB LMS platform across Android and Web/PC Portals, designing real-time Cloud Firestore synchronization, role-based student/teacher/admin workflows, study telemetry, timed examinations, and QR-verifiable automated PDF executive diploma certification.",
+      "• Bank Asia – Customer Service & Loan Disbursement\n• National Life Insurance Company – Financial Advisor\n• vivo Customer Care – Brand Advisor\n• Genki Health Services – Teleconsultation Coordinator\n• S2 Computer & Training Center – IT Trainer",
     skillsAndExpertise: [
-      "Android Kotlin & Jetpack Compose",
-      "Cloud Firestore & Security Rules",
-      "PC/Web PWA Portal Engineering",
-      "Verifiable Digital Certification",
-      "EdTech & Supply Chain LMS Architecture"
+      "Supply Chain Management",
+      "Import & Commercial Operations",
+      "Banking Operations",
+      "Customer Relationship Management",
+      "Microsoft Office & Data Analysis",
+      "Communication & Problem Solving",
+      "Teamwork & Leadership",
+      "Digital Technology"
     ],
-    roleInIsceb: "App Developer & Chief Systems Architect • ISCEB",
+    roleInIsceb: "Developer of ISCEB App & PGD in SCM Candidate • ISCEB",
     contactInformation: "Email: www.mdnafiulislam@gmail.com • Web: https://www.isceb.org • Dhaka, Bangladesh",
     biography:
-      "Developer Mohammad Nafiul Islam (Md. Nafiul Islam Nahin) is the Lead App Developer of the Institute of Supply Chain Excellence Bangladesh (ISCEB) LMS. He architected and engineered the unified Android and PC/Web platforms with offline-first persistence, live over-the-air curriculum publishing, role-scoped faculty and student dashboards, and automated QR-verified PGD certification.",
+      "I am a multidisciplinary professional with an academic background in Botany and practical experience in Banking, Financial Services, Customer Relationship Management, Sales, IT Training, and Operational Coordination.\n\nCurrently, I am pursuing a Postgraduate Diploma (PGD) in Supply Chain Management at the Institute of Supply Chain & Excellence Bangladesh (ISCEB). I am passionate about professional development, business operations, technology, and continuous learning.\n\nPersonal Philosophy: Learn Continuously, Think Strategically, and Grow Professionally.\nPersonal Interests: Technology, Digital Innovation, Learning, Portrait Sketching, Singing, Poetry Recitation, and Traveling.",
     displayOrder: 8
   }
 ];

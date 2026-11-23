@@ -91,11 +91,26 @@ import com.example.ui.theme.SuccessGreen
 import com.example.util.MediaFileManager
 import com.example.util.PickedFileMeta
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.model.PendingUploadItem
+import kotlinx.coroutines.launch
 
 private enum class AdminAuthMode { SIGN_IN, SETUP, RECOVER }
 
@@ -795,7 +810,7 @@ fun CreateEditClassDialog(
 }
 
 // ======================= MULTI-FILE UPLOAD MEDIA DIALOG =======================
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun UploadMediaDialog(
     initialMediaType: MediaType,
@@ -811,6 +826,7 @@ fun UploadMediaDialog(
     onRetry: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var selectedCategory by remember { mutableStateOf(initialMediaType) }
     var useHttpsUrlMode by remember { mutableStateOf(false) }
     var pendingItems by remember { mutableStateOf<List<PendingUploadItem>>(emptyList()) }
@@ -819,6 +835,30 @@ fun UploadMediaDialog(
     var remoteUrlInput by remember { mutableStateOf("") }
     var presetTitle by remember { mutableStateOf("${classTitle.take(24)} Study Material") }
     var presetDescription by remember { mutableStateOf("") }
+
+    // Explicit high-contrast colors immune to phone Dark Mode so typed text is always crisp black on white
+    val dialogInputColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color(0xFF0F172A),
+        unfocusedTextColor = Color(0xFF0F172A),
+        disabledTextColor = Color(0xFF64748B),
+        focusedContainerColor = Color.White,
+        unfocusedContainerColor = Color.White,
+        disabledContainerColor = Color(0xFFF8FAFC),
+        cursorColor = NavyPrimary,
+        focusedBorderColor = GoldMetallic,
+        unfocusedBorderColor = Color(0xFFCBD5E1),
+        focusedLabelColor = NavyPrimary,
+        unfocusedLabelColor = Color(0xFF475569),
+        focusedPlaceholderColor = Color(0xFF94A3B8),
+        unfocusedPlaceholderColor = Color(0xFF94A3B8)
+    )
+
+    val chipColors = FilterChipDefaults.filterChipColors(
+        containerColor = Color(0xFFF8FAFC),
+        labelColor = NavyPrimary,
+        selectedContainerColor = NavyPrimary,
+        selectedLabelColor = GoldMetallic
+    )
 
     val mimeFiltersForCategory: Array<String> = when (selectedCategory) {
         MediaType.PDF -> arrayOf("application/pdf")
@@ -876,448 +916,553 @@ fun UploadMediaDialog(
     val isUploading = uploadProgress != null
     val effectiveError = uploadError ?: localValidationError
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = { if (!isUploading) onDismiss() },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.CloudUpload,
-                    contentDescription = null,
-                    tint = GoldMetallic,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Upload Class Files & Media",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = NavyPrimary
-                    )
-                )
-            }
-        },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text(
-                    text = "Class: $classTitle",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = NavyPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
-                )
-                Text(
-                    text = "Files up to 18 MB auto-sync directly to every student phone via Firestore. For larger videos/files (>18 MB), attach a shared HTTPS URL.",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = Color(0xFF6B7F96),
-                        fontSize = 11.sp
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !isUploading,
+            dismissOnClickOutside = !isUploading,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        // Anchored to TopCenter with imePadding so opening keyboard shrinks smoothly upward without jumping or covering File Title
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(enabled = !isUploading, onClick = onDismiss)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 540.dp)
+                    .clickable(enabled = false, onClick = {}),
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                contentColor = Color(0xFF0F172A),
+                shadowElevation = 14.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
                 ) {
-                    FilterChip(
-                        selected = !useHttpsUrlMode,
-                        onClick = { if (!isUploading) useHttpsUrlMode = false },
-                        label = { Text("Device Files", fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = NavyPrimary,
-                            selectedLabelColor = GoldMetallic
-                        )
-                    )
-                    if (onAttachRemoteUrl != null) {
-                        FilterChip(
-                            selected = useHttpsUrlMode,
-                            onClick = { if (!isUploading) useHttpsUrlMode = true },
-                            label = { Text("HTTPS Link", fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = NavyPrimary,
-                                selectedLabelColor = GoldMetallic
-                            ),
-                            modifier = Modifier.testTag("chip_upload_https_mode")
-                        )
+                    // Fixed crisp header
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(NavyPrimary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudUpload,
+                                contentDescription = null,
+                                tint = GoldMetallic,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Upload Class Files & Media",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = NavyPrimary,
+                                    fontSize = 16.sp
+                                )
+                            )
+                            Text(
+                                text = "Class: $classTitle",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color(0xFF475569),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                Text(
-                    text = "File Category",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = NavyPrimary
-                    )
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    MediaType.entries.forEach { category ->
-                        val selected = selectedCategory == category
-                        FilterChip(
-                            selected = selected,
-                            onClick = { if (!isUploading) selectedCategory = category },
-                            label = { Text(category.displayLabel, fontSize = 10.5.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = NavyPrimary,
-                                selectedLabelColor = GoldMetallic
+                    // Steady scrollable body (stays comfortably above IME keyboard)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = "Files up to 18 MB auto-sync to every student phone via Firestore. For larger files (>18 MB), use HTTPS Link.",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Color(0xFF475569),
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
                             )
                         )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = !useHttpsUrlMode,
+                                onClick = { if (!isUploading) useHttpsUrlMode = false },
+                                label = { Text("Device Files", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                                colors = chipColors
+                            )
+                            if (onAttachRemoteUrl != null) {
+                                FilterChip(
+                                    selected = useHttpsUrlMode,
+                                    onClick = { if (!isUploading) useHttpsUrlMode = true },
+                                    label = { Text("HTTPS Link", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                                    colors = chipColors,
+                                    modifier = Modifier.testTag("chip_upload_https_mode")
+                                )
+                            }
+                        }
+
+                        // When files are picked in Device Files mode, put Title & Description RIGHT HERE at the top so typing never hides under keyboard
+                        if (!useHttpsUrlMode && pendingItems.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Selected Files (${pendingItems.size}) — Add Title & Description",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = SuccessGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            pendingItems.forEachIndexed { idx, item ->
+                                val willCloudSync = item.sizeBytes <= CloudSyncRepository.MAX_CLOUD_FILE_BYTES
+                                val titleBringIntoView = remember { BringIntoViewRequester() }
+                                val descBringIntoView = remember { BringIntoViewRequester() }
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFFF8FAFC))
+                                        .border(1.dp, Color(0xFFD6E2F0), RoundedCornerShape(12.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${item.mediaType.displayLabel} • ${item.fileName}",
+                                                fontWeight = FontWeight.Bold,
+                                                color = NavyPrimary,
+                                                fontSize = 12.sp
+                                            )
+                                            Text(
+                                                text = if (willCloudSync) {
+                                                    "Size: ${item.sizeFormatted} • Auto-syncs to students"
+                                                } else {
+                                                    "Size: ${item.sizeFormatted} (>18 MB) • Use HTTPS Link for cross-device access"
+                                                },
+                                                color = if (willCloudSync) Color(0xFF047857) else GoldDark,
+                                                fontSize = 10.5.sp
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                pendingItems = pendingItems.filterNot { it.id == item.id }
+                                            },
+                                            enabled = !isUploading,
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Remove file",
+                                                tint = DangerRed,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    OutlinedTextField(
+                                        value = item.title,
+                                        onValueChange = { newTitle ->
+                                            pendingItems = pendingItems.mapIndexed { i, existing ->
+                                                if (i == idx) existing.copy(title = newTitle) else existing
+                                            }
+                                        },
+                                        label = { Text("File Title", fontSize = 11.5.sp) },
+                                        placeholder = { Text("Enter readable title for students", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        enabled = !isUploading,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .bringIntoViewRequester(titleBringIntoView)
+                                            .onFocusChanged { focusState ->
+                                                if (focusState.isFocused) {
+                                                    coroutineScope.launch { titleBringIntoView.bringIntoView() }
+                                                }
+                                            }
+                                            .testTag("input_media_filename_$idx"),
+                                        colors = dialogInputColors
+                                    )
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    OutlinedTextField(
+                                        value = item.description,
+                                        onValueChange = { newDesc ->
+                                            pendingItems = pendingItems.mapIndexed { i, existing ->
+                                                if (i == idx) existing.copy(description = newDesc) else existing
+                                            }
+                                        },
+                                        label = { Text("Short Description (optional)", fontSize = 11.5.sp) },
+                                        singleLine = false,
+                                        maxLines = 2,
+                                        enabled = !isUploading,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .bringIntoViewRequester(descBringIntoView)
+                                            .onFocusChanged { focusState ->
+                                                if (focusState.isFocused) {
+                                                    coroutineScope.launch { descBringIntoView.bringIntoView() }
+                                                }
+                                            },
+                                        colors = dialogInputColors
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "File Category",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = NavyPrimary
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            MediaType.entries.forEach { category ->
+                                val selected = selectedCategory == category
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { if (!isUploading) selectedCategory = category },
+                                    label = { Text(category.displayLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                    colors = chipColors
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (useHttpsUrlMode) {
+                            val urlBringIntoView = remember { BringIntoViewRequester() }
+                            val titleBringIntoView = remember { BringIntoViewRequester() }
+                            OutlinedTextField(
+                                value = remoteUrlInput,
+                                onValueChange = {
+                                    remoteUrlInput = it
+                                    localValidationError = null
+                                },
+                                label = { Text("Direct HTTPS File URL") },
+                                placeholder = { Text("https://example.com/lecture-notes.pdf") },
+                                singleLine = true,
+                                enabled = !isUploading,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .bringIntoViewRequester(urlBringIntoView)
+                                    .onFocusChanged {
+                                        if (it.isFocused) coroutineScope.launch { urlBringIntoView.bringIntoView() }
+                                    }
+                                    .testTag("input_remote_media_url"),
+                                colors = dialogInputColors
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = presetTitle,
+                                onValueChange = { presetTitle = it },
+                                label = { Text("Material Title") },
+                                singleLine = true,
+                                enabled = !isUploading,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .bringIntoViewRequester(titleBringIntoView)
+                                    .onFocusChanged {
+                                        if (it.isFocused) coroutineScope.launch { titleBringIntoView.bringIntoView() }
+                                    }
+                                    .testTag("input_media_filename"),
+                                colors = dialogInputColors
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = presetDescription,
+                                onValueChange = { presetDescription = it },
+                                label = { Text("Short Description (optional)") },
+                                maxLines = 2,
+                                enabled = !isUploading,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = dialogInputColors
+                            )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { multiFilePickerLauncher.launch(mimeFiltersForCategory) },
+                                    enabled = !isUploading,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 46.dp)
+                                        .testTag("btn_select_phone_file"),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = NavyPrimary,
+                                        contentColor = GoldMetallic
+                                    ),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (pendingItems.isEmpty()) "Pick ${selectedCategory.displayLabel}" else "Add More (${selectedCategory.displayLabel})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = { multiFilePickerLauncher.launch(arrayOf("*/*")) },
+                                    enabled = !isUploading,
+                                    modifier = Modifier
+                                        .heightIn(min = 46.dp)
+                                        .testTag("btn_pick_any_files"),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, NavyPrimary.copy(alpha = 0.45f))
+                                ) {
+                                    Text(
+                                        text = "All Types",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NavyPrimary,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+
+                            if (pendingItems.isEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = presetTitle,
+                                    onValueChange = { presetTitle = it },
+                                    label = { Text("Title (optional quick preset title)") },
+                                    singleLine = true,
+                                    enabled = !isUploading,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("input_media_filename"),
+                                    colors = dialogInputColors
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                OutlinedTextField(
+                                    value = presetDescription,
+                                    onValueChange = { presetDescription = it },
+                                    label = { Text("Short Description (optional)") },
+                                    maxLines = 2,
+                                    enabled = !isUploading,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = dialogInputColors
+                                )
+                            }
+                        }
+
+                        if (effectiveError != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFFEF2F2))
+                                    .border(1.dp, DangerRed.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                    .padding(10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Error,
+                                        contentDescription = null,
+                                        tint = DangerRed,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = effectiveError,
+                                            color = DangerRed,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = {
+                                            localValidationError = null
+                                            onRetry()
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Clear Error",
+                                            tint = DangerRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isUploading) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Uploading... ${((uploadProgress ?: 0f) * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = NavyPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                                if (!uploadByteStatus.isNullOrBlank()) {
+                                    Text(
+                                        text = uploadByteStatus,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = GoldDark,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.sp
+                                        )
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { uploadProgress ?: 0f },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                                color = GoldMetallic,
+                                trackColor = Color(0xFFD6E2F0)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFF1F5F9))
+                                .clickable(enabled = !isUploading) { onLoadDemoPreset() }
+                                .padding(10.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = GoldDark,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Or tap here to attach sample lecture materials (PDF + Audio + Video).",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = NavyPrimary,
+                                        fontSize = 10.5.sp
+                                    )
+                                )
+                            }
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                if (useHttpsUrlMode) {
-                    OutlinedTextField(
-                        value = remoteUrlInput,
-                        onValueChange = {
-                            remoteUrlInput = it
-                            localValidationError = null
-                        },
-                        label = { Text("Direct HTTPS File URL") },
-                        placeholder = { Text("https://example.com/lecture-notes.pdf") },
-                        singleLine = true,
-                        enabled = !isUploading,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("input_remote_media_url"),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = presetTitle,
-                        onValueChange = { presetTitle = it },
-                        label = { Text("Material Title") },
-                        singleLine = true,
-                        enabled = !isUploading,
-                        modifier = Modifier.fillMaxWidth().testTag("input_media_filename"),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = presetDescription,
-                        onValueChange = { presetDescription = it },
-                        label = { Text("Short Description (optional)") },
-                        maxLines = 2,
-                        enabled = !isUploading,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                    )
-                } else {
+                    // Fixed footer buttons so actions stay steady and never jump
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (!isUploading) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancel", color = NavyPrimary, fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
                         Button(
-                            onClick = { multiFilePickerLauncher.launch(mimeFiltersForCategory) },
+                            onClick = {
+                                if (useHttpsUrlMode && onAttachRemoteUrl != null) {
+                                    val trimmed = remoteUrlInput.trim()
+                                    if (!trimmed.startsWith("https://", ignoreCase = true) && !trimmed.startsWith("http://", ignoreCase = true)) {
+                                        localValidationError = "Enter a valid HTTPS URL starting with https://"
+                                    } else {
+                                        onAttachRemoteUrl(selectedCategory, trimmed, presetTitle, presetDescription)
+                                    }
+                                } else if (pendingItems.isNotEmpty()) {
+                                    onUploadMultipleFiles(pendingItems)
+                                } else {
+                                    localValidationError = "Select at least one file via 'Pick ${selectedCategory.displayLabel}' or 'All Types', or switch to 'HTTPS Link'."
+                                }
+                            },
                             enabled = !isUploading,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp)
-                                .testTag("btn_select_phone_file"),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = NavyPrimary,
                                 contentColor = GoldMetallic
                             ),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("btn_confirm_upload")
                         ) {
-                            Icon(imageVector = Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Pick ${selectedCategory.displayLabel} Files",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.5.sp
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { multiFilePickerLauncher.launch(arrayOf("*/*")) },
-                            enabled = !isUploading,
-                            modifier = Modifier
-                                .height(46.dp)
-                                .testTag("btn_pick_any_files"),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("All Types", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-                        }
-                    }
-
-                    if (pendingItems.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Selected Files (${pendingItems.size}) — Add Title & Description",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                color = SuccessGreen,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        pendingItems.forEachIndexed { idx, item ->
-                            val willCloudSync = item.sizeBytes <= CloudSyncRepository.MAX_CLOUD_FILE_BYTES
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFF8FAFC))
-                                    .border(1.dp, Color(0xFFD6E2F0), RoundedCornerShape(10.dp))
-                                    .padding(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "${item.mediaType.displayLabel} • ${item.fileName}",
-                                            fontWeight = FontWeight.Bold,
-                                            color = NavyPrimary,
-                                            fontSize = 11.5.sp
-                                        )
-                                        Text(
-                                            text = if (willCloudSync) {
-                                                "Size: ${item.sizeFormatted} • Syncs automatically to student phones"
-                                            } else {
-                                                "Size: ${item.sizeFormatted} (>18 MB) • Use HTTPS Link tab for cross-device access"
-                                            },
-                                            color = if (willCloudSync) Color(0xFF047857) else GoldDark,
-                                            fontSize = 10.sp
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            pendingItems = pendingItems.filterNot { it.id == item.id }
-                                        },
-                                        enabled = !isUploading,
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Remove file",
-                                            tint = DangerRed,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                OutlinedTextField(
-                                    value = item.title,
-                                    onValueChange = { newTitle ->
-                                        pendingItems = pendingItems.mapIndexed { i, existing ->
-                                            if (i == idx) existing.copy(title = newTitle) else existing
-                                        }
-                                    },
-                                    label = { Text("File Title", fontSize = 11.sp) },
-                                    singleLine = true,
-                                    enabled = !isUploading,
-                                    modifier = Modifier.fillMaxWidth().testTag("input_media_filename_$idx"),
-                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                OutlinedTextField(
-                                    value = item.description,
-                                    onValueChange = { newDesc ->
-                                        pendingItems = pendingItems.mapIndexed { i, existing ->
-                                            if (i == idx) existing.copy(description = newDesc) else existing
-                                        }
-                                    },
-                                    label = { Text("Short Description (optional)", fontSize = 11.sp) },
-                                    singleLine = false,
-                                    maxLines = 2,
-                                    enabled = !isUploading,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                                )
-                            }
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = presetTitle,
-                            onValueChange = { presetTitle = it },
-                            label = { Text("Title (for quick attachment or preset)") },
-                            singleLine = true,
-                            enabled = !isUploading,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("input_media_filename"),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = presetDescription,
-                            onValueChange = { presetDescription = it },
-                            label = { Text("Short Description (optional)") },
-                            maxLines = 2,
-                            enabled = !isUploading,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
-                        )
-                    }
-                }
-
-                if (effectiveError != null) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFFEF2F2))
-                            .border(1.dp, DangerRed.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                            .padding(10.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Error,
-                                contentDescription = null,
-                                tint = DangerRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = effectiveError,
-                                    color = DangerRed,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = {
-                                    localValidationError = null
-                                    onRetry()
+                                text = when {
+                                    useHttpsUrlMode -> "Attach HTTPS Link"
+                                    pendingItems.isNotEmpty() -> "Upload ${pendingItems.size} File(s)"
+                                    else -> "Select File(s) First"
                                 },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Clear Error",
-                                    tint = DangerRed,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (isUploading) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Uploading... ${((uploadProgress ?: 0f) * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = NavyPrimary,
                                 fontWeight = FontWeight.Bold
                             )
-                        )
-                        if (!uploadByteStatus.isNullOrBlank()) {
-                            Text(
-                                text = uploadByteStatus,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = GoldDark,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 10.sp
-                                )
-                            )
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { uploadProgress ?: 0f },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = GoldMetallic,
-                        trackColor = Color(0xFFD6E2F0)
-                    )
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFF1F5F9))
-                        .clickable(enabled = !isUploading) { onLoadDemoPreset() }
-                        .padding(10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = GoldDark,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Or tap here to attach sample lecture materials (PDF + Audio + Video).",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = NavyPrimary,
-                                fontSize = 10.5.sp
-                            )
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (useHttpsUrlMode && onAttachRemoteUrl != null) {
-                        val trimmed = remoteUrlInput.trim()
-                        if (!trimmed.startsWith("https://", ignoreCase = true) && !trimmed.startsWith("http://", ignoreCase = true)) {
-                            localValidationError = "Enter a valid HTTPS URL starting with https://"
-                        } else {
-                            onAttachRemoteUrl(selectedCategory, trimmed, presetTitle, presetDescription)
-                        }
-                    } else if (pendingItems.isNotEmpty()) {
-                        onUploadMultipleFiles(pendingItems)
-                    } else {
-                        localValidationError = "Select at least one real file via 'Pick ${selectedCategory.displayLabel} Files' or 'All Types', or switch to 'HTTPS Link'."
-                    }
-                },
-                enabled = !isUploading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = NavyPrimary,
-                    contentColor = GoldMetallic
-                ),
-                modifier = Modifier.testTag("btn_confirm_upload")
-            ) {
-                Text(
-                    text = when {
-                        useHttpsUrlMode -> "Attach HTTPS Link"
-                        pendingItems.isNotEmpty() -> "Upload ${pendingItems.size} File(s)"
-                        else -> "Select File(s) First"
-                    },
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        },
-        dismissButton = {
-            if (!isUploading) {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         }
-    )
+    }
 }
 
 // ======================= DELETE CONFIRMATION DIALOG =======================

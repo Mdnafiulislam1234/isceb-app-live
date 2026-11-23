@@ -68,6 +68,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.cos
+import kotlin.math.sin
 import com.example.R
 import com.example.model.CertificateRecord
 import com.example.model.CertificateStatus
@@ -141,19 +145,48 @@ fun CertificatePreviewCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .testTag("card_certificate_preview"),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFCFCFD)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF0E9), contentColor = Color(0xFF0F172A)),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color(0xFFFDF7F3),
+                            Color(0xFFFBF0E9),
+                            Color(0xFFF3DDD1)
+                        )
+                    )
+                )
                 .border(6.dp, NavyPrimary, RoundedCornerShape(12.dp))
                 .padding(6.dp)
                 .border(2.dp, GoldMetallic, RoundedCornerShape(8.dp))
-                .padding(12.dp)
         ) {
+            // Subtle same-tone warm reddish-cream ornamental watermark behind text
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val cx = size.width / 2f
+                val cy = size.height * 0.48f
+                val maxR = minOf(size.width, size.height) * 0.34f
+                val wmColor = Color(0xFFDFC1B2).copy(alpha = 0.42f)
+                drawCircle(color = wmColor, radius = maxR, center = Offset(cx, cy), style = Stroke(width = 1.6f))
+                drawCircle(color = wmColor, radius = maxR * 0.78f, center = Offset(cx, cy), style = Stroke(width = 1.2f))
+                for (deg in 0 until 360 step 20) {
+                    val rad = Math.toRadians(deg.toDouble())
+                    drawLine(
+                        color = wmColor.copy(alpha = 0.28f),
+                        start = Offset(cx + (cos(rad) * (maxR * 0.48f)).toFloat(), cy + (sin(rad) * (maxR * 0.48f)).toFloat()),
+                        end = Offset(cx + (cos(rad) * (maxR * 0.96f)).toFloat(), cy + (sin(rad) * (maxR * 0.96f)).toFloat()),
+                        strokeWidth = 1f
+                    )
+                }
+            }
+
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Official ISCEB Logo
@@ -194,11 +227,14 @@ fun CertificatePreviewCard(
                         fontWeight = FontWeight.Bold,
                         color = NavyPrimary,
                         fontSize = 10.sp,
-                        letterSpacing = 0.6.sp,
+                        letterSpacing = 0.5.sp,
                         lineHeight = 13.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     ),
-                    modifier = Modifier.testTag("text_cert_institution_name")
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp)
+                        .testTag("text_cert_institution_name")
                 )
 
                 Spacer(modifier = Modifier.height(2.dp))
@@ -209,9 +245,13 @@ fun CertificatePreviewCard(
                         color = GoldDark,
                         fontWeight = FontWeight.Bold,
                         fontSize = 8.sp,
-                        letterSpacing = 0.6.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                        letterSpacing = 0.4.sp,
+                        lineHeight = 11.sp,
+                        textAlign = TextAlign.Center
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -222,9 +262,13 @@ fun CertificatePreviewCard(
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
                         color = NavyPrimary,
-                        fontSize = 15.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -356,10 +400,11 @@ fun CertificatePreviewCard(
                         if (leftSigner.title.isNotBlank()) {
                             Text(
                                 text = leftSigner.title,
-                                color = Color(0xFF64748B),
+                                color = GoldDark,
+                                fontWeight = FontWeight.SemiBold,
                                 fontSize = 7.5.sp,
                                 maxLines = 2,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -405,7 +450,7 @@ fun CertificatePreviewCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFFF1F5F9))
+                        .background(Color(0xFFF3E2D8))
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -722,7 +767,7 @@ fun CertificateVerificationScreen(
                                     VerificationDetailRow("Institution:", CertificatePdfGenerator.formatInstitutionDisplayName(cert.institutionName))
                                     val rightSig = CertificatePdfGenerator.resolveRightSignatory(cert)
                                     val leftSig = CertificatePdfGenerator.resolveLeftSignatory()
-                                    VerificationDetailRow("Signatories:", "${leftSig.name} (Left) • ${rightSig.name}, ${rightSig.title} (Right)")
+                                    VerificationDetailRow("Signatories:", "${leftSig.name}, ${leftSig.title} (Left) • ${rightSig.name}, ${rightSig.title} (Right)")
                                     VerificationDetailRow("Verification URL:", cert.verificationUrl.ifBlank { "https://www.isceb.org/verify/${cert.certificateId}" })
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

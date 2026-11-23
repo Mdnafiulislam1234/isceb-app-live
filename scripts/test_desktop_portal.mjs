@@ -76,9 +76,11 @@ test("Desktop ISCEB Members directory enforces exact 1..8 order, portraits, and 
       "Mr. Md. Mashiur Rahman",
       "Shajibul Hasan",
       "Tonmoy Khan",
-      "Developer Mohammad Nafiul Islam"
+      "Md. Nafiul Islam Nahin"
     ]
   );
+  assert.equal(DEFAULT_DEVELOPER.headline, "Developer | Supply Chain Management Enthusiast | Aspiring Corporate Professional");
+  assert.equal(DEFAULT_DEVELOPER.personalPhilosophy, "Learn Continuously, Think Strategically, and Grow Professionally.");
   for (const member of DEFAULT_MEMBERS) {
     assert.ok(member.photoUrl.startsWith("./") && member.photoUrl.endsWith(".webp"));
     const diskPath = `./public/desktop/${member.photoUrl.slice(2)}`;
@@ -259,12 +261,16 @@ test("PC/Web portal enforces official ISCEB full name, Hasina Khan & Amirul Isla
 
   assert.ok(appJs.includes("Institute of Supply Chain Excellence Bangladesh (ISCEB)"));
   assert.ok(appJs.includes('leftSignerName: "Hasina Khan"'));
+  assert.ok(appJs.includes('leftSignerTitle: "Chairman & CEO"'));
   assert.ok(appJs.includes('authorizedSignerName: "Amirul Islam"'));
   assert.ok(appJs.includes('authorizedSignerTitle: "Founder of ISCEB"'));
   assert.ok(appJs.includes('data-action="preview-demo-certificate"'));
   assert.ok(appJs.includes('data-action="toggle-certificates-enabled"'));
   assert.ok(appJs.includes('data-action="toggle-demo-cert-enabled"'));
   assert.ok(stylesCss.includes(".cert-signatories-grid"));
+  assert.ok(stylesCss.includes("#FDF7F3") && stylesCss.includes("#F3DDD1"), "Certificate must use light warm reddish-cream parchment styling");
+  assert.ok(!appJs.includes('#${Number(m.displayOrder'), "Member directory cards must not display #1/#2/#3 number badges");
+  assert.ok(!appJs.includes('#${Number(member.displayOrder'), "Member detail modal must not display #1/#2/#3 number badges");
 
   const certStart = appJs.indexOf('<div class="cert-sheet">');
   const certEnd = appJs.indexOf("function getMemberPhotoSrc");
@@ -272,6 +278,7 @@ test("PC/Web portal enforces official ISCEB full name, Hasina Khan & Amirul Isla
   const certSection = appJs.slice(certStart, certEnd);
   assert.ok(certSection.includes("Institute of Supply Chain Excellence Bangladesh (ISCEB)"));
   assert.ok(certSection.includes("leftSignerName"));
+  assert.ok(certSection.includes("leftSignerTitle"));
   assert.ok(certSection.includes("rightSignerName"));
   assert.ok(certSection.includes("rightSignerTitle"));
   assert.ok(!certSection.includes("developerProfile"), "Certificate template must never render developer Nafiul profile");

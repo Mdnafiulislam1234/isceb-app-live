@@ -879,7 +879,7 @@ fun AdminSettingsDialog(
                 OutlinedTextField(
                     value = leftSignerTitle,
                     onValueChange = { leftSignerTitle = it },
-                    label = { Text("Left Signatory Designation (Optional)") },
+                    label = { Text("Left Signatory Designation") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GoldMetallic)
@@ -1064,7 +1064,7 @@ fun AdminSettingsDialog(
                         officialWebsite = officialWebsite.trim().ifEmpty { initialSettings.officialWebsite },
                         institutionAccreditation = instAccred.trim().ifEmpty { initialSettings.institutionAccreditation },
                         leftSignerName = leftSignerName.trim().ifEmpty { "Hasina Khan" },
-                        leftSignerTitle = leftSignerTitle.trim(),
+                        leftSignerTitle = leftSignerTitle.trim().ifEmpty { "Chairman & CEO" },
                         authorizedSignerName = signerName.trim().ifEmpty { "Amirul Islam" },
                         authorizedSignerTitle = signerTitle.trim().ifEmpty { "Founder of ISCEB" },
                         certificateTitle = certTitle.trim().ifEmpty { initialSettings.certificateTitle },

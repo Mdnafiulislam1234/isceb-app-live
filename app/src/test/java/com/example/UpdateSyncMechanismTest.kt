@@ -484,4 +484,19 @@ class UpdateSyncMechanismTest {
         assertTrue(freshRepo.classes.value.first { it.id == "class-1" }.isCompleted)
         assertEquals(95L, freshRepo.studentProgressMap.value["class-2"]?.activeLearningSeconds)
     }
+
+    @Test
+    fun `hasSigningCertificateMismatch safely returns false for missing or non-apk files`() {
+        val manager = ApkUpdateManager(context)
+        assertFalse(manager.hasSigningCertificateMismatch("/non/existent/ISCEB-latest.apk"))
+
+        val dummyFile = java.io.File(context.cacheDir, "dummy-update.apk").apply {
+            writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04) + "TEST".toByteArray())
+        }
+        try {
+            assertFalse(manager.hasSigningCertificateMismatch(dummyFile.absolutePath))
+        } finally {
+            dummyFile.delete()
+        }
+    }
 }

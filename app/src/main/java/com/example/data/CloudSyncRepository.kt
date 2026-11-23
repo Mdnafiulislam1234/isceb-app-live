@@ -1157,22 +1157,22 @@ class CloudSyncRepository(
             institutionAccreditation = rawSettings["institutionAccreditation"] as? String
                 ?: "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
             leftSignerName = (rawSettings["leftSignerName"] as? String)
-                ?.takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) }
-                ?: "Hasina Khan",
+                ?.takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) && !it.equals("Hasina Khan", ignoreCase = true) }
+                ?: "Hasina Akter Khan",
             leftSignerTitle = (rawSettings["leftSignerTitle"] as? String)
                 ?.takeIf { it.isNotBlank() && !it.contains("Developer", ignoreCase = true) }
                 ?: "Chairman & CEO",
             authorizedSignerName = (rawSettings["authorizedSignerName"] as? String)
                 ?.let {
-                    if (it.isBlank() || it.contains("Nafiul", ignoreCase = true) || it.contains("Developer", ignoreCase = true) || it.contains("Academic", ignoreCase = true)) {
-                        "Amirul Islam"
-                    } else if (it.startsWith("Md. Amirul Islam", ignoreCase = true)) {
-                        "Amirul Islam"
+                    if (it.isBlank() || it.contains("Nafiul", ignoreCase = true) || it.contains("Developer", ignoreCase = true) || it.contains("Academic", ignoreCase = true) || it.contains("Hasina", ignoreCase = true)) {
+                        "Md. Amirul Islam"
+                    } else if (it.equals("Amirul Islam", ignoreCase = true)) {
+                        "Md. Amirul Islam"
                     } else {
                         it.substringBefore(",").trim()
                     }
                 }
-                ?: "Amirul Islam",
+                ?: "Md. Amirul Islam",
             authorizedSignerTitle = (rawSettings["authorizedSignerTitle"] as? String)
                 ?.takeIf { it.isNotBlank() && !it.contains("Developer", ignoreCase = true) && !it.contains("Academic Directorate", ignoreCase = true) }
                 ?: "Founder of ISCEB",

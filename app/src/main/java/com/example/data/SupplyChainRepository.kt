@@ -241,14 +241,14 @@ class SupplyChainRepository(
             AdminCompletionSettings()
         }
         val cleanLeftSigner = existingSettings.leftSignerName
-            .takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) && !it.contains("Amirul", ignoreCase = true) }
-            ?: "Hasina Khan"
+            .takeIf { it.isNotBlank() && !it.contains("Nafiul", ignoreCase = true) && !it.contains("Amirul", ignoreCase = true) && !it.equals("Hasina Khan", ignoreCase = true) }
+            ?: "Hasina Akter Khan"
         val cleanRightSigner = existingSettings.authorizedSignerName
             .let {
                 if (it.isBlank() || it.contains("Nafiul", ignoreCase = true) || it.contains("Academic", ignoreCase = true) || it.contains("Developer", ignoreCase = true) || it.contains("Hasina", ignoreCase = true)) {
-                    "Amirul Islam"
-                } else if (it.startsWith("Md. Amirul Islam", ignoreCase = true)) {
-                    "Amirul Islam"
+                    "Md. Amirul Islam"
+                } else if (it.equals("Amirul Islam", ignoreCase = true)) {
+                    "Md. Amirul Islam"
                 } else {
                     it.substringBefore(",").trim()
                 }
@@ -2450,17 +2450,17 @@ class SupplyChainRepository(
             reqAsgSet.add("asg-12-final-project")
         }
 
-        val rawRightSigner = obj.optString("authorizedSignerName", "Amirul Islam")
+        val rawRightSigner = obj.optString("authorizedSignerName", "Md. Amirul Islam")
         val safeRightSigner = if (rawRightSigner.contains("Nafiul", ignoreCase = true) || rawRightSigner.isBlank()) {
-            "Amirul Islam"
-        } else if (rawRightSigner.startsWith("Md. Amirul Islam", ignoreCase = true)) {
-            "Amirul Islam"
+            "Md. Amirul Islam"
+        } else if (rawRightSigner.equals("Amirul Islam", ignoreCase = true)) {
+            "Md. Amirul Islam"
         } else {
             rawRightSigner.substringBefore(",").trim()
         }
-        val rawLeftSigner = obj.optString("leftSignerName", "Hasina Khan")
-        val safeLeftSigner = if (rawLeftSigner.contains("Nafiul", ignoreCase = true) || rawLeftSigner.isBlank()) {
-            "Hasina Khan"
+        val rawLeftSigner = obj.optString("leftSignerName", "Hasina Akter Khan")
+        val safeLeftSigner = if (rawLeftSigner.contains("Nafiul", ignoreCase = true) || rawLeftSigner.isBlank() || rawLeftSigner.equals("Hasina Khan", ignoreCase = true)) {
+            "Hasina Akter Khan"
         } else {
             rawLeftSigner
         }

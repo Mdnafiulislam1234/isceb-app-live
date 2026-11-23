@@ -243,12 +243,15 @@ test("Desktop Web Portal enforces single-line badges, untruncated upload banner,
   }
 });
 
-test("PC/Web portal enforces official ISCEB full name, Hasina Khan & Amirul Islam certificate signatories, and Demo Preview", () => {
+test("PC/Web portal enforces official ISCEB full name, Hasina Akter Khan & Md. Amirul Islam certificate signatories, and Demo Preview", () => {
   const indexHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
   const manifestJson = fs.readFileSync("./public/desktop/manifest.webmanifest", "utf8");
   const curriculumJs = fs.readFileSync("./public/desktop/curriculum-data.js", "utf8");
   const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
   const stylesCss = fs.readFileSync("./public/desktop/styles.css", "utf8");
+
+  assert.ok(indexHtml.includes("user-scalable=no") && indexHtml.includes("maximum-scale=1.0"), "Mobile PWA viewport must lock pinch-zoom");
+  assert.ok(stylesCss.includes("overflow-x: hidden") && stylesCss.includes("touch-action: pan-y"), "Mobile PWA must lock horizontal drag and overflow");
 
   for (const [name, content] of [
     ["index.html", indexHtml],
@@ -260,9 +263,9 @@ test("PC/Web portal enforces official ISCEB full name, Hasina Khan & Amirul Isla
   }
 
   assert.ok(appJs.includes("Institute of Supply Chain Excellence Bangladesh (ISCEB)"));
-  assert.ok(appJs.includes('leftSignerName: "Hasina Khan"'));
+  assert.ok(appJs.includes('leftSignerName: "Hasina Akter Khan"'));
   assert.ok(appJs.includes('leftSignerTitle: "Chairman & CEO"'));
-  assert.ok(appJs.includes('authorizedSignerName: "Amirul Islam"'));
+  assert.ok(appJs.includes('authorizedSignerName: "Md. Amirul Islam"'));
   assert.ok(appJs.includes('authorizedSignerTitle: "Founder of ISCEB"'));
   assert.ok(appJs.includes('data-action="preview-demo-certificate"'));
   assert.ok(appJs.includes('data-action="toggle-certificates-enabled"'));

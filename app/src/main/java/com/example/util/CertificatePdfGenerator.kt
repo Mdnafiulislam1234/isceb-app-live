@@ -28,9 +28,9 @@ object CertificatePdfGenerator {
 
     const val OFFICIAL_INSTITUTION_FULL_NAME = "Institute of Supply Chain Excellence Bangladesh"
     const val OFFICIAL_INSTITUTION_DISPLAY = "Institute of Supply Chain Excellence Bangladesh (ISCEB)"
-    const val DEFAULT_LEFT_SIGNER_NAME = "Hasina Khan"
+    const val DEFAULT_LEFT_SIGNER_NAME = "Hasina Akter Khan"
     const val DEFAULT_LEFT_SIGNER_TITLE = "Chairman & CEO"
-    const val DEFAULT_RIGHT_SIGNER_NAME = "Amirul Islam"
+    const val DEFAULT_RIGHT_SIGNER_NAME = "Md. Amirul Islam"
     const val DEFAULT_RIGHT_SIGNER_TITLE = "Founder of ISCEB"
     const val DEMO_CERTIFICATE_ID = "ISCEB-DEMO-PGD-2026"
 
@@ -63,7 +63,8 @@ object CertificatePdfGenerator {
         val configuredName = settings?.leftSignerName?.trim().orEmpty()
         val safeName = if (configuredName.isBlank() ||
             configuredName.contains("Nafiul", ignoreCase = true) ||
-            configuredName.contains("Amirul", ignoreCase = true)
+            configuredName.contains("Amirul", ignoreCase = true) ||
+            configuredName.equals("Hasina Khan", ignoreCase = true)
         ) {
             DEFAULT_LEFT_SIGNER_NAME
         } else {
@@ -99,7 +100,7 @@ object CertificatePdfGenerator {
             }
             else -> DEFAULT_RIGHT_SIGNER_NAME
         }
-        if (resolvedName.equals("Md. Amirul Islam", ignoreCase = true)) {
+        if (resolvedName.equals("Amirul Islam", ignoreCase = true)) {
             resolvedName = DEFAULT_RIGHT_SIGNER_NAME
         }
 

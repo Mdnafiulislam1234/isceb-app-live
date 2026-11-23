@@ -31,12 +31,22 @@
 html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+  -webkit-text-size-adjust: 100%;
   height: 100%;
   font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+img, svg, video, audio {
+  max-width: 100%;
 }
 
 button, input, select, textarea {
@@ -53,7 +63,9 @@ button, input, select, textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 270px 1fr;
+  grid-template-columns: 270px minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
 }
 
@@ -197,6 +209,8 @@ button, input, select, textarea {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .topbar {
@@ -285,13 +299,14 @@ button, input, select, textarea {
   padding: 22px 24px 48px;
   max-width: 1360px;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
 }
 
 /* Grid & Cards */
 .hero-dashboard-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   gap: 18px;
   align-items: center;
 }
@@ -319,7 +334,7 @@ button, input, select, textarea {
 
 .master-detail {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 380px minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -331,6 +346,9 @@ button, input, select, textarea {
   padding: 18px;
   box-shadow: var(--shadow-sm);
   margin-bottom: 16px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .card-navy {
@@ -345,6 +363,8 @@ button, input, select, textarea {
   border-radius: var(--radius-md);
   padding: 16px;
   box-shadow: var(--shadow-sm);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .stat-label {
@@ -715,13 +735,14 @@ button, input, select, textarea {
 
 @media (max-width: 1024px) {
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .master-detail { grid-template-columns: 1fr; }
+  .master-detail { grid-template-columns: minmax(0, 1fr); }
   .three-col-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 840px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: clip;
   }
 
   /* Slide-out Drawer for Sidebar on Mobile */
@@ -757,6 +778,9 @@ button, input, select, textarea {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
     background: var(--navy);
     color: #fff;
     padding: max(8px, env(safe-area-inset-top)) 10px 8px;
@@ -885,6 +909,9 @@ button, input, select, textarea {
   .mobile-bottom-nav {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
     position: fixed;
     left: 0;
     right: 0;
@@ -941,11 +968,15 @@ button, input, select, textarea {
   }
 
   .hero-dashboard-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .two-col-grid, .three-col-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #desktopAdminLeadershipHierarchy {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .media-upload-grid {
@@ -953,7 +984,42 @@ button, input, select, textarea {
   }
 
   .content {
-    padding: 14px 12px 92px;
+    padding: 12px 12px 92px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .btn {
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .input, .select, .textarea {
+    font-size: 16px;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 16px;
   }
 
   .stats-grid {
@@ -962,14 +1028,23 @@ button, input, select, textarea {
   }
 
   .cert-signatories-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
 }
 
 @media (max-width: 440px) {
   .stats-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-value {
+    font-size: 20px;
   }
 }
 

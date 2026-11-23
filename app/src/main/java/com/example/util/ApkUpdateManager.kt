@@ -2,6 +2,8 @@ package com.example.util
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -236,6 +238,63 @@ class ApkUpdateManager(
                 "Unable to open Android Package Installer: ${e.localizedMessage ?: "Unsupported installer intent"}"
             )
         }
+    }
+
+    @Suppress("DEPRECATION")
+    fun hasSigningCertificateMismatch(apkFilePath: String): Boolean {
+        val apkFile = File(apkFilePath)
+        if (!apkFile.exists() || !apkFile.isFile || apkFile.length() <= 0L) return false
+
+        return try {
+            val pm = context.packageManager
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                PackageManager.GET_SIGNATURES
+            }
+            val installedInfo = pm.getPackageInfo(context.packageName, flags) ?: return false
+            val archiveInfo = pm.getPackageArchiveInfo(apkFile.absolutePath, flags) ?: return false
+
+            if (!archiveInfo.packageName.isNullOrBlank() && archiveInfo.packageName != context.packageName) {
+                return true
+            }
+
+            val installedDigests = extractSigningCertSha256Set(installedInfo)
+            val archiveDigests = extractSigningCertSha256Set(archiveInfo)
+            if (installedDigests.isEmpty() || archiveDigests.isEmpty()) return false
+
+            (installedDigests intersect archiveDigests).isEmpty()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun extractSigningCertSha256Set(pkgInfo: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = pkgInfo.signingInfo
+            if (signingInfo != null) {
+                if (signingInfo.hasMultipleSigners()) {
+                    signingInfo.apkContentsSigners
+                } else {
+                    signingInfo.signingCertificateHistory
+                }
+            } else {
+                pkgInfo.signatures
+            }
+        } else {
+            pkgInfo.signatures
+        } ?: return emptySet()
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        return signatures.mapNotNull { sig ->
+            try {
+                digest.reset()
+                digest.digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+            } catch (_: Exception) {
+                null
+            }
+        }.toSet()
     }
 
     companion object {

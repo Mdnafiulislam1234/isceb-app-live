@@ -91,24 +91,22 @@ function normalizeSettings(raw) {
     requiredModulesCompleted: 12,
     certificatesEnabled: true,
     demoCertificateEnabled: true,
-    leftSignerName: "Hasina Khan",
+    leftSignerName: "Hasina Akter Khan",
     leftSignerTitle: "Chairman & CEO",
-    authorizedSignerName: "Amirul Islam",
+    authorizedSignerName: "Md. Amirul Islam",
     authorizedSignerTitle: "Founder of ISCEB",
     ...(raw || {})
   };
   if (typeof s.certificatesEnabled !== "boolean") s.certificatesEnabled = true;
   if (typeof s.demoCertificateEnabled !== "boolean") s.demoCertificateEnabled = true;
-  if (!s.leftSignerName || /nafiul|amirul/i.test(s.leftSignerName)) {
-    s.leftSignerName = "Hasina Khan";
+  if (!s.leftSignerName || /nafiul|amirul/i.test(s.leftSignerName) || /^hasina khan$/i.test(s.leftSignerName.trim())) {
+    s.leftSignerName = "Hasina Akter Khan";
   }
   if (!s.leftSignerTitle || /developer/i.test(s.leftSignerTitle)) {
     s.leftSignerTitle = "Chairman & CEO";
   }
-  if (!s.authorizedSignerName || /nafiul|hasina/i.test(s.authorizedSignerName)) {
-    s.authorizedSignerName = "Amirul Islam";
-  } else if (/^md\.?\s*amirul islam$/i.test(s.authorizedSignerName.trim())) {
-    s.authorizedSignerName = "Amirul Islam";
+  if (!s.authorizedSignerName || /nafiul|hasina/i.test(s.authorizedSignerName) || /^amirul islam$/i.test(s.authorizedSignerName.trim())) {
+    s.authorizedSignerName = "Md. Amirul Islam";
   }
   if (!s.authorizedSignerTitle || /developer|academic directorate/i.test(s.authorizedSignerTitle)) {
     s.authorizedSignerTitle = "Founder of ISCEB";
@@ -903,9 +901,9 @@ function renderDashboard() {
 
   return `
     <div class="card card-navy hero-dashboard-grid">
-      <div>
-        <span class="badge badge-gold">ISCEB PC & Desktop Workspace • ${escapeHtml(state.manifest.versionTag || "v1.6.0")}</span>
-        <h2 style="margin: 10px 0 6px; font-size: 24px; color: #fff;">Welcome back, ${escapeHtml(user.fullName)}</h2>
+      <div style="min-width: 0;">
+        <span class="badge badge-gold">ISCEB Mobile & Web App • ${escapeHtml(state.manifest.versionTag || "v1.6.0")}</span>
+        <h2 style="margin: 10px 0 6px; font-size: 22px; color: #fff; line-height: 1.25;">Welcome back, ${escapeHtml(user.fullName)}</h2>
         <p style="margin: 0 0 12px; color: #CBD5E1; font-size: 13.5px;">
           ${escapeHtml(user.designation)} • ${escapeHtml(user.organization)}
         </p>
@@ -950,7 +948,7 @@ function renderDashboard() {
 
     <div class="two-col-grid">
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; flex-wrap: wrap;">
           <h3 style="margin: 0; font-size: 16px; color: var(--navy);">Next Recommended Lecture</h3>
           <span class="badge badge-navy">${escapeHtml(nextMod ? `Module ${nextMod.number}` : "SCM")}</span>
         </div>
@@ -960,25 +958,25 @@ function renderDashboard() {
       </div>
 
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; flex-wrap: wrap;">
           <h3 style="margin: 0; font-size: 16px; color: var(--navy);">ISCEB Executive Leadership</h3>
           <button type="button" class="btn btn-outline btn-sm" data-nav="directory">View Directory</button>
         </div>
-        <div style="display: grid; gap: 10px;">
-          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px;">
+        <div style="display: grid; gap: 10px; min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; min-width: 0;">
             <img src="./admin-amirul.webp" alt="Md. Amirul Islam" class="portrait-avatar" style="width: 52px; height: 52px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold);" />
-            <div>
+            <div style="min-width: 0; flex: 1;">
               <div style="font-weight: 800; color: var(--navy); font-size: 13.5px;">${escapeHtml(state.founderProfile.name)}</div>
               <div style="font-size: 12px; color: var(--gold-dark); font-weight: 700;">${escapeHtml(state.founderProfile.designation)} • ${escapeHtml(state.founderProfile.additionalRole)}</div>
               <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(state.founderProfile.professionalIdentity)}</div>
             </div>
           </div>
-          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;" data-action="view-member" data-member-id="member-developer-nafiul">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; min-width: 0;" data-action="view-member" data-member-id="member-developer-nafiul">
             <img src="./admin-nafiul.webp" alt="Md. Nafiul Islam Nahin" class="portrait-avatar" style="width: 52px; height: 52px; object-fit: cover; object-position: center 20%; border: 2px solid var(--navy);" />
-            <div style="min-width: 0;">
+            <div style="min-width: 0; flex: 1;">
               <div style="font-weight: 800; color: var(--navy); font-size: 13.5px;">${escapeHtml(state.developerProfile.name)}</div>
               <div style="font-size: 12px; color: var(--navy-soft); font-weight: 700;">${escapeHtml(state.developerProfile.designation)}</div>
-              <div style="font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(state.developerProfile.headline || state.developerProfile.contactEmail)}</div>
+              <div style="font-size: 11px; color: var(--muted); line-height: 1.35;">${escapeHtml(state.developerProfile.headline || state.developerProfile.contactEmail)}</div>
             </div>
           </div>
         </div>
@@ -1225,15 +1223,15 @@ function renderCourses() {
             <form id="adminAttachRemoteUrlForm" data-class-id="${escapeHtml(selectedClass.id)}" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.14); display: grid; gap: 8px;">
               <div style="font-size: 11.5px; color: var(--gold-soft); font-weight: 700;">Or Attach Shared HTTPS Link (for files &gt;18 MB or cloud-hosted video/PDF)</div>
               <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <select id="adminRemoteMediaType" class="select" style="width: auto; min-width: 120px;">
+                <select id="adminRemoteMediaType" class="select" style="width: auto; min-width: min(120px, 100%);">
                   <option value="PDF">PDF</option>
                   <option value="VIDEO">Video</option>
                   <option value="AUDIO">Audio</option>
                   <option value="IMAGE">Image</option>
                   <option value="DOCUMENT">Document</option>
                 </select>
-                <input type="url" id="adminRemoteMediaUrl" class="input" style="flex: 1; min-width: 210px;" placeholder="https://example.com/lecture-material.pdf" required />
-                <input type="text" id="adminRemoteMediaTitle" class="input" style="width: 180px;" placeholder="Material Title" />
+                <input type="url" id="adminRemoteMediaUrl" class="input" style="flex: 1 1 200px; min-width: 0;" placeholder="https://example.com/lecture-material.pdf" required />
+                <input type="text" id="adminRemoteMediaTitle" class="input" style="flex: 1 1 160px; min-width: 0;" placeholder="Material Title" />
                 <button type="submit" class="btn btn-gold btn-sm">Attach HTTPS Link</button>
               </div>
             </form>
@@ -1349,9 +1347,9 @@ function renderLearning() {
     isDemo: true
   };
   const displayedCert = demoCertificateActive && demoCertEnabled ? demoRecord : cert;
-  const leftSignerName = state.settings.leftSignerName || "Hasina Khan";
+  const leftSignerName = state.settings.leftSignerName || "Hasina Akter Khan";
   const leftSignerTitle = state.settings.leftSignerTitle || "Chairman & CEO";
-  const rightSignerName = state.settings.authorizedSignerName || "Amirul Islam";
+  const rightSignerName = state.settings.authorizedSignerName || "Md. Amirul Islam";
   const rightSignerTitle = state.settings.authorizedSignerTitle || "Founder of ISCEB";
 
   return `
@@ -1811,7 +1809,7 @@ function renderAdmin() {
             </button>
           </div>
           <div style="font-size: 11.5px; color: var(--muted);">
-            Signatories — Left: <strong>${escapeHtml(state.settings.leftSignerName || "Hasina Khan")}</strong> (${escapeHtml(state.settings.leftSignerTitle || "Chairman & CEO")}) • Right: <strong>${escapeHtml(state.settings.authorizedSignerName || "Amirul Islam")}</strong> (${escapeHtml(state.settings.authorizedSignerTitle || "Founder of ISCEB")})
+            Signatories — Left: <strong>${escapeHtml(state.settings.leftSignerName || "Hasina Akter Khan")}</strong> (${escapeHtml(state.settings.leftSignerTitle || "Chairman & CEO")}) • Right: <strong>${escapeHtml(state.settings.authorizedSignerName || "Md. Amirul Islam")}</strong> (${escapeHtml(state.settings.authorizedSignerTitle || "Founder of ISCEB")})
           </div>
         </div>
 
@@ -1954,11 +1952,11 @@ function renderProfile() {
 
       <div class="card">
         <div class="profile-action-row">
-          <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 200px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 200px; min-width: 0;">
             <div class="profile-icon-box">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
             </div>
-            <div>
+            <div style="min-width: 0;">
               <div style="font-weight: 800; color: var(--navy); font-size: 14.5px;">Google Cloud Auto-Sync</div>
               <div style="font-size: 12px; color: var(--muted);">
                 ${cloudUser ? `Connected as ${escapeHtml(cloudUser.email)}` : "Sign in with Google for automatic live syllabus &amp; progress sync across phones"}
@@ -1978,11 +1976,11 @@ function renderProfile() {
 
       <div class="card">
         <div class="profile-action-row">
-          <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 200px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 200px; min-width: 0;">
             <div class="profile-icon-box">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
             </div>
-            <div>
+            <div style="min-width: 0;">
               <div style="font-weight: 800; color: var(--navy); font-size: 14.5px;">Administrator Management Mode</div>
               <div style="font-size: 12px; color: var(--muted);">Protected with per-admin cryptographic authentication</div>
             </div>
@@ -2440,7 +2438,7 @@ function setupListeners() {
       render();
     } else if (action === "preview-demo-certificate") {
       demoCertificateActive = !demoCertificateActive;
-      showToast(demoCertificateActive ? "Demo Certificate preview opened (Hasina Khan & Amirul Islam)." : "Demo Certificate preview closed.");
+      showToast(demoCertificateActive ? "Demo Certificate preview opened (Hasina Akter Khan & Md. Amirul Islam)." : "Demo Certificate preview closed.");
       render();
     } else if (action === "toggle-certificates-enabled") {
       state.settings.certificatesEnabled = state.settings.certificatesEnabled === false;

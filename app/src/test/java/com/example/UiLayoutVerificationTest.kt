@@ -321,7 +321,7 @@ class UiLayoutVerificationTest {
     }
 
     @Test
-    fun `certificate preview card uses official ISCEB full name and Hasina Khan left Amirul Islam right signatories`() {
+    fun `certificate preview card uses official ISCEB full name and Hasina Akter Khan left Md Amirul Islam right signatories`() {
         val demoRecord = CertificateRecord(
             certificateId = CertificatePdfGenerator.DEMO_CERTIFICATE_ID,
             studentId = "student-demo-1",
@@ -330,7 +330,7 @@ class UiLayoutVerificationTest {
             issueDate = "November 21, 2026",
             issueTimestamp = 1795200000000L,
             institutionName = "ISCEB",
-            authorizedSigner = "Amirul Islam, Founder of ISCEB",
+            authorizedSigner = "Md. Amirul Islam, Founder of ISCEB",
             status = CertificateStatus.VALID,
             completedClassesCount = 48,
             totalRequiredClasses = 48,
@@ -356,9 +356,9 @@ class UiLayoutVerificationTest {
         leftNode.assertIsDisplayed()
         rightNode.assertIsDisplayed()
 
-        composeTestRule.onNodeWithText("Hasina Khan", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Hasina Akter Khan", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Chairman & CEO", useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Amirul Islam", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Md. Amirul Islam", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Founder of ISCEB", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Nafiul", substring = true, useUnmergedTree = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("International Supply Chain Education Board", substring = true, useUnmergedTree = true)
@@ -374,9 +374,9 @@ class UiLayoutVerificationTest {
         val demoRecord = repository.createDemoCertificateRecord()
         assertEquals(CertificatePdfGenerator.DEMO_CERTIFICATE_ID, demoRecord.certificateId)
         val leftSig = CertificatePdfGenerator.resolveLeftSignatory(repository.adminSettings.value)
-        assertEquals("Hasina Khan", leftSig.name)
+        assertEquals("Hasina Akter Khan", leftSig.name)
         assertEquals("Chairman & CEO", leftSig.title)
-        assertEquals("Amirul Islam", CertificatePdfGenerator.resolveRightSignatory(demoRecord, repository.adminSettings.value).name)
+        assertEquals("Md. Amirul Islam", CertificatePdfGenerator.resolveRightSignatory(demoRecord, repository.adminSettings.value).name)
         assertEquals("Founder of ISCEB", CertificatePdfGenerator.resolveRightSignatory(demoRecord, repository.adminSettings.value).title)
 
         val pdfFile = CertificatePdfGenerator.generateCertificatePdf(context, demoRecord)

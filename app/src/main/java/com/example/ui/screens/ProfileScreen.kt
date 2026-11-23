@@ -1343,15 +1343,59 @@ fun ProfileScreen(
                             }
                         }
                         is ApkDownloadState.ReadyToInstall -> {
+                            val signatureMismatch = remember(dlState.apkFilePath) {
+                                ApkUpdateManager(context).hasSigningCertificateMismatch(dlState.apkFilePath)
+                            }
+                            if (signatureMismatch) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFFFFFBEB))
+                                        .border(1.dp, GoldMetallic, RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                        .testTag("banner_profile_signature_mismatch")
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            text = "Different Signing Key — 1-Time Clean Reinstall Needed",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF92400E)
+                                        )
+                                        Text(
+                                            text = "Android will show \"App not installed\" over this older build. Tap 'Web Page' above to keep the link open, save your Cloud Sync / JSON Backup, uninstall the old app once, and install fresh.",
+                                            fontSize = 10.sp,
+                                            color = Color(0xFF78350F),
+                                            lineHeight = 14.sp
+                                        )
+                                    }
+                                }
+                            }
                             Button(
                                 onClick = onInstallDownloadedApk,
-                                colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen, contentColor = Color.White),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (signatureMismatch) GoldMetallic else SuccessGreen,
+                                    contentColor = if (signatureMismatch) NavyDark else Color.White
+                                ),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth().testTag("btn_profile_install_apk")
                             ) {
                                 Icon(imageVector = Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Install Verified v${dlState.versionName}", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                Text(
+                                    text = if (signatureMismatch) "Try Install v${dlState.versionName} Anyway" else "Install Verified v${dlState.versionName}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                            if (!signatureMismatch) {
+                                Text(
+                                    text = "If Android says 'App not installed', uninstall the old build once (backup/sync first) and install via 'Web Page'.",
+                                    fontSize = 9.5.sp,
+                                    color = Color(0xFF64748B),
+                                    lineHeight = 13.sp
+                                )
                             }
                         }
                         is ApkDownloadState.Error -> {

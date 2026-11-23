@@ -378,6 +378,9 @@ fun PhoneInstallDialog(
                             }
 
                             is ApkDownloadState.ReadyToInstall -> {
+                                val signatureMismatch = remember(dlState.apkFilePath) {
+                                    ApkUpdateManager(context).hasSigningCertificateMismatch(dlState.apkFilePath)
+                                }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -408,6 +411,52 @@ fun PhoneInstallDialog(
                                         }
                                     }
                                 }
+                                if (signatureMismatch) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF78350F))
+                                            .border(1.dp, GoldMetallic.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+                                            .padding(10.dp)
+                                            .testTag("banner_apk_signature_mismatch")
+                                    ) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ErrorOutline,
+                                                    contentDescription = null,
+                                                    tint = GoldMetallic,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Different Signing Key — 1-Time Reinstall Needed",
+                                                    color = GoldSoft,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                            Text(
+                                                text = "Android will show \"App not installed\" because this build uses a different signing certificate than your older installed build.\n1. Tap 'Open Web Page First' below so the download link stays open in Chrome.\n2. Uninstall the old ISCEB app once (save JSON backup / Cloud Sync first).\n3. Install v${dlState.versionName} cleanly from that web page.",
+                                                color = Color(0xFFFEF3C7),
+                                                fontSize = 10.sp,
+                                                lineHeight = 14.sp
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            OutlinedButton(
+                                                onClick = { onOpenApkDownloadUrl(permanentPortalUrl) },
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.fillMaxWidth().testTag("btn_mismatch_open_page")
+                                            ) {
+                                                Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, tint = GoldSoft, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Open Web Page First", color = GoldSoft, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Button(
                                     onClick = onInstallDownloadedApk,
@@ -417,7 +466,20 @@ fun PhoneInstallDialog(
                                 ) {
                                     Icon(imageVector = Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Install Update Now", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(
+                                        text = if (signatureMismatch) "Try Install Update Anyway" else "Install Update Now",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                if (!signatureMismatch) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "If Android says 'App not installed', uninstall the older build once (sync/backup first) & install via 'Open Page' below.",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 9.5.sp,
+                                        lineHeight = 13.sp
+                                    )
                                 }
                             }
 

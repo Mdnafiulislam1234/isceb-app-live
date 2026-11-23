@@ -11,6 +11,7 @@ const SHELL_ASSETS = [
   "./isceb-logo.webp",
   "./isceb-icon-192.png",
   "./isceb-icon-512.png",
+  "./isceb-icon-maskable-512.png",
   "./admin-amirul.webp",
   "./admin-nafiul.webp",
   "./member-hasina.webp",

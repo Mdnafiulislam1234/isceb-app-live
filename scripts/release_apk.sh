@@ -45,8 +45,8 @@ STAGED_APK="$(mktemp -u /tmp/isceb-aligned-XXXXXX.apk)"
 SIGNED_APK="$(mktemp -u /tmp/isceb-signed-XXXXXX.apk)"
 
 if [[ -n "$ZIPALIGN" && -n "$APKSIGNER" && -f "debug.keystore" ]]; then
-  echo "==> Aligning & signing APK (v1 + v2 + v3) with permanent debug.keystore..."
-  "$ZIPALIGN" -f -p 4 "$BUILT_APK" "$STAGED_APK"
+  echo "==> Aligning & signing APK (16KB aligned + v2/v3) with permanent debug.keystore..."
+  "$ZIPALIGN" -f -P 16 4 "$BUILT_APK" "$STAGED_APK" 2>/dev/null || "$ZIPALIGN" -f -p 4 "$BUILT_APK" "$STAGED_APK"
   "$APKSIGNER" sign \
     --ks "debug.keystore" \
     --ks-key-alias "androiddebugkey" \

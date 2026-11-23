@@ -285,6 +285,81 @@ function saveState() {
   } catch (_) {}
 }
 
+function isRunningStandalone() {
+  try {
+    return (
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+      window.navigator?.standalone === true
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+async function triggerPwaInstall() {
+  if (deferredInstallPrompt) {
+    try {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      const btn = document.getElementById("installPwaBtn");
+      if (btn) btn.style.display = "none";
+      if (choice?.outcome === "accepted") {
+        showToast("Installing ISCEB standalone app (no Chrome badge)...");
+      }
+      render();
+      return;
+    } catch (_) {}
+  }
+
+  openModal(
+    "Install ISCEB App (No Chrome Badge)",
+    `<div style="display: grid; gap: 10px; font-size: 13.5px; color: var(--text);">
+      <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 12px; color: #1E3A8A;">
+        <strong>Why shortcuts sometimes show a Chrome logo:</strong><br/>
+        Chrome has two different options under <strong>Add to Home screen</strong>: <em>Install</em> creates a standalone ISCEB app icon (no Chrome badge), while <em>Create shortcut</em> always adds a Chrome badge.
+      </div>
+      <ol style="margin: 0; padding-left: 18px; display: grid; gap: 6px;">
+        <li>Open this exact link in <strong>Google Chrome</strong>: <code>https://mdnafiulislam1234.github.io/isceb-app-live/desktop/</code></li>
+        <li>If an old Chrome-badged ISCEB shortcut exists on your Home Screen, delete it first.</li>
+        <li>Tap Chrome menu <strong>&#8942;</strong> (top-right) &rarr; <strong>Add to Home screen</strong> &rarr; tap <strong>Install</strong> (NOT <em>Create shortcut</em>).</li>
+      </ol>
+      <div style="font-size: 12.5px; color: var(--muted);">
+        Once installed this way, ISCEB opens full-screen without the Chrome bar and updates automatically whenever you push changes to GitHub.
+      </div>
+    </div>`
+  );
+}
+
+function renderPwaInstallBanner() {
+  if (isRunningStandalone()) return "";
+  const promptReady = Boolean(deferredInstallPrompt);
+  return `
+    <div class="card" style="background: linear-gradient(135deg, #FFFDF5 0%, #FEF6DA 100%); border: 1.5px solid var(--gold); padding: 14px 16px;">
+      <div class="profile-action-row">
+        <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 220px; min-width: 0;">
+          <img src="./isceb-icon-192.png" alt="ISCEB App Icon" style="width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--gold); background: #fff; flex-shrink: 0;" />
+          <div style="min-width: 0;">
+            <div style="font-weight: 800; color: var(--navy); font-size: 14px;">
+              ${promptReady ? "Install ISCEB Standalone App (No Chrome Badge)" : "Add ISCEB as Full-Screen App (Auto-Updates)"}
+            </div>
+            <div style="font-size: 12px; color: #5C4710; line-height: 1.4; margin-top: 2px;">
+              ${
+                promptReady
+                  ? "One tap installs the clean ISCEB app icon directly on your Home Screen and auto-updates after every GitHub push."
+                  : "In Chrome <strong>&#8942; &rarr; Add to Home screen</strong>, tap <strong>Install</strong> (never <em>Create shortcut</em>) for a clean icon with zero Chrome badge."
+              }
+            </div>
+          </div>
+        </div>
+        <button type="button" class="btn ${promptReady ? "btn-gold" : "btn-primary"} btn-sm" data-action="trigger-pwa-install" style="white-space: nowrap;">
+          ${promptReady ? "Install ISCEB App" : "How to Install"}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function getAllSelectableStudents() {
   const custom = Array.isArray(state.customStudents) ? state.customStudents : [];
   const baseStudents = getStudentSwitcherUsers(AVAILABLE_USERS);
@@ -900,6 +975,7 @@ function renderDashboard() {
     : `v${state.manifest.latestApkVersionName || "1.6"} (Build ${state.manifest.latestApkVersionCode || 7})`;
 
   return `
+    ${renderPwaInstallBanner()}
     <div class="card card-navy hero-dashboard-grid">
       <div style="min-width: 0;">
         <span class="badge badge-gold">ISCEB Mobile & Web App • ${escapeHtml(state.manifest.versionTag || "v1.6.0")}</span>
@@ -2013,6 +2089,11 @@ function renderProfile() {
         </div>
 
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          ${
+            !isRunningStandalone()
+              ? `<button type="button" class="btn btn-gold btn-sm" data-action="trigger-pwa-install">${deferredInstallPrompt ? "Install App (No Badge)" : "Install Guide"}</button>`
+              : ""
+          }
           <button type="button" class="btn btn-outline btn-sm" data-action="check-pwa-update-now">Check Updates</button>
           <a href="${escapeHtml(apkUrl)}" download="ISCEB-latest.apk" class="btn btn-primary btn-sm">Download Latest APK</a>
           <button type="button" class="btn btn-outline btn-sm" data-action="export-workspace-json">Backup Workspace JSON</button>
@@ -2302,6 +2383,7 @@ function setupListeners() {
     deferredInstallPrompt = e;
     const btn = document.getElementById("installPwaBtn");
     if (btn) btn.style.display = "inline-flex";
+    render();
   });
 
   window.addEventListener("appinstalled", () => {
@@ -2309,15 +2391,10 @@ function setupListeners() {
     const btn = document.getElementById("installPwaBtn");
     if (btn) btn.style.display = "none";
     showToast("ISCEB App installed! Future GitHub updates will auto-sync silently.");
+    render();
   });
 
-  document.getElementById("installPwaBtn").addEventListener("click", async () => {
-    if (!deferredInstallPrompt) return;
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    document.getElementById("installPwaBtn").style.display = "none";
-  });
+  document.getElementById("installPwaBtn").addEventListener("click", triggerPwaInstall);
 
   const checkPwaUpdateBtn = document.getElementById("checkPwaUpdateBtn");
   if (checkPwaUpdateBtn) {
@@ -2570,6 +2647,8 @@ function setupListeners() {
       );
     } else if (action === "check-pwa-update-now") {
       runAppUpdateCheck();
+    } else if (action === "trigger-pwa-install") {
+      triggerPwaInstall();
     } else if (action === "export-workspace-json") {
       const payload = {
         exportedAt: new Date().toISOString(),

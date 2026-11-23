@@ -341,7 +341,13 @@ test("GitHub Pages PWA setup configures permanent manifest, auto-updating Servic
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.orientation, "any");
   assert.equal(manifest.short_name, "ISCEB");
-  assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 2);
+  assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 3);
+  assert.ok(manifest.icons.some((ic) => ic.purpose === "any"), "Manifest must include dedicated purpose=any icon");
+  assert.ok(manifest.icons.some((ic) => ic.purpose === "maskable"), "Manifest must include dedicated purpose=maskable icon");
+  assert.ok(!manifest.icons.some((ic) => ic.purpose === "any maskable"), "Manifest must not combine 'any maskable' in one icon");
+  for (const ic of manifest.icons) {
+    assert.ok(ic.src.startsWith("./") && fs.existsSync(`./public/desktop/${ic.src.slice(2)}`), `Missing manifest icon on disk: ${ic.src}`);
+  }
 
   const swJs = fs.readFileSync("./public/desktop/sw.js", "utf8");
   assert.ok(swJs.includes("__ISCEB_SW_BUILD__"));
@@ -349,6 +355,12 @@ test("GitHub Pages PWA setup configures permanent manifest, auto-updating Servic
   assert.ok(swJs.includes("clients.claim()"));
   assert.ok(swJs.includes('cache: "no-store"'));
   assert.ok(swJs.includes("ISCEB_PWA_UPDATED"));
+  const shellMatch = swJs.match(/SHELL_ASSETS\s*=\s*\[([\s\S]*?)\]/);
+  assert.ok(shellMatch, "SHELL_ASSETS array must exist in sw.js");
+  for (const m of shellMatch[1].matchAll(/"\.\/([^"]+)"/g)) {
+    const assetPath = `./public/desktop/${m[1]}`;
+    assert.ok(fs.existsSync(assetPath), `Missing Service Worker SHELL_ASSETS file: ${assetPath}`);
+  }
 
   const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
   assert.ok(desktopHtml.includes('updateViaCache: "none"'));
@@ -356,6 +368,11 @@ test("GitHub Pages PWA setup configures permanent manifest, auto-updating Servic
   assert.ok(desktopHtml.includes("controllerchange"));
   assert.ok(desktopHtml.includes("visibilitychange"));
   assert.ok(desktopHtml.includes("checkPwaUpdateBtn"));
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("isRunningStandalone"));
+  assert.ok(appJs.includes("renderPwaInstallBanner"));
+  assert.ok(appJs.includes('data-action="trigger-pwa-install"'));
 
   const workflow = fs.readFileSync("./.github/workflows/release-apk.yml", "utf8");
   assert.ok(workflow.includes("__ISCEB_SW_BUILD__"));

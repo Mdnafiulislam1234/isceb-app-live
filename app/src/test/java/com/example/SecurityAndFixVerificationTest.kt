@@ -8,8 +8,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -240,8 +242,9 @@ class SecurityAndFixVerificationTest {
         }
         composeTestRule.waitForIdle()
 
-        val amirulNode = composeTestRule.onNodeWithText("Md. Amirul Islam")
-        val nafiulNode = composeTestRule.onNodeWithText("Md. Nafiul Islam Nahin")
+        val inLeadershipList = hasAnyAncestor(hasTestTag("admin_leadership_order_list"))
+        val amirulNode = composeTestRule.onNode(hasText("Md. Amirul Islam") and inLeadershipList, useUnmergedTree = true)
+        val nafiulNode = composeTestRule.onNode(hasText("Md. Nafiul Islam Nahin") and inLeadershipList, useUnmergedTree = true)
         amirulNode.assertIsDisplayed()
         nafiulNode.assertIsDisplayed()
         val amirulTop = amirulNode.fetchSemanticsNode().boundsInRoot.top

@@ -2,12 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#071A33" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ISCEB Supply Chain Management — Live PWA & Desktop Portal</title>
+  <script>
+    (function () {
+      try {
+        if (/\/desktop$/i.test(window.location.pathname)) {
+          window.location.replace(
+            window.location.pathname + "/" + window.location.search + window.location.hash
+          );
+        }
+      } catch (_) {}
+    })();
+  </script>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./isceb-icon-192.png" />
   <link rel="apple-touch-icon" href="./isceb-icon-512.png" />
@@ -15,9 +26,10 @@
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="drawerBackdrop" class="drawer-backdrop" aria-hidden="true"></div>
 
   <div class="app-shell">
-    <aside class="sidebar" aria-label="Primary Desktop Navigation">
+    <aside class="sidebar" id="appSidebar" aria-label="Primary Workspace Navigation">
       <div>
         <div class="brand-card">
           <img src="./isceb-logo.webp" alt="ISCEB - Connect. learn. Achieve." />
@@ -44,7 +56,11 @@
           </button>
           <button type="button" class="nav-item" data-view="directory">
             <span>ISCEB Directory & Team</span>
-            <span class="nav-pill" id="navMembersCount">1</span>
+            <span class="nav-pill" id="navMembersCount">8</span>
+          </button>
+          <button type="button" class="nav-item" data-view="profile" id="navProfileBtn">
+            <span>Student Profile & Sign-In</span>
+            <span class="nav-pill" id="navProfileBadge">Guest</span>
           </button>
           <button type="button" class="nav-item" data-view="admin" id="navAdminBtn">
             <span>Admin Governance</span>
@@ -70,13 +86,45 @@
         <button type="button" id="checkPwaUpdateBtn" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.06); color: #E2E8F0; border-color: rgba(255,255,255,0.22); font-size: 12px;">
           Check App Update
         </button>
-        <a href="../apk.html" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.08); color: #F4E2A3; border-color: rgba(212,175,55,0.4);">
+        <a id="androidApkPortalLink" href="../apk.html" class="btn btn-outline" style="width: 100%; background: rgba(255,255,255,0.08); color: #F4E2A3; border-color: rgba(212,175,55,0.4);">
           Android APK Portal
         </a>
       </div>
     </aside>
 
     <div class="main-area">
+      <!-- Mobile App Navy TopBar (matches Native Android ISCEB Preview) -->
+      <header class="mobile-topbar" aria-label="Mobile App Header">
+        <div class="mobile-topbar-left">
+          <button type="button" id="mobileMenuToggleBtn" class="mobile-icon-btn" aria-label="Open Workspace Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <div class="mobile-brand-logo-wrap">
+            <img src="./isceb-logo.webp" alt="ISCEB" />
+          </div>
+          <div class="mobile-brand-text">
+            <div class="mobile-brand-title" id="mobileTopTitle">ISCEB</div>
+            <div class="mobile-brand-sub" id="mobileTopSubtitle">Guest Preview • Sign in on Profile</div>
+          </div>
+        </div>
+        <div class="mobile-topbar-actions">
+          <a id="mobileShareApkBtn" href="../apk.html" class="mobile-gold-circle" title="Share & Install Android APK" aria-label="Share & Install Android APK">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92c0-1.61-1.31-2.92-2.92-2.92z"/></svg>
+          </a>
+          <button type="button" id="mobileVerifyBtn" class="mobile-icon-btn" title="Verify Certificate" aria-label="Verify Certificate">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="color: #F4E2A3;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+          </button>
+          <button type="button" id="mobileCloudSyncBtn" class="mobile-icon-btn" title="Google Cloud Sync" aria-label="Google Cloud Sync">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="color: #C0D2E5;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+          </button>
+          <button type="button" id="mobileAdminLoginPill" class="mobile-login-pill" aria-label="Admin Login">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+            <span id="mobileAdminPillText">LOGIN</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Desktop Topbar -->
       <header class="topbar">
         <div class="topbar-title-group">
           <h1 id="pageTitle">Executive SCM Dashboard</h1>
@@ -93,11 +141,38 @@
 
       <main class="content" id="mainContent">
         <div class="card">
-          <strong>Loading ISCEB Desktop Workspace...</strong>
+          <strong>Loading ISCEB Workspace...</strong>
         </div>
       </main>
     </div>
   </div>
+
+  <!-- Mobile Bottom Navigation Bar (5 tabs matching Native Android ISCEB App) -->
+  <nav class="mobile-bottom-nav" id="mobileBottomNav" aria-label="Primary Mobile Navigation">
+    <button type="button" class="bottom-nav-btn active" data-view="dashboard">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      <span>Home</span>
+    </button>
+    <button type="button" class="bottom-nav-btn" data-view="courses">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>
+      <span>Modules</span>
+    </button>
+    <button type="button" class="bottom-nav-btn" data-view="learning">
+      <span class="bottom-nav-icon-wrap">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+        <span class="bottom-nav-badge" id="mobileLearningBadge" style="display: none;">0</span>
+      </span>
+      <span>Learning</span>
+    </button>
+    <button type="button" class="bottom-nav-btn" data-view="directory">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+      <span>Members</span>
+    </button>
+    <button type="button" class="bottom-nav-btn" data-view="profile">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+      <span>Profile</span>
+    </button>
+  </nav>
 
   <!-- Modal Container -->
   <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -150,8 +225,21 @@
             });
           });
 
-          const checkForSwUpdate = () => {
-            reg.update().catch(() => {});
+          const checkForSwUpdate = async () => {
+            try {
+              await reg.update();
+              const verRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
+              if (verRes && verRes.ok) {
+                const info = await verRes.json().catch(() => null);
+                if (info && info.buildId) {
+                  const prevBuild = localStorage.getItem("isceb_pwa_build_id");
+                  localStorage.setItem("isceb_pwa_build_id", info.buildId);
+                  if (prevBuild && prevBuild !== info.buildId && reg.waiting) {
+                    activateWaitingWorker(reg.waiting);
+                  }
+                }
+              }
+            } catch (_) {}
           };
 
           checkForSwUpdate();

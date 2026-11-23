@@ -88,7 +88,7 @@ manifest = {
     "versionCode": version_code,
     "releaseDate": "${RELEASE_DATE}",
     "apkUrl": f"{hosting_base}/downloads/ISCEB-latest.apk",
-    "downloadPageUrl": f"{hosting_base}/",
+    "downloadPageUrl": f"{hosting_base}/apk.html",
     "desktopPortalUrl": f"{hosting_base}/desktop/",
     "apkFileName": "ISCEB-latest.apk",
     "sha256": "${SHA256}",

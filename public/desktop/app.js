@@ -33,6 +33,35 @@ const FIREBASE_WEB_OPTIONS = {
   appId: "1:716564070468:android:3261c62c73ca52a383bc11"
 };
 
+const GUEST_USER = {
+  id: "guest-unauthenticated",
+  studentId: "",
+  fullName: "Guest Preview",
+  email: "",
+  mobileNumber: "",
+  organization: "ISCEB PGD Program",
+  designation: "Sign in on Profile",
+  enrolledProgram: "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+  role: "GUEST"
+};
+
+function resolveHostingUrl(relativePath) {
+  const clean = String(relativePath || "").replace(/^\/+/, "");
+  try {
+    const { origin, pathname } = window.location;
+    if (/^https?:/i.test(origin)) {
+      if (/\/desktop(\/.*)?$/i.test(pathname)) {
+        const rootPath = pathname.replace(/\/desktop(\/.*)?$/i, "/");
+        return `${origin}${rootPath}${clean}`;
+      }
+      const dirPath = pathname.endsWith("/") ? pathname : pathname.replace(/\/[^/]*$/, "/");
+      return `${origin}${dirPath}${clean}`;
+    }
+  } catch (_) {}
+  const fallbackBase = FIREBASE_CONFIG.versionJsonUrl.replace(/\/version\.json$/i, "");
+  return `${fallbackBase}/${clean}`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -122,13 +151,19 @@ function loadState() {
           ? { ...structuredClone(DEFAULT_FOUNDER), ...parsedFounder, biography: DEFAULT_FOUNDER.biography, educationBackground: DEFAULT_FOUNDER.educationBackground }
           : parsedFounder;
 
+      const customStudents = Array.isArray(parsed.customStudents) ? parsed.customStudents : [];
+      const allStudents = [...customStudents, ...getStudentSwitcherUsers(AVAILABLE_USERS)];
+      const savedActiveId = parsed.activeUserId;
+      const validActiveId =
+        savedActiveId === GUEST_USER.id || allStudents.some((u) => u.id === savedActiveId)
+          ? savedActiveId
+          : GUEST_USER.id;
+
       return {
         currentView: parsed.currentView || "dashboard",
         // Never restore admin role from plain localStorage; verified async via HMAC session
-        activeUserId:
-          parsed.activeUserId && getStudentSwitcherUsers(AVAILABLE_USERS).some((u) => u.id === parsed.activeUserId)
-            ? parsed.activeUserId
-            : "student-1",
+        activeUserId: validActiveId,
+        customStudents,
         selectedClassId: parsed.selectedClassId || "class-1",
         partFilter: parsed.partFilter || "ALL",
         searchQuery: parsed.searchQuery || "",
@@ -176,7 +211,8 @@ function loadState() {
 
   return {
     currentView: "dashboard",
-    activeUserId: "student-1",
+    activeUserId: GUEST_USER.id,
+    customStudents: [],
     selectedClassId: "class-1",
     partFilter: "ALL",
     searchQuery: "",
@@ -209,6 +245,7 @@ function loadState() {
 
 let state = loadState();
 let remoteVersionInfo = null;
+let pwaBuildInfo = null;
 let cloudUser = null;
 let firebaseModules = null;
 let deferredInstallPrompt = null;
@@ -220,16 +257,27 @@ let selectedLoginAdminId = ADMIN_AMIRUL_ID;
 let desktopAdminAuthMode = "login"; // login | setup | reset
 let lastIssuedSecretNotice = "";
 let verifiedAdminSessionId = null;
+let pendingStudentPhotoDataUrl = "";
 const localAttachmentUrls = new Map();
 
 function saveState() {
   try {
     const persisted = {
       ...state,
-      activeUserId: isAdminUser() ? "student-1" : state.activeUserId
+      activeUserId: isAdminUser() ? GUEST_USER.id : state.activeUserId
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   } catch (_) {}
+}
+
+function getAllSelectableStudents() {
+  const custom = Array.isArray(state.customStudents) ? state.customStudents : [];
+  const baseStudents = getStudentSwitcherUsers(AVAILABLE_USERS);
+  const byId = new Map();
+  for (const s of [...custom, ...baseStudents]) {
+    if (s && s.id && !byId.has(s.id)) byId.set(s.id, s);
+  }
+  return Array.from(byId.values());
 }
 
 function getActiveUser() {
@@ -237,20 +285,88 @@ function getActiveUser() {
     const admin = AVAILABLE_USERS.find((u) => u.id === verifiedAdminSessionId && u.role === "ADMIN");
     if (admin) return admin;
   }
-  const studentUsers = getStudentSwitcherUsers(AVAILABLE_USERS);
-  return studentUsers.find((u) => u.id === state.activeUserId) || studentUsers[0] || AVAILABLE_USERS[0];
+  if (state.activeUserId === GUEST_USER.id) {
+    return GUEST_USER;
+  }
+  const allStudents = getAllSelectableStudents();
+  return allStudents.find((u) => u.id === state.activeUserId) || GUEST_USER;
 }
 
 function isAdminUser() {
   return Boolean(verifiedAdminSessionId && getActiveUser().role === "ADMIN");
 }
 
+function isGuestUser() {
+  return !isAdminUser() && getActiveUser().id === GUEST_USER.id;
+}
+
+function registerOrSignInCustomStudent({ fullName, email, mobileNumber, organization, enrolledProgram, photoUrl }) {
+  const cleanName = String(fullName || "").trim();
+  const cleanEmail = String(email || "").trim();
+  if (!cleanName) {
+    showToast("Please enter your full name for your ISCEB student profile.", true);
+    return false;
+  }
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    showToast("Please enter a valid registered email address.", true);
+    return false;
+  }
+  const normalizedEmail = cleanEmail.toLowerCase();
+  const existingCustom = (state.customStudents || []).find(
+    (s) => String(s.email || "").trim().toLowerCase() === normalizedEmail
+  );
+  if (existingCustom) {
+    existingCustom.fullName = cleanName;
+    if (mobileNumber) existingCustom.mobileNumber = mobileNumber.trim();
+    if (organization) existingCustom.organization = organization.trim();
+    if (enrolledProgram) existingCustom.enrolledProgram = enrolledProgram.trim();
+    if (photoUrl) existingCustom.photoUrl = photoUrl;
+    state.activeUserId = existingCustom.id;
+  } else {
+    const serialNum = String(1000 + Math.floor(Math.random() * 8999));
+    const newStudent = {
+      id: `student-custom-${Date.now()}`,
+      studentId: `ISCEB-2026-${serialNum}`,
+      fullName: cleanName,
+      email: cleanEmail,
+      mobileNumber: String(mobileNumber || "").trim(),
+      organization: String(organization || "").trim() || "ISCEB Enrolled Professional",
+      designation: "PGD Candidate",
+      enrolledProgram: String(enrolledProgram || "").trim() || GUEST_USER.enrolledProgram,
+      photoUrl: photoUrl || "",
+      role: "STUDENT",
+      isVerified: true
+    };
+    state.customStudents = [newStudent, ...(state.customStudents || [])];
+    state.activeUserId = newStudent.id;
+  }
+  pendingStudentPhotoDataUrl = "";
+  saveState();
+  syncAccountSwitcherOptions();
+  render();
+  showToast(`Signed in as ${cleanName}`);
+  return true;
+}
+
+function syncAccountSwitcherOptions() {
+  const select = document.getElementById("accountSwitcher");
+  if (!select) return;
+  const students = getAllSelectableStudents();
+  select.innerHTML = [
+    `<option value="${escapeHtml(GUEST_USER.id)}">Guest Preview — Sign in on Profile</option>`,
+    ...students.map(
+      (u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.fullName)} — ${escapeHtml(u.studentId || u.designation || "PGD Candidate")}</option>`
+    )
+  ].join("");
+  syncAccountSwitcherUi();
+}
+
 function syncAccountSwitcherUi() {
   const select = document.getElementById("accountSwitcher");
   if (!select) return;
-  const studentUsers = getStudentSwitcherUsers(AVAILABLE_USERS);
-  if (studentUsers.some((u) => u.id === state.activeUserId)) {
-    select.value = state.activeUserId;
+  const targetId = isAdminUser() ? GUEST_USER.id : state.activeUserId;
+  if (Array.from(select.options).some((opt) => opt.value === targetId)) {
+    select.value = targetId;
   }
 }
 
@@ -528,6 +644,15 @@ async function signInWithGoogleCloud() {
     provider.setCustomParameters({ prompt: "select_account" });
     const cred = await fb.authMod.signInWithPopup(fb.auth, provider);
     cloudUser = cred.user;
+    if (isGuestUser() && cred.user?.email) {
+      registerOrSignInCustomStudent({
+        fullName: cred.user.displayName || cred.user.email.split("@")[0],
+        email: cred.user.email,
+        organization: "ISCEB Google Verified Student",
+        enrolledProgram: GUEST_USER.enrolledProgram,
+        photoUrl: cred.user.photoURL || ""
+      });
+    }
     showToast(`Cloud connected as ${cred.user.email}`);
     await syncFromCloudFirestore(false);
     render();
@@ -538,14 +663,22 @@ async function signInWithGoogleCloud() {
 
 async function fetchVersionJson() {
   try {
-    const res = await fetch(`../version.json?t=${Date.now()}`, { cache: "no-store" });
-    if (!res.ok) return;
-    remoteVersionInfo = await res.json();
-    updateChromeBadges();
-    if (state.currentView === "dashboard" || state.currentView === "admin") {
-      render();
+    const versionUrl = resolveHostingUrl("version.json");
+    const res = await fetch(`${versionUrl}?t=${Date.now()}`, { cache: "no-store" });
+    if (res.ok) {
+      remoteVersionInfo = await res.json();
     }
   } catch (_) {}
+  try {
+    const pwaRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" });
+    if (pwaRes.ok) {
+      pwaBuildInfo = await pwaRes.json();
+    }
+  } catch (_) {}
+  updateChromeBadges();
+  if (state.currentView === "dashboard" || state.currentView === "admin" || state.currentView === "profile") {
+    render();
+  }
 }
 
 async function syncFromCloudFirestore(silent = false) {
@@ -667,11 +800,16 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
 function updateChromeBadges() {
   const stats = getOverallStats();
   const user = getActiveUser();
+  const apkPortalUrl = resolveHostingUrl("apk.html");
 
   document.getElementById("navDashProgress").textContent = `${stats.percent}%`;
   document.getElementById("navCertStatus").textContent = state.certificatesByUser[user.id] ? "Issued" : stats.certEligible ? "Ready" : "PGD";
   document.getElementById("navMembersCount").textContent = String(state.members.length);
   document.getElementById("navAdminRoleBadge").textContent = user.role === "ADMIN" ? "Admin" : "Student";
+  const navProfileBadge = document.getElementById("navProfileBadge");
+  if (navProfileBadge) {
+    navProfileBadge.textContent = isAdminUser() ? "Admin" : isGuestUser() ? "Guest" : "Active";
+  }
   document.getElementById("sidebarCurriculumVer").textContent = `Curriculum: ${state.manifest.versionTag || "v1.6.0"}`;
 
   const apkVerEl = document.getElementById("sidebarApkVer");
@@ -679,6 +817,11 @@ function updateChromeBadges() {
     apkVerEl.textContent = `Latest APK: v${remoteVersionInfo.versionName} (${formatBytes(remoteVersionInfo.fileSizeBytes)})`;
   } else {
     apkVerEl.textContent = `Latest APK: v${state.manifest.latestApkVersionName || "1.6"}`;
+  }
+
+  const pwaStatusEl = document.getElementById("sidebarPwaStatus");
+  if (pwaStatusEl && pwaBuildInfo?.buildId) {
+    pwaStatusEl.textContent = `PWA Build: ${pwaBuildInfo.buildId}`;
   }
 
   const syncDot = document.getElementById("syncDot");
@@ -695,6 +838,40 @@ function updateChromeBadges() {
   if (googleBtn) {
     googleBtn.textContent = cloudUser ? `Google: ${cloudUser.email.split("@")[0]}` : "Google Cloud Sync";
   }
+
+  // Mobile Topbar & Bottom Bar syncing (matches Android Preview)
+  const mobileTopTitle = document.getElementById("mobileTopTitle");
+  const mobileTopSub = document.getElementById("mobileTopSubtitle");
+  if (mobileTopTitle && mobileTopSub) {
+    if (isAdminUser()) {
+      mobileTopTitle.textContent = user.fullName;
+      mobileTopSub.textContent = user.designation || "Administrator";
+    } else if (isGuestUser()) {
+      mobileTopTitle.textContent = "ISCEB";
+      mobileTopSub.textContent = "Guest Preview • Sign in on Profile";
+    } else {
+      mobileTopTitle.textContent = "ISCEB";
+      mobileTopSub.textContent = `${user.fullName} • ${user.studentId || "PGD Candidate"}`;
+    }
+  }
+
+  const mobileAdminPill = document.getElementById("mobileAdminLoginPill");
+  const mobileAdminPillText = document.getElementById("mobileAdminPillText");
+  if (mobileAdminPill && mobileAdminPillText) {
+    mobileAdminPill.classList.toggle("admin-active", isAdminUser());
+    mobileAdminPillText.textContent = isAdminUser() ? "ADMIN" : "LOGIN";
+  }
+
+  const mobileBadge = document.getElementById("mobileLearningBadge");
+  if (mobileBadge) {
+    mobileBadge.textContent = String(stats.completedCount);
+    mobileBadge.style.display = stats.completedCount > 0 ? "grid" : "none";
+  }
+
+  const apkSidebarLink = document.getElementById("androidApkPortalLink");
+  if (apkSidebarLink) apkSidebarLink.href = apkPortalUrl;
+  const mobileShareApkBtn = document.getElementById("mobileShareApkBtn");
+  if (mobileShareApkBtn) mobileShareApkBtn.href = apkPortalUrl;
 }
 
 function renderDashboard() {
@@ -702,13 +879,13 @@ function renderDashboard() {
   const user = getActiveUser();
   const nextClass = state.classes.find((c) => !getClassProgress(c.id).completed) || state.classes[0];
   const nextMod = state.modules.find((m) => m.id === nextClass?.moduleId);
-  const apkUrl = remoteVersionInfo?.apkUrl || state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl;
+  const apkUrl = remoteVersionInfo?.apkUrl || state.manifest.apkDownloadUrl || resolveHostingUrl("downloads/ISCEB-latest.apk");
   const apkLabel = remoteVersionInfo
     ? `v${remoteVersionInfo.versionName} (Build ${remoteVersionInfo.versionCode}) • ${formatBytes(remoteVersionInfo.fileSizeBytes)}`
     : `v${state.manifest.latestApkVersionName || "1.6"} (Build ${state.manifest.latestApkVersionCode || 7})`;
 
   return `
-    <div class="card card-navy" style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; align-items: center;">
+    <div class="card card-navy hero-dashboard-grid">
       <div>
         <span class="badge badge-gold">ISCEB PC & Desktop Workspace • ${escapeHtml(state.manifest.versionTag || "v1.6.0")}</span>
         <h2 style="margin: 10px 0 6px; font-size: 24px; color: #fff;">Welcome back, ${escapeHtml(user.fullName)}</h2>
@@ -1611,10 +1788,233 @@ function renderAdmin() {
   `;
 }
 
+function renderProfile() {
+  const user = getActiveUser();
+  const stats = getOverallStats();
+  const apkUrl = remoteVersionInfo?.apkUrl || state.manifest.apkDownloadUrl || resolveHostingUrl("downloads/ISCEB-latest.apk");
+  const apkPageUrl = resolveHostingUrl("apk.html");
+  const apkVersionLabel = remoteVersionInfo
+    ? `v${remoteVersionInfo.versionName} (Build ${remoteVersionInfo.versionCode})`
+    : `v${state.manifest.latestApkVersionName || "1.6"} (Build ${state.manifest.latestApkVersionCode || 7})`;
+  const pwaVerText = pwaBuildInfo?.buildId
+    ? `Live Web Build ${pwaBuildInfo.buildId}`
+    : `Curriculum ${state.manifest.versionTag || "v1.6.0"} • Auto-Sync Active`;
+  const hasCert = Boolean(state.certificatesByUser[user.id]);
+  const presetStudents = getStudentSwitcherUsers(AVAILABLE_USERS);
+  const customStudents = Array.isArray(state.customStudents) ? state.customStudents : [];
+
+  const identitySection = isGuestUser()
+    ? `
+      <div class="card card-navy">
+        <div style="font-size: 16px; font-weight: 800; color: #fff;">Student Account Sign-In &amp; Enrollment</div>
+        <p style="margin: 6px 0 12px; font-size: 12.5px; color: #C0D2E5;">
+          Sign in once with your Google account or register directly below. Your name appears on your official PGD Diploma &amp; certificates.
+        </p>
+        <button type="button" id="profileGoogleSignInBtn" class="btn btn-gold" data-action="trigger-google-auth" style="width: 100%; font-weight: 800;">
+          Continue with Google Account Sync
+        </button>
+
+        <div class="profile-reg-inner">
+          <div class="flex-header-between">
+            <div>
+              <div style="font-weight: 800; color: var(--navy); font-size: 14px;">Direct Student Registration</div>
+              <div style="font-size: 11.5px; color: var(--muted);">Instant enrollment across all 12 SCM modules &amp; 48 lectures</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div id="profilePhotoPreviewWrap" style="width: 44px; height: 44px; border-radius: 50%; overflow: hidden; border: 2px solid var(--gold); background: var(--surface-muted); display: grid; place-items: center; font-weight: 800; color: var(--navy); flex-shrink: 0;">
+                ${pendingStudentPhotoDataUrl ? `<img id="profilePhotoPreviewImg" src="${escapeHtml(pendingStudentPhotoDataUrl)}" alt="Profile Preview" style="width: 100%; height: 100%; object-fit: cover;" />` : `<span>PGD</span>`}
+              </div>
+              <label for="profilePhotoInput" class="btn btn-outline btn-sm" style="cursor: pointer;">Photo</label>
+              <input type="file" id="profilePhotoInput" accept="image/*" style="display: none;" />
+            </div>
+          </div>
+
+          <form id="studentRegisterForm" style="display: grid; gap: 10px;">
+            <input type="text" id="regStudentName" class="input" placeholder="Full Name (printed on diploma)" required />
+            <input type="email" id="regStudentEmail" class="input" placeholder="Registered Email Address" required />
+            <input type="tel" id="regStudentMobile" class="input" placeholder="Mobile Number (optional)" />
+            <input type="text" id="regStudentOrg" class="input" placeholder="Company / Organization (optional)" />
+            <label style="display: grid; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--muted);">
+              Enrolled Course / PGD Program
+              <input type="text" id="regStudentProgram" class="input" value="${escapeHtml(GUEST_USER.enrolledProgram)}" required />
+            </label>
+            <button type="submit" class="btn btn-primary" style="width: 100%; min-height: 48px;">
+              Create / Sign In Student Account
+            </button>
+          </form>
+        </div>
+      </div>
+    `
+    : `
+      <div class="card card-navy">
+        <div class="flex-header-between" style="align-items: flex-start;">
+          <div style="display: flex; gap: 14px; align-items: center; min-width: 0; flex: 1;">
+            ${
+              user.photoUrl || isAdminUser()
+                ? `<img src="${escapeHtml(user.photoUrl || (user.id === ADMIN_AMIRUL_ID ? "./admin-amirul.webp" : "./admin-nafiul.webp"))}" alt="${escapeHtml(user.fullName)}" class="portrait-avatar" style="width: 64px; height: 64px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold); flex-shrink: 0;" />`
+                : `<div style="width: 64px; height: 64px; border-radius: 50%; background: var(--gold); color: var(--navy-dark); display: grid; place-items: center; font-weight: 800; font-size: 20px; flex-shrink: 0;">${escapeHtml(user.fullName.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase())}</div>`
+            }
+            <div style="min-width: 0;">
+              <span class="badge badge-gold">${isAdminUser() ? "VERIFIED ADMINISTRATOR" : "VERIFIED STUDENT • ACTIVE"}</span>
+              <h2 style="margin: 6px 0 3px; font-size: 20px; color: #fff;">${escapeHtml(user.fullName)}</h2>
+              <div style="font-size: 12.5px; color: #E2E8F0;">${escapeHtml(user.studentId || user.designation || "PGD Candidate")} • ${escapeHtml(user.organization || "ISCEB")}</div>
+              <div style="font-size: 12px; color: #B0C2D6; margin-top: 2px;">${escapeHtml(user.email || "")}${user.mobileNumber ? ` • ${escapeHtml(user.mobileNumber)}` : ""}</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            ${!isAdminUser() ? `<button type="button" class="btn btn-gold btn-sm" data-action="open-edit-student-modal">Edit Profile</button>` : ""}
+            <button type="button" class="btn btn-outline btn-sm" data-action="${isAdminUser() ? "admin-logout" : "student-signout"}" style="background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.3);">
+              Sign Out
+            </button>
+          </div>
+        </div>
+        <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.16); font-size: 12px; color: #F4E2A3;">
+          Program: ${escapeHtml(user.enrolledProgram || GUEST_USER.enrolledProgram)}
+        </div>
+      </div>
+
+      <div class="stats-grid" style="margin-bottom: 0;">
+        <div class="stat-card">
+          <div class="stat-label">Lessons Completed</div>
+          <div class="stat-value">${stats.completedCount} / ${stats.totalClasses}</div>
+          <div class="stat-sub">Part 1 &amp; Part 2</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Course Progress</div>
+          <div class="stat-value">${stats.percent}%</div>
+          <div class="stat-sub">${formatSeconds(stats.totalSeconds)} studied</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Exams Passed</div>
+          <div class="stat-value">${stats.passedExamsCount} / ${state.exams.length}</div>
+          <div class="stat-sub">Avg Score: ${stats.avgExam}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Certificates</div>
+          <div class="stat-value">${hasCert ? "Issued" : stats.certEligible ? "Eligible" : "Pending"}</div>
+          <div class="stat-sub">${hasCert ? escapeHtml(state.certificatesByUser[user.id].serial) : "PGD in SCM"}</div>
+        </div>
+      </div>
+    `;
+
+  return `
+    <div class="profile-portal-stack">
+      <div class="card">
+        <div class="profile-action-row">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <img src="./isceb-logo.webp" alt="ISCEB" style="width: 48px; height: 36px; object-fit: contain; background: #fff; border-radius: 8px; padding: 2px; border: 1px solid var(--border);" />
+            <div>
+              <div style="font-weight: 800; color: var(--navy); font-size: 15px;">ISCEB • Institute of Supply Chain Excellence Bangladesh</div>
+              <div style="font-size: 12px; color: var(--muted);">Student Learning, Diploma Credentialing &amp; Live Auto-Sync Portal</div>
+            </div>
+          </div>
+          <span class="badge ${isAdminUser() ? "badge-navy" : isGuestUser() ? "badge-warn" : "badge-ok"}">${isAdminUser() ? "Admin Mode" : isGuestUser() ? "Guest Preview" : "Student Signed In"}</span>
+        </div>
+      </div>
+
+      ${identitySection}
+
+      <div class="card">
+        <div class="profile-action-row">
+          <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 200px;">
+            <div class="profile-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+            </div>
+            <div>
+              <div style="font-weight: 800; color: var(--navy); font-size: 14.5px;">Google Cloud Auto-Sync</div>
+              <div style="font-size: 12px; color: var(--muted);">
+                ${cloudUser ? `Connected as ${escapeHtml(cloudUser.email)}` : "Sign in with Google for automatic live syllabus &amp; progress sync across phones"}
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            ${
+              cloudUser
+                ? `<button type="button" class="btn btn-primary btn-sm" data-action="profile-sync-now">Sync Now</button>
+                   <button type="button" class="btn btn-outline btn-sm" data-action="google-signout">Disconnect</button>`
+                : `<button type="button" class="btn btn-primary btn-sm" data-action="trigger-google-auth">Sign in with Google</button>`
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="profile-action-row">
+          <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 200px;">
+            <div class="profile-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+            </div>
+            <div>
+              <div style="font-weight: 800; color: var(--navy); font-size: 14.5px;">Administrator Management Mode</div>
+              <div style="font-size: 12px; color: var(--muted);">Protected with per-admin cryptographic authentication</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            ${
+              isAdminUser()
+                ? `<button type="button" class="btn btn-primary btn-sm" data-nav="admin">Open Admin Panel</button>
+                   <button type="button" class="btn btn-outline btn-sm" data-action="admin-logout">Logout</button>`
+                : `<button type="button" class="btn btn-primary btn-sm" data-nav="admin">Login</button>`
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="flex-header-between" style="margin-bottom: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="profile-icon-box" style="background: #FEF3C7; color: #92400E;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M17 1H7c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-2-2-2zm0 18H7V5h10v14zm-4-7h2.5L12 16.5 8.5 12H11V8h2v4z"/></svg>
+            </div>
+            <div>
+              <div style="font-weight: 800; color: var(--navy); font-size: 14.5px;">App Updates &amp; Online APK</div>
+              <div style="font-size: 12px; color: var(--muted);">${escapeHtml(pwaVerText)} • APK ${escapeHtml(apkVersionLabel)}</div>
+            </div>
+          </div>
+          <a href="${escapeHtml(apkPageUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" style="white-space: nowrap;">
+            Web Page
+          </a>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <button type="button" class="btn btn-outline btn-sm" data-action="check-pwa-update-now">Check Updates</button>
+          <a href="${escapeHtml(apkUrl)}" download="ISCEB-latest.apk" class="btn btn-primary btn-sm">Download Latest APK</a>
+          <button type="button" class="btn btn-outline btn-sm" data-action="export-workspace-json">Backup Workspace JSON</button>
+          <label for="importWorkspaceJsonInput" class="btn btn-outline btn-sm" style="cursor: pointer;">Restore JSON Backup</label>
+          <input type="file" id="importWorkspaceJsonInput" accept="application/json,.json" style="display: none;" />
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight: 800; color: var(--navy); font-size: 14px; margin-bottom: 8px;">Quick Student Account Switcher</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          ${[...customStudents, ...presetStudents]
+            .map(
+              (s) => `
+                <button type="button" class="btn btn-sm ${!isAdminUser() && state.activeUserId === s.id ? "btn-gold" : "btn-outline"}" data-action="quick-switch-student" data-student-id="${escapeHtml(s.id)}">
+                  ${escapeHtml(s.fullName)}
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);">
+          <button type="button" class="btn btn-outline btn-sm" data-nav="directory">ISCEB Members (${state.members.length})</button>
+          <button type="button" class="btn btn-outline btn-sm" data-nav="exams">Exams &amp; Assignments</button>
+          <button type="button" class="btn btn-outline btn-sm" data-nav="learning">Diploma &amp; Certificate</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function render() {
   updateChromeBadges();
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.view === state.currentView);
+  });
+  document.querySelectorAll("#mobileBottomNav .bottom-nav-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === state.currentView);
   });
 
@@ -1624,6 +2024,7 @@ function render() {
     exams: ["Timed Examinations & Assignments", "Official Module Assessments, 100-Mark Final Exam & Capstone Study"],
     learning: ["My Learning & Official PGD Certificate", "Academic Readiness, Printable Executive Diploma & Serial Verification"],
     directory: ["ISCEB Leadership & Directory", "Founder, App Developer & Verified Faculty Members"],
+    profile: ["Student Profile & Credentialing", "Direct Registration, Google Cloud Sync & Online APK Updates"],
     admin: ["Admin Governance & Cloud Publishing", "Live Curriculum OTA Sync & APK Release Metadata"]
   };
   const [t, sub] = titles[state.currentView] || titles.dashboard;
@@ -1635,6 +2036,7 @@ function render() {
   else if (state.currentView === "exams") container.innerHTML = renderExams();
   else if (state.currentView === "learning") container.innerHTML = renderLearning();
   else if (state.currentView === "directory") container.innerHTML = renderDirectory();
+  else if (state.currentView === "profile") container.innerHTML = renderProfile();
   else if (state.currentView === "admin") container.innerHTML = renderAdmin();
   else container.innerHTML = renderDashboard();
 }
@@ -1718,16 +2120,66 @@ function submitActiveExam() {
   render();
 }
 
+async function runAppUpdateCheck() {
+  await fetchVersionJson();
+  if ("serviceWorker" in navigator) {
+    try {
+      const reg = window.__iscebSwRegistration || (await navigator.serviceWorker.getRegistration("./"));
+      if (reg) {
+        await reg.update();
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          showToast("New ISCEB PWA version ready — applying update now...");
+          return;
+        }
+      }
+    } catch (_) {}
+  }
+  const verRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
+  if (verRes && verRes.ok) {
+    const info = await verRes.json().catch(() => null);
+    if (info && info.buildId) {
+      pwaBuildInfo = info;
+      showToast(`ISCEB Live PWA is up to date (Build ${info.buildId}).`);
+      render();
+      return;
+    }
+  }
+  showToast("ISCEB Live PWA update check completed.");
+}
+
+function resizePhotoFileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 256;
+        const scale = Math.min(1, maxDim / Math.max(img.width || maxDim, img.height || maxDim));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => resolve(String(reader.result || ""));
+      img.src = String(reader.result || "");
+    };
+    reader.onerror = () => reject(new Error("Could not read image"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function setupListeners() {
   const select = document.getElementById("accountSwitcher");
-  const studentUsers = getStudentSwitcherUsers(AVAILABLE_USERS);
-  select.innerHTML = studentUsers.map(
-    (u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.fullName)} — ${escapeHtml(u.designation)}</option>`
-  ).join("");
-  syncAccountSwitcherUi();
-  select.addEventListener("change", (e) => {
+  syncAccountSwitcherOptions();
+  select?.addEventListener("change", (e) => {
     const picked = e.target.value;
-    if (!studentUsers.some((u) => u.id === picked)) return;
+    const validIds = [GUEST_USER.id, ...getAllSelectableStudents().map((u) => u.id)];
+    if (!validIds.includes(picked)) return;
     if (isAdminUser()) {
       desktopAdminAuth.clearSession();
       verifiedAdminSessionId = null;
@@ -1737,12 +2189,72 @@ function setupListeners() {
     render();
   });
 
+  const sidebarEl = document.getElementById("appSidebar");
+  const drawerBackdropEl = document.getElementById("drawerBackdrop");
+  const openMobileDrawer = () => {
+    sidebarEl?.classList.add("drawer-open");
+    drawerBackdropEl?.classList.add("open");
+  };
+  const closeMobileDrawer = () => {
+    sidebarEl?.classList.remove("drawer-open");
+    drawerBackdropEl?.classList.remove("open");
+  };
+
+  document.getElementById("mobileMenuToggleBtn")?.addEventListener("click", () => {
+    if (sidebarEl?.classList.contains("drawer-open")) closeMobileDrawer();
+    else openMobileDrawer();
+  });
+  drawerBackdropEl?.addEventListener("click", closeMobileDrawer);
+
   document.getElementById("navList").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-view]");
     if (!btn) return;
     state.currentView = btn.dataset.view;
     saveState();
+    closeMobileDrawer();
     render();
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
+  document.getElementById("mobileBottomNav")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-view]");
+    if (!btn) return;
+    state.currentView = btn.dataset.view;
+    saveState();
+    closeMobileDrawer();
+    render();
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
+  document.getElementById("mobileVerifyBtn")?.addEventListener("click", () => {
+    state.currentView = "learning";
+    saveState();
+    closeMobileDrawer();
+    render();
+    setTimeout(() => {
+      const inp = document.getElementById("verifyCertInput");
+      if (inp) {
+        inp.scrollIntoView({ behavior: "smooth", block: "center" });
+        inp.focus();
+      }
+    }, 60);
+  });
+
+  document.getElementById("mobileCloudSyncBtn")?.addEventListener("click", () => {
+    if (cloudUser) syncFromCloudFirestore(false);
+    else signInWithGoogleCloud();
+  });
+
+  document.getElementById("mobileAdminLoginPill")?.addEventListener("click", () => {
+    state.currentView = "admin";
+    saveState();
+    closeMobileDrawer();
+    render();
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
+  document.getElementById("androidApkPortalLink")?.addEventListener("click", () => {
+    closeMobileDrawer();
   });
 
   document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
@@ -1773,31 +2285,7 @@ function setupListeners() {
 
   const checkPwaUpdateBtn = document.getElementById("checkPwaUpdateBtn");
   if (checkPwaUpdateBtn) {
-    checkPwaUpdateBtn.addEventListener("click", async () => {
-      await fetchVersionJson();
-      if ("serviceWorker" in navigator) {
-        try {
-          const reg = window.__iscebSwRegistration || (await navigator.serviceWorker.getRegistration("./"));
-          if (reg) {
-            await reg.update();
-            if (reg.waiting) {
-              reg.waiting.postMessage({ type: "SKIP_WAITING" });
-              showToast("New ISCEB PWA version ready — applying update now...");
-              return;
-            }
-          }
-        } catch (_) {}
-      }
-      const verRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
-      if (verRes && verRes.ok) {
-        const info = await verRes.json().catch(() => null);
-        if (info && info.buildId) {
-          showToast(`ISCEB Live PWA is up to date (Build ${info.buildId}).`);
-          return;
-        }
-      }
-      showToast("ISCEB Live PWA update check completed.");
-    });
+    checkPwaUpdateBtn.addEventListener("click", runAppUpdateCheck);
   }
 
   if ("serviceWorker" in navigator) {
@@ -1999,6 +2487,75 @@ function setupListeners() {
       });
     } else if (action === "trigger-google-auth") {
       signInWithGoogleCloud();
+    } else if (action === "profile-sync-now") {
+      syncFromCloudFirestore(false);
+    } else if (action === "google-signout") {
+      if (firebaseModules?.authMod && firebaseModules?.auth) {
+        firebaseModules.authMod.signOut(firebaseModules.auth).then(() => {
+          cloudUser = null;
+          updateChromeBadges();
+          render();
+          showToast("Disconnected Google Cloud Sync.");
+        }).catch(() => {});
+      }
+    } else if (action === "student-signout") {
+      state.activeUserId = GUEST_USER.id;
+      pendingStudentPhotoDataUrl = "";
+      saveState();
+      syncAccountSwitcherOptions();
+      render();
+      showToast("Signed out to Guest Preview.");
+    } else if (action === "quick-switch-student") {
+      const sid = actBtn.dataset.studentId;
+      if (getAllSelectableStudents().some((s) => s.id === sid)) {
+        if (isAdminUser()) {
+          desktopAdminAuth.clearSession();
+          verifiedAdminSessionId = null;
+        }
+        state.activeUserId = sid;
+        saveState();
+        syncAccountSwitcherOptions();
+        render();
+        showToast(`Switched active student to ${getActiveUser().fullName}.`);
+      }
+    } else if (action === "open-edit-student-modal") {
+      const cur = getActiveUser();
+      if (isGuestUser() || isAdminUser()) return;
+      openModal(
+        "Edit Student Profile",
+        `<form id="editStudentProfileForm" style="display: grid; gap: 10px;">
+          <input type="text" id="editStuName" class="input" placeholder="Full Name" value="${escapeHtml(cur.fullName)}" required />
+          <input type="email" id="editStuEmail" class="input" placeholder="Registered Email" value="${escapeHtml(cur.email || "")}" required />
+          <input type="tel" id="editStuMobile" class="input" placeholder="Mobile Number" value="${escapeHtml(cur.mobileNumber || "")}" />
+          <input type="text" id="editStuOrg" class="input" placeholder="Organization" value="${escapeHtml(cur.organization || "")}" />
+          <input type="text" id="editStuProgram" class="input" placeholder="Enrolled PGD Program" value="${escapeHtml(cur.enrolledProgram || GUEST_USER.enrolledProgram)}" required />
+          <button type="submit" class="btn btn-primary">Save Student Profile</button>
+        </form>`
+      );
+    } else if (action === "check-pwa-update-now") {
+      runAppUpdateCheck();
+    } else if (action === "export-workspace-json") {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        schemaVersion: 2,
+        activeUserId: isAdminUser() ? GUEST_USER.id : state.activeUserId,
+        customStudents: state.customStudents || [],
+        progressByUser: state.progressByUser || {},
+        examAttemptsByUser: state.examAttemptsByUser || {},
+        assignmentSubmissionsByUser: state.assignmentSubmissionsByUser || {},
+        certificatesByUser: state.certificatesByUser || {},
+        settings: state.settings
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `isceb-workspace-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      showToast("Workspace JSON backup exported.");
     } else if (action === "view-member") {
       const member = state.members.find((m) => m.id === actBtn.dataset.memberId);
       if (member) {
@@ -2059,6 +2616,52 @@ function setupListeners() {
       });
       showToast(`Attached ${file.name} for PC viewing.`);
       render();
+    } else if (e.target.id === "profilePhotoInput") {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      resizePhotoFileToDataUrl(file).then((dataUrl) => {
+        pendingStudentPhotoDataUrl = dataUrl;
+        const wrap = document.getElementById("profilePhotoPreviewWrap");
+        if (wrap && dataUrl) {
+          wrap.innerHTML = `<img id="profilePhotoPreviewImg" src="${escapeHtml(dataUrl)}" alt="Profile Preview" style="width: 100%; height: 100%; object-fit: cover;" />`;
+        }
+        showToast("Profile photo attached.");
+      }).catch(() => {
+        showToast("Could not load selected photo.", true);
+      });
+    } else if (e.target.id === "importWorkspaceJsonInput") {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      file.text().then((raw) => {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") throw new Error("Invalid backup file");
+        if (Array.isArray(parsed.customStudents)) {
+          state.customStudents = parsed.customStudents;
+        }
+        if (parsed.progressByUser && typeof parsed.progressByUser === "object") {
+          state.progressByUser = { ...state.progressByUser, ...parsed.progressByUser };
+        }
+        if (parsed.examAttemptsByUser && typeof parsed.examAttemptsByUser === "object") {
+          state.examAttemptsByUser = { ...state.examAttemptsByUser, ...parsed.examAttemptsByUser };
+        }
+        if (parsed.assignmentSubmissionsByUser && typeof parsed.assignmentSubmissionsByUser === "object") {
+          state.assignmentSubmissionsByUser = { ...state.assignmentSubmissionsByUser, ...parsed.assignmentSubmissionsByUser };
+        }
+        if (parsed.certificatesByUser && typeof parsed.certificatesByUser === "object") {
+          state.certificatesByUser = { ...state.certificatesByUser, ...parsed.certificatesByUser };
+        }
+        if (parsed.activeUserId && parsed.activeUserId !== ADMIN_AMIRUL_ID && parsed.activeUserId !== ADMIN_NAFIUL_ID) {
+          state.activeUserId = parsed.activeUserId;
+        }
+        saveState();
+        syncAccountSwitcherOptions();
+        render();
+        showToast("Workspace JSON backup restored successfully.");
+      }).catch((err) => {
+        showToast(`Backup restore failed: ${err?.message || "Invalid JSON"}`, true);
+      });
     } else if (e.target.id === "adminMultiMediaUploadInput" || e.target.classList.contains("adminTypedMediaInput")) {
       const cid = e.target.dataset.classId;
       const forcedType = e.target.dataset.mediaType || "";
@@ -2195,6 +2798,16 @@ function setupListeners() {
         }
         render();
       });
+    } else if (e.target.id === "studentRegisterForm") {
+      e.preventDefault();
+      registerOrSignInCustomStudent({
+        fullName: document.getElementById("regStudentName")?.value || "",
+        email: document.getElementById("regStudentEmail")?.value || "",
+        mobileNumber: document.getElementById("regStudentMobile")?.value || "",
+        organization: document.getElementById("regStudentOrg")?.value || "",
+        enrolledProgram: document.getElementById("regStudentProgram")?.value || GUEST_USER.enrolledProgram,
+        photoUrl: pendingStudentPhotoDataUrl
+      });
     } else if (e.target.id === "desktopAdminChangePasswordForm") {
       e.preventDefault();
       const user = getActiveUser();
@@ -2259,6 +2872,38 @@ function setupListeners() {
       saveState();
       closeModal();
       showToast("ISCEB Directory updated.");
+      render();
+    } else if (e.target.id === "editStudentProfileForm") {
+      const cur = getActiveUser();
+      if (isGuestUser() || isAdminUser()) return;
+      const updatedName = document.getElementById("editStuName").value.trim();
+      const updatedEmail = document.getElementById("editStuEmail").value.trim();
+      const updatedMobile = document.getElementById("editStuMobile").value.trim();
+      const updatedOrg = document.getElementById("editStuOrg").value.trim();
+      const updatedProgram = document.getElementById("editStuProgram").value.trim();
+      if (!updatedName || !updatedEmail.includes("@")) {
+        showToast("Please enter a valid name and email.", true);
+        return;
+      }
+      const existingIdx = (state.customStudents || []).findIndex((s) => s.id === cur.id);
+      const updatedRecord = {
+        ...cur,
+        fullName: updatedName,
+        email: updatedEmail,
+        mobileNumber: updatedMobile,
+        organization: updatedOrg,
+        enrolledProgram: updatedProgram || GUEST_USER.enrolledProgram
+      };
+      if (existingIdx >= 0) {
+        state.customStudents[existingIdx] = updatedRecord;
+      } else {
+        state.customStudents = [updatedRecord, ...(state.customStudents || [])];
+      }
+      state.activeUserId = updatedRecord.id;
+      saveState();
+      closeModal();
+      syncAccountSwitcherOptions();
+      showToast("Student profile updated.");
       render();
     }
   });

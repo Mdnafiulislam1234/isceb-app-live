@@ -171,9 +171,9 @@ jobs:
           body: |
             Official ISCEB Android App & Auto-Update Release
 
-            - Permanent Web Download Page & QR Code: ${{ steps.meta.outputs.pages_url }}/
+            - Permanent Android APK Download & QR Page: ${{ steps.meta.outputs.pages_url }}/apk.html
             - Direct APK URL: ${{ steps.meta.outputs.pages_url }}/downloads/ISCEB-latest.apk
-            - PC / Desktop Web Portal: ${{ steps.meta.outputs.pages_url }}/desktop/
+            - Live Auto-Updating PWA App (Android + PC): ${{ steps.meta.outputs.pages_url }}/desktop/
             - Latest Update Notes: ${{ steps.meta.outputs.commit_msg }}
           files: |
             public/downloads/ISCEB-latest.apk

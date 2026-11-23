@@ -449,7 +449,7 @@ object AppUpdateConfig {
     val HOSTING_BASE: String
         get() = BuildConfig.HOSTING_BASE_URL.trimEnd('/')
     val DEFAULT_DOWNLOAD_PAGE_URL: String
-        get() = "$HOSTING_BASE/"
+        get() = "$HOSTING_BASE/apk.html"
     val DEFAULT_VERSION_JSON_URL: String
         get() = "$HOSTING_BASE/version.json"
     val DEFAULT_APK_DIRECT_URL: String

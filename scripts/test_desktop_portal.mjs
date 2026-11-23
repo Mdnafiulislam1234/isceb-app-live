@@ -371,6 +371,39 @@ test("Root index launches unified PWA workspace and apk.html preserves permanent
   const versionJson = JSON.parse(fs.readFileSync("./public/version.json", "utf8"));
   assert.ok(versionJson.desktopPortalUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/desktop/"));
   assert.ok(versionJson.apkUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/"));
+  assert.equal(versionJson.downloadPageUrl, "https://mdnafiulislam1234.github.io/isceb-app-live/apk.html");
   assert.ok(FIREBASE_CONFIG.versionJsonUrl.startsWith("https://mdnafiulislam1234.github.io/isceb-app-live/"));
 });
+
+test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Profile & Registration, and non-404 apk.html routing", () => {
+  const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  const desktopCss = fs.readFileSync("./public/desktop/styles.css", "utf8");
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  const modelsKt = fs.readFileSync("./app/src/main/java/com/example/model/SupplyChainModels.kt", "utf8");
+  const releaseSh = fs.readFileSync("./scripts/release_apk.sh", "utf8");
+
+  assert.ok(desktopHtml.includes("/\\/desktop$/i.test(window.location.pathname)"), "Must redirect /desktop to /desktop/");
+  assert.ok(desktopHtml.includes("mobile-topbar"));
+  assert.ok(desktopHtml.includes("mobileMenuToggleBtn"));
+  assert.ok(desktopHtml.includes("mobileAdminLoginPill"));
+  assert.ok(desktopHtml.includes("mobile-bottom-nav"));
+  for (const label of ["Home", "Modules", "Learning", "Members", "Profile"]) {
+    assert.ok(desktopHtml.includes(`<span>${label}</span>`), `Missing mobile bottom tab: ${label}`);
+  }
+
+  assert.ok(desktopCss.includes(".mobile-bottom-nav"));
+  assert.ok(desktopCss.includes(".mobile-topbar"));
+  assert.ok(desktopCss.includes(".profile-portal-stack"));
+
+  assert.ok(appJs.includes("function renderProfile()"));
+  assert.ok(appJs.includes("Create / Sign In Student Account"));
+  assert.ok(appJs.includes("Google Cloud Auto-Sync"));
+  assert.ok(appJs.includes("Administrator Management Mode"));
+  assert.ok(appJs.includes("App Updates &amp; Online APK") || appJs.includes("App Updates & Online APK"));
+  assert.ok(appJs.includes('resolveHostingUrl("apk.html")'));
+
+  assert.ok(modelsKt.includes('"$HOSTING_BASE/apk.html"'), "Android DEFAULT_DOWNLOAD_PAGE_URL must point to apk.html");
+  assert.ok(releaseSh.includes('f"{hosting_base}/apk.html"'), "release_apk.sh version.json generator must point downloadPageUrl to apk.html");
+});
+
 

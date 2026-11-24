@@ -633,6 +633,52 @@ button, input, select, textarea {
   padding: 20px 18px;
 }
 
+.cert-logo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 0 auto 8px;
+}
+
+.cert-logo-wrap img {
+  display: block;
+  height: 64px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+.lecture-detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.pdf-canvas-pages {
+  display: grid;
+  gap: 12px;
+  max-height: 62vh;
+  overflow-y: auto;
+  background: #F1F5F9;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.pdf-canvas-pages canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #FFFFFF;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+}
+
 .cert-institution {
   font-size: 12px;
   font-weight: 800;
@@ -689,8 +735,8 @@ button, input, select, textarea {
 }
 
 .cert-demo-pill {
-  display: inline-block;
-  margin-bottom: 8px;
+  display: table;
+  margin: 0 auto 10px;
   padding: 4px 12px;
   border-radius: 999px;
   background: var(--gold-soft);
@@ -1048,10 +1094,24 @@ button, input, select, textarea {
   }
 }
 
+@page {
+  size: A4 landscape;
+  margin: 8mm;
+}
+
 @media print {
-  .sidebar, .topbar, .mobile-topbar, .mobile-bottom-nav, .drawer-backdrop, .no-print { display: none !important; }
-  .app-shell { display: block; }
-  .content { padding: 0; max-width: none; }
+  .sidebar, .topbar, .mobile-topbar, .mobile-bottom-nav, .drawer-backdrop, .toast, .modal-backdrop, .no-print { display: none !important; }
+  .app-shell { display: block !important; min-height: auto !important; }
+  .main-area { display: block !important; }
+  .content { padding: 0 !important; margin: 0 auto !important; max-width: none !important; width: 100% !important; }
+  .cert-sheet {
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    max-width: 980px !important;
+    width: 100% !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   .cert-signatories-grid { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important; }
-  body { background: #fff; }
+  body { background: #fff !important; }
 }

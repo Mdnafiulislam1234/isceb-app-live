@@ -429,6 +429,15 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
   assert.ok(appJs.includes("App Updates &amp; Online APK") || appJs.includes("App Updates & Online APK"));
   assert.ok(appJs.includes('resolveHostingUrl("apk.html")'));
 
+  assert.ok(appJs.includes("courseDetailOpen"), "Tapping a class must open dedicated lecture page");
+  assert.ok(appJs.includes('data-action="back-to-modules"'), "Dedicated lecture page must include Back to Modules button");
+  assert.ok(appJs.includes("renderPdfInlineIntoHost"), "Web/Mobile PWA must render PDFs inline on canvas");
+  assert.ok(appJs.includes("saveMediaBlobToIdb") && appJs.includes("loadMediaBlobFromIdb"), "Uploaded files must persist in IndexedDB");
+  assert.ok(appJs.includes('class="two-col-grid no-print"'), "Certificate print must exclude Eligibility and Verify cards");
+  assert.ok(appJs.includes('class="cert-logo-wrap"'), "Certificate logo must use centered .cert-logo-wrap");
+  assert.ok(desktopCss.includes(".cert-logo-wrap"), "Missing .cert-logo-wrap CSS");
+  assert.ok(desktopCss.includes(".pdf-canvas-pages"), "Missing .pdf-canvas-pages CSS");
+
   assert.ok(modelsKt.includes('"$HOSTING_BASE/apk.html"'), "Android DEFAULT_DOWNLOAD_PAGE_URL must point to apk.html");
   assert.ok(releaseSh.includes('f"{hosting_base}/apk.html"'), "release_apk.sh version.json generator must point downloadPageUrl to apk.html");
 });

@@ -268,12 +268,75 @@ let activeTimerInterval = null;
 let examCountdownInterval = null;
 let examModalSession = null;
 let demoCertificateActive = false;
+let courseDetailOpen = false;
+let pendingMediaAfterSignIn = null;
 let selectedLoginAdminId = ADMIN_AMIRUL_ID;
 let desktopAdminAuthMode = "login"; // login | setup | reset
 let lastIssuedSecretNotice = "";
 let verifiedAdminSessionId = null;
 let pendingStudentPhotoDataUrl = "";
 const localAttachmentUrls = new Map();
+const localAttachmentBlobs = new Map();
+
+const MEDIA_IDB_NAME = "isceb_media_blobs";
+const MEDIA_IDB_STORE = "blobs";
+
+function openMediaIdb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const req = indexedDB.open(MEDIA_IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(MEDIA_IDB_STORE)) {
+        db.createObjectStore(MEDIA_IDB_STORE, { keyPath: "key" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open error"));
+  });
+}
+
+async function saveMediaBlobToIdb(key, blob, meta = {}) {
+  if (!key || !blob) return;
+  localAttachmentBlobs.set(key, blob);
+  try {
+    const db = await openMediaIdb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_IDB_STORE, "readwrite");
+      tx.objectStore(MEDIA_IDB_STORE).put({
+        key,
+        blob,
+        mimeType: blob.type || meta.mimeType || "application/octet-stream",
+        fileName: meta.fileName || "",
+        savedAt: Date.now()
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (_) {}
+}
+
+async function loadMediaBlobFromIdb(key) {
+  if (!key) return null;
+  if (localAttachmentBlobs.has(key)) return localAttachmentBlobs.get(key);
+  try {
+    const db = await openMediaIdb();
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_IDB_STORE, "readonly");
+      const req = tx.objectStore(MEDIA_IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (record?.blob) {
+      localAttachmentBlobs.set(key, record.blob);
+      return record.blob;
+    }
+  } catch (_) {}
+  return null;
+}
 
 function saveState() {
   try {
@@ -495,6 +558,56 @@ function inferMediaMimeType(media) {
   return "application/octet-stream";
 }
 
+let pdfJsLibPromise = null;
+
+async function getPdfJsLib() {
+  if (pdfJsLibPromise) return pdfJsLibPromise;
+  pdfJsLibPromise = (async () => {
+    const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.8.69/pdf.min.mjs");
+    if (pdfjsLib?.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.8.69/pdf.worker.min.mjs";
+    }
+    return pdfjsLib;
+  })();
+  return pdfJsLibPromise;
+}
+
+async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob) {
+  if (!hostEl) return;
+  try {
+    const pdfjsLib = await getPdfJsLib();
+    const bytes = blob
+      ? new Uint8Array(await blob.arrayBuffer())
+      : new Uint8Array(await (await fetch(resolvedUrl)).arrayBuffer());
+    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    hostEl.innerHTML = `<div style="font-size: 12px; font-weight: 700; color: var(--navy); padding: 2px 4px;">PDF Document • ${pdf.numPages} Page(s)</div>`;
+    const maxPages = Math.min(pdf.numPages, 40);
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      hostEl.appendChild(canvas);
+    }
+    if (pdf.numPages > maxPages) {
+      const note = document.createElement("div");
+      note.style.cssText = "font-size: 12px; color: var(--muted); text-align: center; padding: 6px;";
+      note.textContent = `Showing first ${maxPages} of ${pdf.numPages} pages. Tap 'Download File' below for full document.`;
+      hostEl.appendChild(note);
+    }
+  } catch (_) {
+    hostEl.innerHTML = `
+      <iframe src="${escapeHtml(resolvedUrl)}" title="PDF Preview" style="width: 100%; height: 52vh; border: 1px solid var(--border); border-radius: 8px; background: #fff;"></iframe>
+      <div style="font-size: 12px; color: var(--muted); text-align: center; padding: 6px 4px;">
+        If your mobile browser shows a blank frame, tap <strong>Download File</strong> or <strong>Open in New Tab</strong> below to view in your PDF reader.
+      </div>
+    `;
+  }
+}
+
 function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   const title = media.title || media.fileName || "Study Material";
   const fileName = media.fileName || "study-material";
@@ -502,6 +615,7 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   const safeUrl = escapeHtml(resolvedUrl);
   const safeName = escapeHtml(fileName);
   const lowerName = fileName.toLowerCase();
+  const isPdf = upperType === "PDF" || lowerName.endsWith(".pdf");
 
   let previewBody = "";
   if (upperType === "VIDEO" || /\.(mp4|webm|mov|mkv|3gp)$/i.test(lowerName)) {
@@ -515,8 +629,14 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     `;
   } else if (upperType === "IMAGE" || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lowerName)) {
     previewBody = `<img src="${safeUrl}" alt="${escapeHtml(title)}" style="max-width: 100%; max-height: 64vh; object-fit: contain; display: block; margin: 0 auto; border-radius: 10px;" />`;
-  } else if (upperType === "PDF" || lowerName.endsWith(".pdf")) {
-    previewBody = `<iframe src="${safeUrl}" title="${escapeHtml(title)}" style="width: 100%; height: 64vh; border: 1px solid var(--border); border-radius: 10px; background: #fff;"></iframe>`;
+  } else if (isPdf) {
+    previewBody = `
+      <div id="pdfCanvasHost" class="pdf-canvas-pages">
+        <div style="text-align: center; padding: 24px 12px; font-size: 13px; font-weight: 700; color: var(--navy);">
+          Rendering PDF pages...
+        </div>
+      </div>
+    `;
   } else {
     previewBody = `
       <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 18px; text-align: center;">
@@ -539,6 +659,11 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     `
   );
 
+  if (isPdf) {
+    const host = document.getElementById("pdfCanvasHost");
+    renderPdfInlineIntoHost(host, resolvedUrl, blob);
+  }
+
   if (blob && /\.(txt|csv|md|json|log)$/i.test(lowerName)) {
     blob.text().then((txt) => {
       const target = document.getElementById("textPreviewContainer");
@@ -556,20 +681,59 @@ async function openSyncedCloudMedia(media) {
     presentMediaPreviewModal(media, rawUrl, null);
     return;
   }
+
+  const cachedBlob =
+    (await loadMediaBlobFromIdb(media.id)) ||
+    (media.cloudFileId ? await loadMediaBlobFromIdb(media.cloudFileId) : null);
+  if (cachedBlob) {
+    let cachedUrl = localAttachmentUrls.get(media.id);
+    if (!cachedUrl) {
+      cachedUrl = URL.createObjectURL(cachedBlob);
+      localAttachmentUrls.set(media.id, cachedUrl);
+    }
+    presentMediaPreviewModal(media, cachedUrl, cachedBlob);
+    return;
+  }
+
   const cachedUrl = localAttachmentUrls.get(media.id);
   if (cachedUrl) {
     presentMediaPreviewModal(media, cachedUrl, null);
     return;
   }
+
   if (!media.cloudFileId || !media.cloudChunkCount) {
-    showToast("File is stored locally on the uploader's device only (attach HTTPS link or re-upload under 18 MB).", true);
+    openModal(
+      media.title || media.fileName || "File Not Synced Yet",
+      `<div style="display: grid; gap: 12px; font-size: 13.5px;">
+        <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px; color: #92400E;">
+          <strong>This file has not been synced to Firebase Cloud yet.</strong><br/>
+          It was uploaded on the Admin's original device without signing into <strong>Google Cloud Sync</strong> first.
+        </div>
+        <p style="margin: 0; color: var(--muted);">
+          Ask the Admin to sign into <strong>Google Cloud Sync</strong> on the device where they uploaded it and tap <strong>Sync Local Uploads to Cloud</strong> (or re-upload under 18 MB / attach an HTTPS link).
+        </p>
+      </div>`
+    );
     return;
   }
+
   const fb = await initFirebaseSdk();
   if (!fb || !cloudUser) {
-    showToast("Sign in via 'Google Cloud Sync' to download cloud class attachments.", true);
+    pendingMediaAfterSignIn = media;
+    openModal(
+      `Open ${media.fileName || "Study Material"}`,
+      `<div style="display: grid; gap: 12px; font-size: 13.5px;">
+        <p style="margin: 0; color: var(--text);">
+          Sign in with your Google account once to securely download cloud-synced lecture materials (<strong>${escapeHtml(media.fileName || media.title || "PDF")}</strong>) from ISCEB Cloud.
+        </p>
+        <button type="button" class="btn btn-gold" data-action="signin-and-open-pending-media">
+          Sign in with Google &amp; Open File
+        </button>
+      </div>`
+    );
     return;
   }
+
   try {
     showToast(`Downloading ${media.fileName || "attachment"}...`);
     const { doc, getDoc } = fb.fsMod;
@@ -586,6 +750,8 @@ async function openSyncedCloudMedia(media) {
       chunks.push(arr);
     }
     const blob = new Blob(chunks, { type: inferMediaMimeType(media) });
+    await saveMediaBlobToIdb(media.id, blob, { fileName: media.fileName, mimeType: blob.type });
+    await saveMediaBlobToIdb(media.cloudFileId, blob, { fileName: media.fileName, mimeType: blob.type });
     const objUrl = URL.createObjectURL(blob);
     localAttachmentUrls.set(media.id, objUrl);
     presentMediaPreviewModal(media, objUrl, blob);
@@ -709,11 +875,19 @@ async function initFirebaseSdk() {
     const db = fsMod.getFirestore(app, FIREBASE_CONFIG.databaseId);
     firebaseModules = { app, auth, db, authMod, fsMod };
 
+    authMod.getRedirectResult(auth).catch(() => {});
+
     authMod.onAuthStateChanged(auth, (user) => {
       cloudUser = user || null;
       updateChromeBadges();
       if (user) {
-        syncFromCloudFirestore(true);
+        syncFromCloudFirestore(true).then(() => {
+          if (pendingMediaAfterSignIn) {
+            const mediaToOpen = pendingMediaAfterSignIn;
+            pendingMediaAfterSignIn = null;
+            openSyncedCloudMedia(mediaToOpen);
+          }
+        });
       }
     });
     return firebaseModules;
@@ -729,9 +903,9 @@ async function signInWithGoogleCloud() {
     showToast("Firebase SDK requires an active internet connection.", true);
     return;
   }
+  const provider = new fb.authMod.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
   try {
-    const provider = new fb.authMod.GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: "select_account" });
     const cred = await fb.authMod.signInWithPopup(fb.auth, provider);
     cloudUser = cred.user;
     if (isGuestUser() && cred.user?.email) {
@@ -745,8 +919,24 @@ async function signInWithGoogleCloud() {
     }
     showToast(`Cloud connected as ${cred.user.email}`);
     await syncFromCloudFirestore(false);
+    if (pendingMediaAfterSignIn) {
+      const mediaToOpen = pendingMediaAfterSignIn;
+      pendingMediaAfterSignIn = null;
+      openSyncedCloudMedia(mediaToOpen);
+    }
     render();
   } catch (err) {
+    const code = String(err?.code || "");
+    if (code.includes("popup-blocked") || code.includes("operation-not-supported")) {
+      try {
+        showToast("Redirecting to Google Sign-In...");
+        await fb.authMod.signInWithRedirect(fb.auth, provider);
+        return;
+      } catch (redirErr) {
+        showToast(`Google Sign-In failed: ${redirErr.message || redirErr}`, true);
+        return;
+      }
+    }
     showToast(`Google Sign-In paused: ${err.message || err}`, true);
   }
 }
@@ -1086,6 +1276,23 @@ function generateClassQuiz(cls) {
   ];
 }
 
+function getUniqueClassMaterials(cls) {
+  if (!cls) return [];
+  const classMaterials = [
+    cls.pdfMedia,
+    cls.audioMedia,
+    cls.videoMedia,
+    ...(cls.attachments || [])
+  ].filter(Boolean);
+  const seen = new Set();
+  return classMaterials.filter((m) => {
+    const key = m.id || `${m.fileName}_${m.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function renderCourses() {
   const q = state.searchQuery.trim().toLowerCase();
   const filteredModules = state.modules.filter((m) => {
@@ -1098,52 +1305,47 @@ function renderCourses() {
     return modMatch || clsMatch;
   });
 
-  const visibleClasses = state.classes.filter((c) => isAdminUser() || c.isPublished !== false);
+  const visibleClasses = state.classes
+    .filter((c) => isAdminUser() || c.isPublished !== false)
+    .slice()
+    .sort((a, b) => a.orderIndex - b.orderIndex);
   const selectedClass = visibleClasses.find((c) => c.id === state.selectedClassId) || visibleClasses[0];
+  const selectedIdx = visibleClasses.findIndex((c) => c.id === selectedClass?.id);
+  const prevClass = selectedIdx > 0 ? visibleClasses[selectedIdx - 1] : null;
+  const nextClass = selectedIdx >= 0 && selectedIdx < visibleClasses.length - 1 ? visibleClasses[selectedIdx + 1] : null;
   const selectedModule = state.modules.find((m) => m.id === selectedClass?.moduleId);
   const prog = selectedClass ? getClassProgress(selectedClass.id) : null;
   const quiz = selectedClass ? generateClassQuiz(selectedClass) : [];
   const timerRunning = activeTimerInterval && activeTimerInterval._classId === selectedClass?.id;
 
-  const listHtml = filteredModules
-    .map((m) => {
-      const classes = visibleClasses
-        .filter((c) => c.moduleId === m.id)
-        .filter((c) => !q || m.title.toLowerCase().includes(q) || c.title.toLowerCase().includes(q) || c.lectureCode.includes(q))
-        .sort((a, b) => a.orderIndex - b.orderIndex);
-      const doneInMod = classes.filter((c) => getClassProgress(c.id).completed).length;
+  if (courseDetailOpen && selectedClass) {
+    const uniqueMaterials = getUniqueClassMaterials(selectedClass);
+    const unsyncedAdminLocalCount = uniqueMaterials.filter(
+      (m) => !/^https?:\/\//i.test(String(m.url || "")) && (!m.cloudFileId || !m.cloudChunkCount)
+    ).length;
 
-      return `
-        <div class="card" style="padding: 12px; margin-bottom: 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span class="badge ${m.part === "PART_1_BASIC" ? "badge-navy" : "badge-gold"}">Module ${String(m.number).padStart(2, "0")}</span>
-            <span style="font-size: 11px; font-weight: 700; color: var(--muted);">${doneInMod}/${classes.length} Done</span>
-          </div>
-          <div style="font-weight: 800; font-size: 13.5px; color: var(--navy); margin-bottom: 8px;">${escapeHtml(m.title)}</div>
-          ${classes
-            .map((c) => {
-              const cp = getClassProgress(c.id);
-              const isSel = c.id === selectedClass?.id;
-              return `
-                <div class="list-item ${isSel ? "selected" : ""}" data-action="select-class" data-class-id="${escapeHtml(c.id)}" style="padding: 9px 10px; margin-bottom: 6px;">
-                  <div style="display: flex; justify-content: space-between; gap: 8px; align-items: center;">
-                    <span style="font-size: 12.5px; font-weight: 700; color: var(--navy);">${escapeHtml(c.lectureCode)}. ${escapeHtml(c.title)}</span>
-                    <span class="badge ${cp.completed ? "badge-ok" : "badge-warn"}">${cp.completed ? "Done" : `${c.durationMinutes}m`}</span>
-                  </div>
-                </div>
-              `;
-            })
-            .join("")}
+    return `
+      <div class="lecture-detail-topbar">
+        <button type="button" class="btn btn-outline btn-sm" data-action="back-to-modules">
+          &larr; All Modules &amp; Classes
+        </button>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          ${
+            prevClass
+              ? `<button type="button" class="btn btn-outline btn-sm" data-action="select-class" data-class-id="${escapeHtml(prevClass.id)}">&lsaquo; Prev (${escapeHtml(prevClass.lectureCode)})</button>`
+              : ""
+          }
+          ${
+            nextClass
+              ? `<button type="button" class="btn btn-outline btn-sm" data-action="select-class" data-class-id="${escapeHtml(nextClass.id)}">Next (${escapeHtml(nextClass.lectureCode)}) &rsaquo;</button>`
+              : ""
+          }
         </div>
-      `;
-    })
-    .join("");
+      </div>
 
-  const detailHtml = selectedClass
-    ? `
       <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
-          <div>
+          <div style="min-width: 0; flex: 1;">
             <span class="badge badge-navy">${escapeHtml(selectedModule?.part === "PART_1_BASIC" ? "Part 1 • Basic Level" : "Part 2 • Advance Level")} • Module ${escapeHtml(selectedModule?.number || "")}</span>
             <h2 style="margin: 8px 0 4px; font-size: 20px; color: var(--navy);">Lecture ${escapeHtml(selectedClass.lectureCode)}: ${escapeHtml(selectedClass.title)}</h2>
             <p style="margin: 0; font-size: 13px; color: var(--muted);">Duration: ${escapeHtml(selectedClass.durationMinutes)} mins • Study Logged: ${formatSeconds(prog.activeSeconds)}</p>
@@ -1160,63 +1362,54 @@ function renderCourses() {
 
         <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;" />
 
-        <h3 style="margin: 0 0 6px; font-size: 14.5px; color: var(--navy);">Executive Summary</h3>
-        <p style="margin: 0 0 14px; font-size: 13.5px; color: #334155;">${escapeHtml(selectedClass.summary)}</p>
-
-        <h3 style="margin: 0 0 8px; font-size: 14.5px; color: var(--navy);">Key Learning Objectives</h3>
-        <ul style="margin: 0 0 16px; padding-left: 20px; font-size: 13.5px; color: #334155;">
-          ${(selectedClass.learningObjectives || []).map((obj) => `<li style="margin-bottom: 4px;">${escapeHtml(obj)}</li>`).join("")}
-        </ul>
-
-        <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 16px;">
-          <h3 style="margin: 0 0 8px; font-size: 14px; color: var(--navy);">Class Study Materials, Cloud Attachments & Local PC Notes</h3>
-          ${(() => {
-            const classMaterials = [
-              selectedClass.pdfMedia,
-              selectedClass.audioMedia,
-              selectedClass.videoMedia,
-              ...(selectedClass.attachments || [])
-            ].filter(Boolean);
-            const seen = new Set();
-            const uniqueMaterials = classMaterials.filter((m) => {
-              const key = m.id || `${m.fileName}_${m.url}`;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-            if (!uniqueMaterials.length) {
-              return `<p style="margin: 0 0 10px; font-size: 12.5px; color: var(--muted);">No cloud materials attached to this lecture yet.</p>`;
-            }
-            return `<div style="display: grid; gap: 8px; margin-bottom: 12px;">
-              ${uniqueMaterials
-                .map((m) => {
-                  const hasCloud = Boolean((m.cloudFileId && m.cloudChunkCount > 0) || /^https?:\/\//i.test(String(m.url || "")));
-                  const statusText = hasCloud ? "Cloud Synced" : localAttachmentUrls.has(m.id) ? "PC Session Ready" : "Device Local Only";
-                  return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #fff; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); flex-wrap: wrap;">
-                    <div style="min-width: 0; flex: 1;">
-                      <div style="font-size: 13px; font-weight: 700; color: var(--navy);">${escapeHtml(m.title || m.fileName || "Study Material")}</div>
-                      <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(m.type || "FILE")} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${statusText}</div>
-                    </div>
-                    <div style="display: flex; gap: 6px; align-items: center;">
-                      <button type="button" class="btn btn-primary btn-sm" data-action="open-cloud-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">
-                        Open / Preview
-                      </button>
-                      ${
-                        isAdminUser()
-                          ? `<button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="delete-class-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">Delete</button>`
-                          : ""
-                      }
-                    </div>
-                  </div>`;
-                })
-                .join("")}
-            </div>`;
-          })()}
-          <textarea id="lectureNotesBox" class="textarea" rows="3" placeholder="Record your PC study notes for Lecture ${escapeHtml(selectedClass.lectureCode)}...">${escapeHtml(prog.localNotes || "")}</textarea>
+        <div style="background: var(--surface-muted); border: 1.5px solid #CBD5E1; border-radius: 12px; padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+            <h3 style="margin: 0; font-size: 14.5px; color: var(--navy);">Class Study Materials, PDF, Video &amp; Audio</h3>
+            <span class="badge ${uniqueMaterials.length ? "badge-ok" : "badge-warn"}">${uniqueMaterials.length} File(s)</span>
+          </div>
+          ${
+            !uniqueMaterials.length
+              ? `<p style="margin: 0 0 10px; font-size: 13px; color: var(--muted);">No PDF, video, or audio materials attached to this lecture yet.</p>`
+              : `<div style="display: grid; gap: 8px; margin-bottom: 12px;">
+                  ${uniqueMaterials
+                    .map((m) => {
+                      const hasCloud = Boolean((m.cloudFileId && m.cloudChunkCount > 0) || /^https?:\/\//i.test(String(m.url || "")));
+                      const hasLocal = localAttachmentUrls.has(m.id) || localAttachmentBlobs.has(m.id);
+                      const statusText = hasCloud ? "Cloud Synced" : hasLocal ? "Saved on Device" : "Local Device Only";
+                      const typeUpper = String(m.type || "FILE").toUpperCase();
+                      const actionLabel =
+                        typeUpper === "PDF"
+                          ? "Open PDF"
+                          : typeUpper === "VIDEO"
+                          ? "Play Video"
+                          : typeUpper === "AUDIO"
+                          ? "Listen Audio"
+                          : "Open / Preview";
+                      return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #fff; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); flex-wrap: wrap;">
+                        <div style="min-width: 0; flex: 1;">
+                          <div style="font-size: 13.5px; font-weight: 700; color: var(--navy);">${escapeHtml(m.title || m.fileName || "Study Material")}</div>
+                          <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(typeUpper)} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${statusText}</div>
+                        </div>
+                        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                          <button type="button" class="btn btn-gold btn-sm" data-action="open-cloud-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">
+                            ${actionLabel}
+                          </button>
+                          ${
+                            isAdminUser()
+                              ? `<button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="delete-class-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">Delete</button>`
+                              : ""
+                          }
+                        </div>
+                      </div>`;
+                    })
+                    .join("")}
+                </div>`
+          }
+          <textarea id="lectureNotesBox" class="textarea" rows="3" placeholder="Record your study notes for Lecture ${escapeHtml(selectedClass.lectureCode)}...">${escapeHtml(prog.localNotes || "")}</textarea>
           <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap;">
             <button type="button" class="btn btn-primary btn-sm" data-action="save-notes" data-class-id="${escapeHtml(selectedClass.id)}">Save Notes</button>
             <label class="btn btn-outline btn-sm" style="cursor: pointer;">
-              Attach PC PDF / Video / Slide
+              Attach Personal PDF / Video / Slide
               <input type="file" id="attachLocalFileInput" data-class-id="${escapeHtml(selectedClass.id)}" style="display: none;" accept=".pdf,video/*,image/*,.txt,.csv" />
             </label>
           </div>
@@ -1225,10 +1418,9 @@ function renderCourses() {
               ? `<div style="margin-top: 10px; display: grid; gap: 6px;">
                   ${prog.localAttachments
                     .map((att) => {
-                      const objUrl = localAttachmentUrls.get(att.id);
-                      return `<div style="display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 12.5px;">
+                      return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 12.5px;">
                         <span><strong>${escapeHtml(att.name)}</strong> (${formatBytes(att.size)})</span>
-                        ${objUrl ? `<a class="btn btn-outline btn-sm" href="${escapeHtml(objUrl)}" target="_blank" rel="noopener">Open Preview</a>` : `<span style="color: var(--muted);">Saved reference (re-select file on reload)</span>`}
+                        <button type="button" class="btn btn-outline btn-sm" data-action="open-personal-attachment" data-class-id="${escapeHtml(selectedClass.id)}" data-att-id="${escapeHtml(att.id)}">Open File</button>
                       </div>`;
                     })
                     .join("")}
@@ -1237,43 +1429,27 @@ function renderCourses() {
           }
         </div>
 
-          <div style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 12px; padding: 14px; margin-bottom: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
-            <h3 style="margin: 0; font-size: 14px; color: var(--navy);">Lesson Mastery Check (2 Questions)</h3>
-            ${prog.quizScore !== null ? `<span class="badge ${prog.quizPassed ? "badge-ok" : "badge-warn"}">Score: ${prog.quizScore}%</span>` : ""}
-          </div>
-          <form id="lessonQuizForm" data-class-id="${escapeHtml(selectedClass.id)}">
-            ${quiz
-              .map(
-                (qItem, idx) => `
-              <div style="margin-bottom: 12px;">
-                <div style="font-weight: 700; font-size: 13px; color: var(--navy); margin-bottom: 6px;">Q${idx + 1}. ${escapeHtml(qItem.q)}</div>
-                ${qItem.options
-                  .map(
-                    (opt, oIdx) => `
-                  <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; cursor: pointer;">
-                    <input type="radio" name="lq_${idx}" value="${oIdx}" required />
-                    <span>${escapeHtml(opt)}</span>
-                  </label>
-                `
-                  )
-                  .join("")}
-              </div>
-            `
-              )
-              .join("")}
-            <button type="submit" class="btn btn-primary btn-sm">Submit Mastery Check</button>
-          </form>
-        </div>
-
         ${
           isAdminUser()
             ? `
-          <div class="upload-center-card" id="desktopAdminMediaUploadCenter">
+          <div class="upload-center-card" id="desktopAdminMediaUploadCenter" style="margin-bottom: 16px;">
             <div class="flex-header-between" style="margin-bottom: 10px;">
               <strong style="font-size: 14.5px; color: #fff;">Admin Media Upload Center</strong>
               <span style="font-size: 11.5px; color: var(--gold-soft); font-weight: 700; white-space: nowrap;">Max 18MB Cloud Sync</span>
             </div>
+            ${
+              !cloudUser
+                ? `<div style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(251, 191, 36, 0.55); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                    <span style="font-size: 12px; color: #FEF3C7;">Sign in with <strong>Google Cloud Sync</strong> before uploading so students on other phones can open your PDFs/videos.</span>
+                    <button type="button" class="btn btn-gold btn-sm" data-action="trigger-google-auth">Connect Google Cloud</button>
+                  </div>`
+                : unsyncedAdminLocalCount > 0
+                ? `<div style="background: rgba(212, 175, 55, 0.16); border: 1px solid rgba(212, 175, 55, 0.5); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                    <span style="font-size: 12px; color: #F4E2A3;">${unsyncedAdminLocalCount} local file(s) need cloud sync for students.</span>
+                    <button type="button" class="btn btn-gold btn-sm" data-action="sync-local-media-to-cloud" data-class-id="${escapeHtml(selectedClass.id)}">Sync Local Files to Cloud</button>
+                  </div>`
+                : ""
+            }
             <label class="btn btn-gold upload-banner-btn" style="cursor: pointer;">
               Upload multiple files, PDF, image, document, audio, video
               <input type="file" id="adminMultiMediaUploadInput" data-class-id="${escapeHtml(selectedClass.id)}" multiple style="display: none;" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*" />
@@ -1315,9 +1491,84 @@ function renderCourses() {
         `
             : ""
         }
+
+        <h3 style="margin: 0 0 6px; font-size: 14.5px; color: var(--navy);">Executive Summary</h3>
+        <p style="margin: 0 0 14px; font-size: 13.5px; color: #334155;">${escapeHtml(selectedClass.summary)}</p>
+
+        <h3 style="margin: 0 0 8px; font-size: 14.5px; color: var(--navy);">Key Learning Objectives</h3>
+        <ul style="margin: 0 0 16px; padding-left: 20px; font-size: 13.5px; color: #334155;">
+          ${(selectedClass.learningObjectives || []).map((obj) => `<li style="margin-bottom: 4px;">${escapeHtml(obj)}</li>`).join("")}
+        </ul>
+
+        <div style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 12px; padding: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+            <h3 style="margin: 0; font-size: 14px; color: var(--navy);">Lesson Mastery Check (2 Questions)</h3>
+            ${prog.quizScore !== null ? `<span class="badge ${prog.quizPassed ? "badge-ok" : "badge-warn"}">Score: ${prog.quizScore}%</span>` : ""}
+          </div>
+          <form id="lessonQuizForm" data-class-id="${escapeHtml(selectedClass.id)}">
+            ${quiz
+              .map(
+                (qItem, idx) => `
+              <div style="margin-bottom: 12px;">
+                <div style="font-weight: 700; font-size: 13px; color: var(--navy); margin-bottom: 6px;">Q${idx + 1}. ${escapeHtml(qItem.q)}</div>
+                ${qItem.options
+                  .map(
+                    (opt, oIdx) => `
+                  <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; cursor: pointer;">
+                    <input type="radio" name="lq_${idx}" value="${oIdx}" required />
+                    <span>${escapeHtml(opt)}</span>
+                  </label>
+                `
+                  )
+                  .join("")}
+              </div>
+            `
+              )
+              .join("")}
+            <button type="submit" class="btn btn-primary btn-sm">Submit Mastery Check</button>
+          </form>
+        </div>
       </div>
-    `
-    : `<div class="card">Select a class from the left list.</div>`;
+    `;
+  }
+
+  const listHtml = filteredModules
+    .map((m) => {
+      const classes = visibleClasses
+        .filter((c) => c.moduleId === m.id)
+        .filter((c) => !q || m.title.toLowerCase().includes(q) || c.title.toLowerCase().includes(q) || c.lectureCode.includes(q))
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+      const doneInMod = classes.filter((c) => getClassProgress(c.id).completed).length;
+
+      return `
+        <div class="card" style="padding: 12px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span class="badge ${m.part === "PART_1_BASIC" ? "badge-navy" : "badge-gold"}">Module ${String(m.number).padStart(2, "0")}</span>
+            <span style="font-size: 11px; font-weight: 700; color: var(--muted);">${doneInMod}/${classes.length} Done</span>
+          </div>
+          <div style="font-weight: 800; font-size: 13.5px; color: var(--navy); margin-bottom: 8px;">${escapeHtml(m.title)}</div>
+          ${classes
+            .map((c) => {
+              const cp = getClassProgress(c.id);
+              const matCount = getUniqueClassMaterials(c).length;
+              return `
+                <div class="list-item" data-action="select-class" data-class-id="${escapeHtml(c.id)}" style="padding: 10px 11px; margin-bottom: 6px;">
+                  <div style="display: flex; justify-content: space-between; gap: 8px; align-items: center;">
+                    <span style="font-size: 13px; font-weight: 700; color: var(--navy); min-width: 0; flex: 1;">${escapeHtml(c.lectureCode)}. ${escapeHtml(c.title)}</span>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                      ${matCount > 0 ? `<span class="badge badge-navy">${matCount} File${matCount > 1 ? "s" : ""}</span>` : ""}
+                      <span class="badge ${cp.completed ? "badge-ok" : "badge-warn"}">${cp.completed ? "Done" : `${c.durationMinutes}m`}</span>
+                      <span style="color: var(--muted); font-weight: 800; font-size: 16px; line-height: 1;">&rsaquo;</span>
+                    </div>
+                  </div>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    })
+    .join("");
 
   return `
     <div class="search-row">
@@ -1326,10 +1577,7 @@ function renderCourses() {
       <button type="button" class="btn ${state.partFilter === "PART_1_BASIC" ? "btn-primary" : "btn-outline"} btn-sm" data-part="PART_1_BASIC">Part 1: Basic (1–28)</button>
       <button type="button" class="btn ${state.partFilter === "PART_2_ADVANCE" ? "btn-primary" : "btn-outline"} btn-sm" data-part="PART_2_ADVANCE">Part 2: Advance (29–48)</button>
     </div>
-    <div class="master-detail">
-      <div>${listHtml || '<div class="card">No matching modules or lectures found.</div>'}</div>
-      <div>${detailHtml}</div>
-    </div>
+    <div>${listHtml || '<div class="card">No matching modules or lectures found.</div>'}</div>
   `;
 }
 
@@ -1429,7 +1677,7 @@ function renderLearning() {
   const rightSignerTitle = state.settings.authorizedSignerTitle || "Founder of ISCEB";
 
   return `
-    <div class="two-col-grid">
+    <div class="two-col-grid no-print">
       <div class="card">
         <div class="flex-header-between" style="margin-bottom: 10px;">
           <h3 style="margin: 0; color: var(--navy);">Certificate Eligibility Dashboard</h3>
@@ -1464,9 +1712,9 @@ function renderLearning() {
       <div class="card">
         <h3 style="margin: 0 0 10px; color: var(--navy);">Verify Certificate Serial</h3>
         <p style="margin: 0 0 10px; font-size: 13px; color: var(--muted);">Enter an ISCEB Certificate ID to validate authenticity locally.</p>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="verifyCertInput" class="input" placeholder="e.g. ${escapeHtml(cert?.serial || "ISCEB-PGD-2026-1001")}" />
-          <button type="button" class="btn btn-primary btn-sm" data-action="verify-cert">Verify</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="verifyCertInput" class="input" style="min-width: 0; flex: 1;" placeholder="e.g. ${escapeHtml(cert?.serial || "ISCEB-PGD-2026-1001")}" />
+          <button type="button" class="btn btn-primary btn-sm" style="white-space: nowrap; flex-shrink: 0;" data-action="verify-cert">Verify</button>
         </div>
         <div id="verifyCertResult" style="margin-top: 10px; font-size: 13px;"></div>
       </div>
@@ -1477,7 +1725,9 @@ function renderLearning() {
         ? `
       <div class="cert-sheet">
         <div class="cert-sheet-inner">
-          <img src="./isceb-logo.webp" alt="ISCEB" style="height: 62px; object-fit: contain; margin-bottom: 6px;" />
+          <div class="cert-logo-wrap">
+            <img src="./isceb-logo.webp" alt="ISCEB" />
+          </div>
           ${displayedCert.isDemo ? `<div class="cert-demo-pill">DEMO CERTIFICATE PREVIEW</div>` : ""}
           <div class="cert-institution">
             Institute of Supply Chain Excellence Bangladesh (ISCEB)
@@ -2327,6 +2577,7 @@ function setupListeners() {
     const btn = e.target.closest("[data-view]");
     if (!btn) return;
     state.currentView = btn.dataset.view;
+    if (btn.dataset.view === "courses") courseDetailOpen = false;
     saveState();
     closeMobileDrawer();
     render();
@@ -2337,10 +2588,19 @@ function setupListeners() {
     const btn = e.target.closest("[data-view]");
     if (!btn) return;
     state.currentView = btn.dataset.view;
+    if (btn.dataset.view === "courses") courseDetailOpen = false;
     saveState();
     closeMobileDrawer();
     render();
     window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
+  window.addEventListener("popstate", () => {
+    if (state.currentView === "courses" && courseDetailOpen) {
+      courseDetailOpen = false;
+      render();
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
   });
 
   document.getElementById("mobileVerifyBtn")?.addEventListener("click", () => {
@@ -2436,12 +2696,41 @@ function setupListeners() {
     if (action === "continue-class") {
       state.selectedClassId = actBtn.dataset.classId;
       state.currentView = "courses";
+      courseDetailOpen = true;
+      try { window.history.pushState({ iscebClass: state.selectedClassId }, ""); } catch (_) {}
       saveState();
       render();
+      window.scrollTo({ top: 0, behavior: "instant" });
     } else if (action === "select-class") {
       state.selectedClassId = actBtn.dataset.classId;
+      courseDetailOpen = true;
+      try { window.history.pushState({ iscebClass: state.selectedClassId }, ""); } catch (_) {}
       saveState();
       render();
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } else if (action === "back-to-modules") {
+      courseDetailOpen = false;
+      render();
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } else if (action === "open-personal-attachment") {
+      const cid = actBtn.dataset.classId;
+      const attId = actBtn.dataset.attId;
+      const att = (getClassProgress(cid).localAttachments || []).find((a) => a.id === attId);
+      if (att) {
+        openSyncedCloudMedia({
+          id: att.id,
+          title: att.name,
+          fileName: att.name,
+          fileSizeBytes: att.size,
+          fileSizeFormatted: formatBytes(att.size),
+          type: String(att.name || "").toLowerCase().endsWith(".pdf") ? "PDF" : "DOCUMENT"
+        });
+      }
+    } else if (action === "signin-and-open-pending-media") {
+      closeModal();
+      signInWithGoogleCloud();
+    } else if (action === "sync-local-media-to-cloud") {
+      syncPendingLocalClassMediaToCloud(actBtn.dataset.classId);
     } else if (action === "toggle-complete-class") {
       const cid = actBtn.dataset.classId;
       const cur = getClassProgress(cid);
@@ -2722,15 +3011,18 @@ function setupListeners() {
     if (e.target.id === "attachLocalFileInput") {
       const cid = e.target.dataset.classId;
       const file = e.target.files?.[0];
+      e.target.value = "";
       if (!file) return;
       const attId = `att-${Date.now()}`;
       localAttachmentUrls.set(attId, URL.createObjectURL(file));
-      const cur = getClassProgress(cid);
-      updateClassProgress(cid, {
-        localAttachments: [...(cur.localAttachments || []), { id: attId, name: file.name, size: file.size, type: file.type }]
+      saveMediaBlobToIdb(attId, file, { fileName: file.name, mimeType: file.type }).then(() => {
+        const cur = getClassProgress(cid);
+        updateClassProgress(cid, {
+          localAttachments: [...(cur.localAttachments || []), { id: attId, name: file.name, size: file.size, type: file.type }]
+        });
+        showToast(`Attached ${file.name} and saved offline.`);
+        render();
       });
-      showToast(`Attached ${file.name} for PC viewing.`);
-      render();
     } else if (e.target.id === "profilePhotoInput") {
       const file = e.target.files?.[0];
       e.target.value = "";
@@ -3052,6 +3344,7 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       ));
     const mediaId = `pc-media-${Date.now()}-${i}`;
     localAttachmentUrls.set(mediaId, URL.createObjectURL(file));
+    await saveMediaBlobToIdb(mediaId, file, { fileName: file.name, mimeType: file.type });
 
     let cloudFileId = "";
     let cloudChunkCount = 0;
@@ -3073,6 +3366,7 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
         }
         cloudFileId = candidateId;
         cloudChunkCount = chunks.length;
+        await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
         cloudSyncedCount += 1;
       } catch (err) {
         cloudErrorMsg = err?.message || "Firestore chunk upload denied";
@@ -3115,15 +3409,70 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
     });
   } else if (cloudErrorMsg) {
-    showToast(`Saved for PC only — Firestore sync failed: ${cloudErrorMsg}. Sign in with Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
+    showToast(`Saved on this device — Firestore sync failed: ${cloudErrorMsg}. Sign in with Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
     render();
   } else if (!canCloudSync) {
-    showToast(`Attached ${files.length} file(s) on this PC. Click 'Google Cloud Sync' to upload for student phones.`);
+    showToast(`Saved ${files.length} file(s) on this device. Connect 'Google Cloud Sync' to push to all students.`);
     render();
   } else if (largeLocalOnlyCount > 0) {
     showToast(`File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach HTTPS Link' for student phones.`, true);
     render();
   } else {
+    render();
+  }
+}
+
+async function syncPendingLocalClassMediaToCloud(cid) {
+  if (!isAdminUser()) return;
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) {
+    await signInWithGoogleCloud();
+    return;
+  }
+  const cls = state.classes.find((c) => c.id === cid);
+  if (!cls) return;
+  const targets = getUniqueClassMaterials(cls).filter(
+    (m) => !/^https?:\/\//i.test(String(m.url || "")) && (!m.cloudFileId || !m.cloudChunkCount)
+  );
+  let synced = 0;
+  for (let i = 0; i < targets.length; i++) {
+    const m = targets[i];
+    const blob = await loadMediaBlobFromIdb(m.id);
+    if (!blob || blob.size === 0 || blob.size > MAX_CLOUD_FILE_BYTES) continue;
+    try {
+      const rawBytes = new Uint8Array(await blob.arrayBuffer());
+      const candidateId = `pc_${cid}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const { doc, setDoc, serverTimestamp } = fb.fsMod;
+      const chunks = splitBytesIntoLessonFileChunks({
+        fileId: candidateId,
+        bytes: rawBytes,
+        authorUid: cloudUser.uid,
+        serverTimestampToken: serverTimestamp()
+      });
+      for (const chunk of chunks) {
+        await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
+      }
+      m.cloudFileId = candidateId;
+      m.cloudChunkCount = chunks.length;
+      await saveMediaBlobToIdb(candidateId, blob, { fileName: m.fileName, mimeType: blob.type });
+      synced += 1;
+    } catch (err) {
+      showToast(`Cloud upload error: ${err?.message || err}`, true);
+    }
+  }
+  saveState();
+  if (synced > 0) {
+    await pushCurriculumToFirestore({
+      versionTag: state.manifest.versionTag || "v1.6.0",
+      versionCode: Number(state.manifest.versionCode || 106) + 1,
+      releaseNotes: `Synced ${synced} study file(s) for Lecture ${cls.lectureCode}`,
+      announcement: state.manifest.announcement || "",
+      apkVersionName: state.manifest.latestApkVersionName || "1.6",
+      apkVersionCode: state.manifest.latestApkVersionCode || 7,
+      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+    });
+  } else {
+    showToast("No cached local files <= 18 MB found to sync.", true);
     render();
   }
 }

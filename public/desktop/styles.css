@@ -39,7 +39,7 @@ html, body {
   -webkit-text-size-adjust: 100%;
   height: 100%;
   font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-  background: var(--bg);
+  background: #FFFFFF;
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -142,6 +142,7 @@ button, input, select, textarea {
   width: 100%;
   max-width: 100%;
   min-height: 100vh;
+  background: var(--bg);
 }
 
 /* Sidebar */
@@ -774,15 +775,43 @@ button, input, select, textarea {
   width: 100%;
 }
 
+.media-zoom-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: #F8FAFC;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.media-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .pdf-canvas-pages {
-  display: grid;
-  gap: 12px;
-  max-height: 62vh;
-  overflow-y: auto;
-  background: #F1F5F9;
+  display: block;
+  max-height: 64vh;
+  overflow: auto;
+  touch-action: pan-x pan-y pinch-zoom;
+  -webkit-overflow-scrolling: touch;
+  background: #E2E8F0;
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
+}
+
+.pdf-canvas-stage {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 100%;
+  transform-origin: top left;
 }
 
 .pdf-canvas-pages canvas {
@@ -791,7 +820,7 @@ button, input, select, textarea {
   display: block;
   background: #FFFFFF;
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.14);
 }
 
 .cert-institution {

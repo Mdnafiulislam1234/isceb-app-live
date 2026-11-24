@@ -572,7 +572,24 @@ async function getPdfJsLib() {
   return pdfJsLibPromise;
 }
 
-async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob) {
+function renderPdfPageToCanvasCrisp(page, canvas, targetWidthCssPx, zoomRatio = 1) {
+  const unscaled = page.getViewport({ scale: 1 });
+  const baseScale = targetWidthCssPx / Math.max(unscaled.width, 1);
+  const dpr = Math.min(3, Math.max(window.devicePixelRatio || 1, 1.5));
+  const rawPixelScale = baseScale * dpr * Math.max(1, zoomRatio);
+  // Keep total pixels safely within mobile browser canvas limits while staying ultra-sharp
+  const maxDim = 4096;
+  const maxScaleW = maxDim / Math.max(unscaled.width, 1);
+  const maxScaleH = maxDim / Math.max(unscaled.height, 1);
+  const renderScale = Math.max(1.8, Math.min(rawPixelScale, maxScaleW, maxScaleH));
+  const viewport = page.getViewport({ scale: renderScale });
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext("2d");
+  return page.render({ canvasContext: ctx, viewport }).promise;
+}
+
+async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls = null) {
   if (!hostEl) return;
   try {
     const pdfjsLib = await getPdfJsLib();
@@ -580,18 +597,42 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob) {
       ? new Uint8Array(await blob.arrayBuffer())
       : new Uint8Array(await (await fetch(resolvedUrl)).arrayBuffer());
     const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-    hostEl.innerHTML = `<div style="font-size: 12px; font-weight: 700; color: var(--navy); padding: 2px 4px;">PDF Document • ${pdf.numPages} Page(s)</div>`;
+    const stage = document.createElement("div");
+    stage.className = "pdf-canvas-stage";
+    hostEl.innerHTML = `<div style="font-size: 12px; font-weight: 700; color: var(--navy); padding: 2px 4px 8px;">PDF Document • ${pdf.numPages} Page(s) • Pinch or tap + to zoom</div>`;
+    hostEl.appendChild(stage);
+
     const maxPages = Math.min(pdf.numPages, 40);
+    const baseCssWidth = Math.max(hostEl.clientWidth - 24, 320);
+    const pageRecords = [];
+    let renderChain = Promise.resolve();
+
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1.5 });
       const canvas = document.createElement("canvas");
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext("2d");
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      hostEl.appendChild(canvas);
+      stage.appendChild(canvas);
+      pageRecords.push({ page, canvas });
+      await renderPdfPageToCanvasCrisp(page, canvas, baseCssWidth, 1.35);
     }
+
+    if (zoomControls) {
+      let currentZoom = 100;
+      const applyZoom = (nextZoom) => {
+        currentZoom = Math.max(100, Math.min(500, nextZoom));
+        stage.style.width = `${currentZoom}%`;
+        if (zoomControls.labelEl) zoomControls.labelEl.textContent = `${currentZoom}%`;
+        const zoomFactor = currentZoom / 100;
+        renderChain = renderChain.then(async () => {
+          for (const rec of pageRecords) {
+            if (!document.body.contains(rec.canvas)) return;
+            await renderPdfPageToCanvasCrisp(rec.page, rec.canvas, baseCssWidth, Math.max(1.35, zoomFactor));
+          }
+        }).catch(() => {});
+      };
+      zoomControls.onZoomChange = applyZoom;
+      applyZoom(100);
+    }
+
     if (pdf.numPages > maxPages) {
       const note = document.createElement("div");
       note.style.cssText = "font-size: 12px; color: var(--muted); text-align: center; padding: 6px;";
@@ -616,6 +657,21 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   const safeName = escapeHtml(fileName);
   const lowerName = fileName.toLowerCase();
   const isPdf = upperType === "PDF" || lowerName.endsWith(".pdf");
+  const isImage = upperType === "IMAGE" || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lowerName);
+
+  const zoomToolbarHtml = (isPdf || isImage)
+    ? `
+      <div class="media-zoom-toolbar">
+        <span style="font-size: 12px; font-weight: 700; color: var(--navy);">HD Zoom (Up to 500%)</span>
+        <div class="media-zoom-controls">
+          <button type="button" class="btn btn-outline btn-sm" id="mediaZoomOutBtn" aria-label="Zoom out">−</button>
+          <span id="mediaZoomLabel" style="min-width: 46px; text-align: center; font-size: 12.5px; font-weight: 800; color: var(--navy);">100%</span>
+          <button type="button" class="btn btn-outline btn-sm" id="mediaZoomInBtn" aria-label="Zoom in">+</button>
+          <button type="button" class="btn btn-outline btn-sm" id="mediaZoomResetBtn">Fit</button>
+        </div>
+      </div>
+    `
+    : "";
 
   let previewBody = "";
   if (upperType === "VIDEO" || /\.(mp4|webm|mov|mkv|3gp)$/i.test(lowerName)) {
@@ -627,13 +683,21 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
         <audio controls autoplay src="${safeUrl}" style="width: 100%;"></audio>
       </div>
     `;
-  } else if (upperType === "IMAGE" || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lowerName)) {
-    previewBody = `<img src="${safeUrl}" alt="${escapeHtml(title)}" style="max-width: 100%; max-height: 64vh; object-fit: contain; display: block; margin: 0 auto; border-radius: 10px;" />`;
+  } else if (isImage) {
+    previewBody = `
+      ${zoomToolbarHtml}
+      <div class="pdf-canvas-pages">
+        <div id="imageZoomStage" class="pdf-canvas-stage">
+          <img src="${safeUrl}" alt="${escapeHtml(title)}" style="width: 100%; height: auto; display: block; border-radius: 8px;" />
+        </div>
+      </div>
+    `;
   } else if (isPdf) {
     previewBody = `
+      ${zoomToolbarHtml}
       <div id="pdfCanvasHost" class="pdf-canvas-pages">
         <div style="text-align: center; padding: 24px 12px; font-size: 13px; font-weight: 700; color: var(--navy);">
-          Rendering PDF pages...
+          Rendering Crisp Vector PDF...
         </div>
       </div>
     `;
@@ -659,9 +723,34 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     `
   );
 
+  const zoomOutBtn = document.getElementById("mediaZoomOutBtn");
+  const zoomInBtn = document.getElementById("mediaZoomInBtn");
+  const zoomResetBtn = document.getElementById("mediaZoomResetBtn");
+  const zoomLabelEl = document.getElementById("mediaZoomLabel");
+
   if (isPdf) {
     const host = document.getElementById("pdfCanvasHost");
-    renderPdfInlineIntoHost(host, resolvedUrl, blob);
+    const zoomController = { labelEl: zoomLabelEl, onZoomChange: null };
+    let currentZoom = 100;
+    const setPdfZoom = (next) => {
+      currentZoom = Math.max(100, Math.min(500, next));
+      if (zoomController.onZoomChange) zoomController.onZoomChange(currentZoom);
+    };
+    if (zoomInBtn) zoomInBtn.addEventListener("click", () => setPdfZoom(currentZoom + 75));
+    if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => setPdfZoom(currentZoom - 75));
+    if (zoomResetBtn) zoomResetBtn.addEventListener("click", () => setPdfZoom(100));
+    renderPdfInlineIntoHost(host, resolvedUrl, blob, zoomController);
+  } else if (isImage) {
+    const imgStage = document.getElementById("imageZoomStage");
+    let currentZoom = 100;
+    const setImgZoom = (next) => {
+      currentZoom = Math.max(100, Math.min(500, next));
+      if (imgStage) imgStage.style.width = `${currentZoom}%`;
+      if (zoomLabelEl) zoomLabelEl.textContent = `${currentZoom}%`;
+    };
+    if (zoomInBtn) zoomInBtn.addEventListener("click", () => setImgZoom(currentZoom + 75));
+    if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => setImgZoom(currentZoom - 75));
+    if (zoomResetBtn) zoomResetBtn.addEventListener("click", () => setImgZoom(100));
   }
 
   if (blob && /\.(txt|csv|md|json|log)$/i.test(lowerName)) {
@@ -1703,6 +1792,314 @@ function wrapCanvasTextLines(ctx, text, maxWidth) {
   return lines;
 }
 
+function escapePdfTextString(str) {
+  return String(str || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014\u2022]/g, "-")
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
+function measurePdfTextWidthPt(text, fontKey, fontSize, canvasCtx = null) {
+  const clean = String(text || "");
+  if (!clean) return 0;
+  if (canvasCtx) {
+    const fontFamilyMap = {
+      F1: `${fontSize}px "Times New Roman", Times, Georgia, serif`,
+      F2: `bold ${fontSize}px "Times New Roman", Times, Georgia, serif`,
+      F3: `italic ${fontSize}px "Times New Roman", Times, Georgia, serif`,
+      F4: `${fontSize}px Helvetica, Arial, sans-serif`,
+      F5: `bold ${fontSize}px Helvetica, Arial, sans-serif`
+    };
+    canvasCtx.font = fontFamilyMap[fontKey] || `${fontSize}px serif`;
+    return canvasCtx.measureText(clean).width * 0.96;
+  }
+  const isBold = fontKey === "F2" || fontKey === "F5";
+  const isSans = fontKey === "F4" || fontKey === "F5";
+  let units = 0;
+  for (const ch of clean) {
+    if (ch === " ") units += isSans ? 0.28 : 0.25;
+    else if ("iljI!.,:;'|".includes(ch)) units += 0.28;
+    else if ("frt()[]/-".includes(ch)) units += 0.36;
+    else if ("mwMW@%".includes(ch)) units += isBold ? 0.86 : 0.8;
+    else if (ch >= "A" && ch <= "Z") units += isBold ? 0.69 : 0.65;
+    else units += isBold ? 0.53 : 0.49;
+  }
+  return units * fontSize;
+}
+
+function wrapPdfVectorLines(text, maxWidthPt, fontKey, fontSize, canvasCtx = null) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const candidate = line ? `${line} ${w}` : w;
+    if (measurePdfTextWidthPt(candidate, fontKey, fontSize, canvasCtx) <= maxWidthPt) {
+      line = candidate;
+    } else {
+      if (line) lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function pdfCirclePathOps(cx, cy, r) {
+  const k = r * 0.55228475;
+  return [
+    `${(cx + r).toFixed(2)} ${cy.toFixed(2)} m`,
+    `${(cx + r).toFixed(2)} ${(cy + k).toFixed(2)} ${(cx + k).toFixed(2)} ${(cy + r).toFixed(2)} ${cx.toFixed(2)} ${(cy + r).toFixed(2)} c`,
+    `${(cx - k).toFixed(2)} ${(cy + r).toFixed(2)} ${(cx - r).toFixed(2)} ${(cy + k).toFixed(2)} ${(cx - r).toFixed(2)} ${cy.toFixed(2)} c`,
+    `${(cx - r).toFixed(2)} ${(cy - k).toFixed(2)} ${(cx - k).toFixed(2)} ${(cy - r).toFixed(2)} ${cx.toFixed(2)} ${(cy - r).toFixed(2)} c`,
+    `${(cx + k).toFixed(2)} ${(cy - r).toFixed(2)} ${(cx + r).toFixed(2)} ${(cy - k).toFixed(2)} ${(cx + r).toFixed(2)} ${cy.toFixed(2)} c`
+  ].join("\n");
+}
+
+function pdfRoundRectPathOps(x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  const k = rr * 0.55228475;
+  return [
+    `${(x + rr).toFixed(2)} ${y.toFixed(2)} m`,
+    `${(x + w - rr).toFixed(2)} ${y.toFixed(2)} l`,
+    `${(x + w - rr + k).toFixed(2)} ${y.toFixed(2)} ${(x + w).toFixed(2)} ${(y + rr - k).toFixed(2)} ${(x + w).toFixed(2)} ${(y + rr).toFixed(2)} c`,
+    `${(x + w).toFixed(2)} ${(y + h - rr).toFixed(2)} l`,
+    `${(x + w).toFixed(2)} ${(y + h - rr + k).toFixed(2)} ${(x + w - rr + k).toFixed(2)} ${(y + h).toFixed(2)} ${(x + w - rr).toFixed(2)} ${(y + h).toFixed(2)} c`,
+    `${(x + rr).toFixed(2)} ${(y + h).toFixed(2)} l`,
+    `${(x + rr - k).toFixed(2)} ${(y + h).toFixed(2)} ${x.toFixed(2)} ${(y + h - rr + k).toFixed(2)} ${x.toFixed(2)} ${(y + h - rr).toFixed(2)} c`,
+    `${x.toFixed(2)} ${(y + rr).toFixed(2)} l`,
+    `${x.toFixed(2)} ${(y + rr - k).toFixed(2)} ${(x + rr - k).toFixed(2)} ${y.toFixed(2)} ${(x + rr).toFixed(2)} ${y.toFixed(2)} c h`
+  ].join("\n");
+}
+
+function buildSinglePageLandscapeVectorPdf({
+  certRecord,
+  signerConfig,
+  logoJpegBytes = null,
+  logoPxW = 0,
+  logoPxH = 0,
+  measureCtx = null
+}) {
+  const enc = new TextEncoder();
+  const pageW = 841.89;
+  const pageH = 595.28;
+  const cx = pageW / 2;
+  const cy = pageH / 2;
+  const pdfY = (topY) => pageH - topY;
+  const ops = [];
+
+  const drawCenteredText = (fontKey, sizePt, topBaselineY, text, rgbStr) => {
+    const clean = String(text || "");
+    const w = measurePdfTextWidthPt(clean, fontKey, sizePt, measureCtx);
+    const x = cx - w / 2;
+    const y = pdfY(topBaselineY);
+    ops.push(`BT /${fontKey} ${sizePt.toFixed(2)} Tf ${rgbStr} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${escapePdfTextString(clean)}) Tj ET`);
+  };
+
+  const drawCenteredAtX = (xCenter, fontKey, sizePt, topBaselineY, text, rgbStr) => {
+    const clean = String(text || "");
+    const w = measurePdfTextWidthPt(clean, fontKey, sizePt, measureCtx);
+    const x = xCenter - w / 2;
+    const y = pdfY(topBaselineY);
+    ops.push(`BT /${fontKey} ${sizePt.toFixed(2)} Tf ${rgbStr} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${escapePdfTextString(clean)}) Tj ET`);
+  };
+
+  // 1. Warm reddish-cream base fill + smooth vector radial parchment shading
+  ops.push("0.984 0.941 0.914 rg 0 0 841.89 595.28 re f");
+  ops.push("q 0 0 841.89 595.28 re W n /Sh0 sh Q");
+
+  // 2. Crisp Vector Guilloche Circles, Spokes & Center Watermark
+  ops.push("q /GSwm gs 0.875 0.757 0.698 RG 0.875 0.757 0.698 rg");
+  for (const [r, lw, dash] of [[142, 1.2, "[] 0"], [125, 0.9, "[5 5] 0"], [98, 1.1, "[] 0"], [71, 0.9, "[] 0"]]) {
+    ops.push(`${lw} w ${dash} d\n${pdfCirclePathOps(cx, cy, r)}\nS`);
+  }
+  ops.push("[] 0 d 0.7 w");
+  for (let deg = 0; deg < 360; deg += 15) {
+    const rad = (deg * Math.PI) / 180;
+    const rIn = deg % 30 === 0 ? 58 : 84;
+    const rOut = 136;
+    ops.push(
+      `${(cx + Math.cos(rad) * rIn).toFixed(2)} ${(cy + Math.sin(rad) * rIn).toFixed(2)} m ` +
+      `${(cx + Math.cos(rad) * rOut).toFixed(2)} ${(cy + Math.sin(rad) * rOut).toFixed(2)} l S`
+    );
+  }
+  const wmW = measurePdfTextWidthPt("I S C E B", "F2", 44, measureCtx);
+  ops.push(`BT /F2 44 Tf 0.875 0.757 0.698 rg 1 0 0 1 ${(cx - wmW / 2).toFixed(2)} ${(cy - 14).toFixed(2)} Tm (I S C E B) Tj ET`);
+  ops.push("Q");
+
+  // 3. Full-Frame Double Gold, Inner Navy & Fine Gold Vector Borders + Corner Diamonds
+  ops.push("0.831 0.686 0.216 RG 4.8 w 14.40 14.40 813.09 566.48 re S");
+  ops.push("0.027 0.102 0.200 RG 1.9 w 22.00 22.00 797.89 551.28 re S");
+  ops.push("0.651 0.486 0.000 RG 0.9 w 30.70 30.70 780.49 533.88 re S");
+  ops.push("0.831 0.686 0.216 rg");
+  for (const [dx, dy] of [[30.7, 30.7], [pageW - 30.7, 30.7], [30.7, pageH - 30.7], [pageW - 30.7, pageH - 30.7]]) {
+    const d = 4.6;
+    ops.push(`${dx.toFixed(2)} ${(dy + d).toFixed(2)} m ${(dx + d).toFixed(2)} ${dy.toFixed(2)} l ${dx.toFixed(2)} ${(dy - d).toFixed(2)} l ${(dx - d).toFixed(2)} ${dy.toFixed(2)} l h f`);
+  }
+
+  // 4. Centered Official ISCEB Logo (high-res pre-blended onto parchment)
+  let topCursor = 46;
+  if (logoJpegBytes && logoPxW > 0 && logoPxH > 0) {
+    const logoPtH = 62;
+    const logoPtW = (logoPxW / logoPxH) * logoPtH;
+    const logoX = cx - logoPtW / 2;
+    const logoY = pdfY(topCursor + logoPtH);
+    ops.push(`q ${logoPtW.toFixed(2)} 0 0 ${logoPtH.toFixed(2)} ${logoX.toFixed(2)} ${logoY.toFixed(2)} cm /Im0 Do Q`);
+    topCursor += logoPtH + 14;
+  } else {
+    topCursor += 20;
+  }
+
+  // Optional Demo Pill
+  if (certRecord.isDemo) {
+    const pillW = 162;
+    const pillH = 19;
+    const px = cx - pillW / 2;
+    const pyBottom = pdfY(topCursor + pillH);
+    ops.push("0.957 0.886 0.639 rg 0.831 0.686 0.216 RG 1.1 w");
+    ops.push(`${pdfRoundRectPathOps(px, pyBottom, pillW, pillH, pillH / 2)}\nB`);
+    drawCenteredText("F5", 8.6, topCursor + 12.6, "DEMO CERTIFICATE PREVIEW", "0.027 0.102 0.200");
+    topCursor += pillH + 16;
+  } else {
+    topCursor += 6;
+  }
+
+  // 5. Crisp Vector Institution Header, Subtitle & Diamond Divider
+  drawCenteredText("F2", 11.6, topCursor, "INSTITUTE OF SUPPLY CHAIN EXCELLENCE BANGLADESH (ISCEB)", "0.027 0.102 0.200");
+  topCursor += 15.5;
+  drawCenteredText("F5", 9.6, topCursor, "POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT", "0.651 0.486 0.000");
+  topCursor += 13;
+
+  const divY = pdfY(topCursor);
+  ops.push("0.831 0.686 0.216 RG 1.2 w");
+  ops.push(`${(cx - 165).toFixed(2)} ${divY.toFixed(2)} m ${(cx - 12).toFixed(2)} ${divY.toFixed(2)} l ${(cx + 12).toFixed(2)} ${divY.toFixed(2)} m ${(cx + 165).toFixed(2)} ${divY.toFixed(2)} l S`);
+  ops.push(`0.831 0.686 0.216 rg ${cx.toFixed(2)} ${(divY + 4.2).toFixed(2)} m ${(cx + 4.2).toFixed(2)} ${divY.toFixed(2)} l ${cx.toFixed(2)} ${(divY - 4.2).toFixed(2)} l ${(cx - 4.2).toFixed(2)} ${divY.toFixed(2)} l h f`);
+  topCursor += 31;
+
+  // 6. Crisp Vector Main Diploma Title
+  const titleLines = wrapPdfVectorLines("POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT (SCM)", 690, "F2", 20, measureCtx);
+  for (const tl of titleLines) {
+    drawCenteredText("F2", 20, topCursor, tl, "0.027 0.102 0.200");
+    topCursor += 25;
+  }
+  topCursor += 6;
+
+  // 7. Conferral & Recipient Name + Vector Gold Underline
+  drawCenteredText("F3", 12.6, topCursor, "This authoritative academic credential is officially conferred upon", "0.361 0.294 0.271");
+  topCursor += 35;
+
+  const recipientStr = String(certRecord.recipientName || "ISCEB Candidate");
+  drawCenteredText("F2", 26, topCursor, recipientStr, "0.027 0.102 0.200");
+  const namePtW = measurePdfTextWidthPt(recipientStr, "F2", 26, measureCtx);
+  const underlineW = Math.max(205, Math.min(560, namePtW + 44));
+  topCursor += 9;
+  const ulY = pdfY(topCursor);
+  ops.push(`0.831 0.686 0.216 RG 2.0 w ${(cx - underlineW / 2).toFixed(2)} ${ulY.toFixed(2)} m ${(cx + underlineW / 2).toFixed(2)} ${ulY.toFixed(2)} l S`);
+  topCursor += 28;
+
+  // 8. Recognition Narrative
+  const narrative = "in recognition of successfully completing all 12 Specialization Modules and 48 Executive Lessons, Part 1: Basic (Foundation Level) & Part 2: Advance (Strategic & Analytical Level), Module Examinations, Capstone Project, and Final Comprehensive Assessment.";
+  const narrativeLines = wrapPdfVectorLines(narrative, 660, "F1", 11.4, measureCtx);
+  for (const nl of narrativeLines) {
+    drawCenteredText("F1", 11.4, topCursor, nl, "0.243 0.200 0.184");
+    topCursor += 17;
+  }
+
+  // 9. Symmetrical 3-Column Vector Signatories
+  const sigTopY = pageH - 89;
+  const leftX = 175;
+  const rightX = pageW - 175;
+  const sigPdfY = pdfY(sigTopY);
+  ops.push("0.549 0.478 0.447 RG 1.0 w");
+  ops.push(`${(leftX - 88).toFixed(2)} ${sigPdfY.toFixed(2)} m ${(leftX + 88).toFixed(2)} ${sigPdfY.toFixed(2)} l S`);
+  ops.push(`${(rightX - 88).toFixed(2)} ${sigPdfY.toFixed(2)} m ${(rightX + 88).toFixed(2)} ${sigPdfY.toFixed(2)} l S`);
+
+  drawCenteredAtX(leftX, "F2", 12, sigTopY + 16, signerConfig.leftSignerName, "0.027 0.102 0.200");
+  drawCenteredAtX(rightX, "F2", 12, sigTopY + 16, signerConfig.rightSignerName, "0.027 0.102 0.200");
+  if (signerConfig.leftSignerTitle) {
+    drawCenteredAtX(leftX, "F5", 10, sigTopY + 31, signerConfig.leftSignerTitle, "0.651 0.486 0.000");
+  }
+  drawCenteredAtX(rightX, "F5", 10, sigTopY + 31, signerConfig.rightSignerTitle, "0.651 0.486 0.000");
+
+  drawCenteredAtX(cx, "F5", 10.6, sigTopY + 13, `Serial: ${certRecord.serial}`, "0.651 0.486 0.000");
+  drawCenteredAtX(cx, "F4", 9.6, sigTopY + 28, `Issued: ${certRecord.issuedDate}`, "0.353 0.431 0.522");
+
+  const streamStr = ops.join("\n") + "\n";
+  const hasLogo = Boolean(logoJpegBytes && logoPxW > 0 && logoPxH > 0);
+  const chunks = [];
+  let offset = 0;
+  const pushBytes = (u8) => {
+    chunks.push(u8);
+    offset += u8.length;
+  };
+  const pushText = (s) => pushBytes(enc.encode(s));
+
+  pushText("%PDF-1.4\n");
+  pushBytes(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
+  const offsets = [0];
+  const addObj = (body) => {
+    const id = offsets.length;
+    offsets.push(offset);
+    pushText(`${id} 0 obj\n${body}\nendobj\n`);
+    return id;
+  };
+
+  addObj("<< /Type /Catalog /Pages 2 0 R >>");
+  addObj("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  const xObjDict = hasLogo ? " /XObject << /Im0 12 0 R >>" : "";
+  addObj(
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(2)}] ` +
+      `/Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R /F4 7 0 R /F5 8 0 R >> ` +
+      `/Shading << /Sh0 9 0 R >> /ExtGState << /GSwm 10 0 R >>${xObjDict} >> /Contents 11 0 R >>`
+  );
+  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>");
+  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>");
+  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic /Encoding /WinAnsiEncoding >>");
+  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  addObj(
+    "<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [420.95 310.0 15 420.95 297.64 520] /Extend [true true] " +
+      "/Function << /FunctionType 3 /Domain [0 1] /Functions [ " +
+      "<< /FunctionType 2 /Domain [0 1] /C0 [0.9922 0.9686 0.9529] /C1 [0.9843 0.9412 0.9137] /N 1 >> " +
+      "<< /FunctionType 2 /Domain [0 1] /C0 [0.9843 0.9412 0.9137] /C1 [0.9529 0.8667 0.8196] /N 1 >> " +
+      "] /Bounds [0.65] /Encode [0 1 0 1] >> >>"
+  );
+  addObj("<< /Type /ExtGState /ca 0.34 /CA 0.34 >>");
+  const streamBytes = enc.encode(streamStr);
+  offsets.push(offset);
+  pushText(`11 0 obj\n<< /Length ${streamBytes.length} >>\nstream\n`);
+  pushBytes(streamBytes);
+  pushText("\nendstream\nendobj\n");
+
+  if (hasLogo) {
+    offsets.push(offset);
+    pushText(
+      `12 0 obj\n<< /Type /XObject /Subtype /Image /Width ${logoPxW} /Height ${logoPxH} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logoJpegBytes.length} >>\nstream\n`
+    );
+    pushBytes(logoJpegBytes);
+    pushText("\nendstream\nendobj\n");
+  }
+
+  const xrefStart = offset;
+  pushText(`xref\n0 ${offsets.length}\n0000000000 65535 f \n`);
+  for (let i = 1; i < offsets.length; i++) {
+    pushText(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+  pushText(`trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
+
+  const out = new Uint8Array(offset);
+  let pos = 0;
+  for (const c of chunks) {
+    out.set(c, pos);
+    pos += c.length;
+  }
+  return out;
+}
+
 function buildSinglePageLandscapePdfFromJpeg(jpegBytes, pxWidth, pxHeight) {
   const enc = new TextEncoder();
   const pageW = 841.89;
@@ -1757,233 +2154,55 @@ function buildSinglePageLandscapePdfFromJpeg(jpegBytes, pxWidth, pxHeight) {
   return out;
 }
 
-async function exportLandscapeCertificatePdf(certRecord, signerConfig) {
+async function exportLandscapeCertificatePdf(certRecord, signerConfig, { previewOnly = false } = {}) {
   if (!certRecord) return;
-  showToast("Preparing full-page Landscape Certificate PDF...");
-  const width = 1754;
-  const height = 1240;
-  const cx = width / 2;
-  const cy = height / 2;
+  showToast(previewOnly ? "Opening crisp HD Certificate viewer..." : "Preparing crisp Vector Landscape Certificate PDF...");
 
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  const measureCanvas = document.createElement("canvas");
+  const measureCtx = measureCanvas.getContext("2d");
 
-  // 1. Full-bleed warm reddish-cream parchment background (edge-to-edge landscape, zero outer white sheet)
-  const grad = ctx.createRadialGradient(cx, cy * 0.92, 40, cx, cy, width * 0.62);
-  grad.addColorStop(0, "#FDF7F3");
-  grad.addColorStop(0.65, "#FBF0E9");
-  grad.addColorStop(1, "#F3DDD1");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, width, height);
-
-  // 2. Subtle same-tone guilloche & emblem watermark in background center
-  ctx.save();
-  ctx.strokeStyle = "rgba(223, 193, 178, 0.36)";
-  for (const [r, lw, dash] of [[295, 2.5, null], [260, 1.8, [10, 10]], [205, 2.2, null], [148, 1.8, null]]) {
-    ctx.beginPath();
-    ctx.lineWidth = lw;
-    ctx.setLineDash(dash || []);
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  for (let deg = 0; deg < 360; deg += 15) {
-    const rad = (deg * Math.PI) / 180;
-    const rIn = deg % 30 === 0 ? 120 : 175;
-    const rOut = 285;
-    ctx.beginPath();
-    ctx.lineWidth = 1.4;
-    ctx.moveTo(cx + Math.cos(rad) * rIn, cy + Math.sin(rad) * rIn);
-    ctx.lineTo(cx + Math.cos(rad) * rOut, cy + Math.sin(rad) * rOut);
-    ctx.stroke();
-  }
-  ctx.fillStyle = "rgba(223, 193, 178, 0.25)";
-  ctx.font = "bold 92px Georgia, serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("I S C E B", cx, cy);
-  ctx.restore();
-
-  // 3. Full-frame official double Gold + inner Navy borders
-  ctx.strokeStyle = "#D4AF37";
-  ctx.lineWidth = 10;
-  ctx.strokeRect(30, 30, width - 60, height - 60);
-
-  ctx.strokeStyle = "#071A33";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(46, 46, width - 92, height - 92);
-
-  ctx.strokeStyle = "rgba(166, 124, 0, 0.45)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(64, 64, width - 128, height - 128);
-
-  // Corner gold diamonds
-  for (const [dx, dy] of [[64, 64], [width - 64, 64], [64, height - 64], [width - 64, height - 64]]) {
-    ctx.save();
-    ctx.translate(dx, dy);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = "#D4AF37";
-    ctx.fillRect(-7, -7, 14, 14);
-    ctx.restore();
-  }
-
-  // 4. Centered Official ISCEB Logo (blended onto parchment without white box)
-  let y = 105;
+  let logoJpegBytes = null;
+  let logoPxW = 0;
+  let logoPxH = 0;
   const logoImg = await loadImageAsset("./isceb-logo.webp");
   if (logoImg && logoImg.width > 0 && logoImg.height > 0) {
-    const logoH = 126;
-    const logoW = (logoImg.width / logoImg.height) * logoH;
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.drawImage(logoImg, cx - logoW / 2, y, logoW, logoH);
-    ctx.restore();
-    y += logoH + 26;
-  } else {
-    y += 40;
+    logoPxW = logoImg.naturalWidth || logoImg.width;
+    logoPxH = logoImg.naturalHeight || logoImg.height;
+    const logoCanvas = document.createElement("canvas");
+    logoCanvas.width = logoPxW;
+    logoCanvas.height = logoPxH;
+    const lctx = logoCanvas.getContext("2d");
+    lctx.fillStyle = "#FDF7F3";
+    lctx.fillRect(0, 0, logoPxW, logoPxH);
+    lctx.globalCompositeOperation = "multiply";
+    lctx.drawImage(logoImg, 0, 0, logoPxW, logoPxH);
+    const logoBlob = await new Promise((resolve) => logoCanvas.toBlob(resolve, "image/jpeg", 0.98));
+    if (logoBlob) {
+      logoJpegBytes = new Uint8Array(await logoBlob.arrayBuffer());
+    }
   }
 
-  // Optional centered Demo badge
-  if (certRecord.isDemo) {
-    const pillW = 330;
-    const pillH = 38;
-    const px = cx - pillW / 2;
-    const py = y;
-    ctx.fillStyle = "#F4E2A3";
-    ctx.strokeStyle = "#D4AF37";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(px, py, pillW, pillH, 19);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#071A33";
-    ctx.font = "bold 18px Inter, Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("DEMO CERTIFICATE PREVIEW", cx, py + pillH / 2 + 1);
-    y += pillH + 28;
-  }
-
-  // 5. Institution Header & Subtitle
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = "#071A33";
-  ctx.font = "bold 24px Georgia, serif";
-  ctx.fillText("INSTITUTE OF SUPPLY CHAIN EXCELLENCE BANGLADESH (ISCEB)", cx, y);
-  y += 32;
-
-  ctx.fillStyle = "#A67C00";
-  ctx.font = "bold 20px Inter, Arial, sans-serif";
-  ctx.fillText("POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT", cx, y);
-  y += 28;
-
-  // Decorative gold diamond divider
-  ctx.strokeStyle = "#D4AF37";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(cx - 340, y);
-  ctx.lineTo(cx - 24, y);
-  ctx.moveTo(cx + 24, y);
-  ctx.lineTo(cx + 340, y);
-  ctx.stroke();
-  ctx.save();
-  ctx.translate(cx, y);
-  ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = "#D4AF37";
-  ctx.fillRect(-7, -7, 14, 14);
-  ctx.restore();
-  y += 66;
-
-  // 6. Main Diploma Title
-  ctx.fillStyle = "#071A33";
-  ctx.font = "bold 42px Georgia, serif";
-  const titleLines = wrapCanvasTextLines(ctx, "POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT (SCM)", width - 240);
-  for (const tl of titleLines) {
-    ctx.fillText(tl, cx, y);
-    y += 52;
-  }
-  y += 14;
-
-  // 7. Conferral & Recipient Name
-  ctx.fillStyle = "#5C4B45";
-  ctx.font = "italic 26px Georgia, serif";
-  ctx.fillText("This authoritative academic credential is officially conferred upon", cx, y);
-  y += 74;
-
-  ctx.fillStyle = "#071A33";
-  ctx.font = "bold 54px Georgia, serif";
-  ctx.fillText(String(certRecord.recipientName || "ISCEB Candidate"), cx, y);
-  const nameWidth = Math.max(420, Math.min(width - 360, ctx.measureText(String(certRecord.recipientName || "")).width + 90));
-  y += 18;
-  ctx.strokeStyle = "#D4AF37";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(cx - nameWidth / 2, y);
-  ctx.lineTo(cx + nameWidth / 2, y);
-  ctx.stroke();
-  y += 58;
-
-  // 8. Recognition Narrative
-  ctx.fillStyle = "#3E332F";
-  ctx.font = "24px Georgia, serif";
-  const narrative = "in recognition of successfully completing all 12 Specialization Modules and 48 Executive Lessons, Part 1: Basic (Foundation Level) & Part 2: Advance (Strategic & Analytical Level), Module Examinations, Capstone Project, and Final Comprehensive Assessment.";
-  const narrativeLines = wrapCanvasTextLines(ctx, narrative, width - 340);
-  for (const nl of narrativeLines) {
-    ctx.fillText(nl, cx, y);
-    y += 36;
-  }
-
-  // 9. Symmetrical 3-Column Footer Signatories
-  const sigLineY = height - 185;
-  const leftX = 365;
-  const rightX = width - 365;
-
-  ctx.strokeStyle = "#8C7A72";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(leftX - 185, sigLineY);
-  ctx.lineTo(leftX + 185, sigLineY);
-  ctx.moveTo(rightX - 185, sigLineY);
-  ctx.lineTo(rightX + 185, sigLineY);
-  ctx.stroke();
-
-  ctx.fillStyle = "#071A33";
-  ctx.font = "bold 25px Georgia, serif";
-  ctx.fillText(signerConfig.leftSignerName, leftX, sigLineY + 34);
-  ctx.fillText(signerConfig.rightSignerName, rightX, sigLineY + 34);
-
-  ctx.fillStyle = "#A67C00";
-  ctx.font = "bold 21px Inter, Arial, sans-serif";
-  if (signerConfig.leftSignerTitle) ctx.fillText(signerConfig.leftSignerTitle, leftX, sigLineY + 66);
-  ctx.fillText(signerConfig.rightSignerTitle, rightX, sigLineY + 66);
-
-  ctx.fillStyle = "#A67C00";
-  ctx.font = "bold 22px Inter, Arial, sans-serif";
-  ctx.fillText(`Serial: ${certRecord.serial}`, cx, sigLineY + 26);
-  ctx.fillStyle = "#5A6E85";
-  ctx.font = "20px Inter, Arial, sans-serif";
-  ctx.fillText(`Issued: ${certRecord.issuedDate}`, cx, sigLineY + 58);
-
-  const jpegBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
-  if (!jpegBlob) {
-    window.print();
-    return;
-  }
-  const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
-  const pdfBytes = buildSinglePageLandscapePdfFromJpeg(jpegBytes, width, height);
+  const pdfBytes = buildSinglePageLandscapeVectorPdf({
+    certRecord,
+    signerConfig,
+    logoJpegBytes,
+    logoPxW,
+    logoPxH,
+    measureCtx
+  });
   const pdfBlob = new Blob([pdfBytes], { type: "application/pdf" });
   const safeSerial = String(certRecord.serial || "ISCEB-PGD").replace(/[^A-Za-z0-9_-]/g, "_");
   const fileName = `ISCEB-Certificate-${safeSerial}.pdf`;
   const pdfUrl = URL.createObjectURL(pdfBlob);
 
-  // Trigger clean file save & open in-app Landscape PDF Viewer
-  const dlLink = document.createElement("a");
-  dlLink.href = pdfUrl;
-  dlLink.download = fileName;
-  document.body.appendChild(dlLink);
-  dlLink.click();
-  dlLink.remove();
+  if (!previewOnly) {
+    const dlLink = document.createElement("a");
+    dlLink.href = pdfUrl;
+    dlLink.download = fileName;
+    document.body.appendChild(dlLink);
+    dlLink.click();
+    dlLink.remove();
+  }
 
   presentMediaPreviewModal(
     {
@@ -1997,7 +2216,7 @@ async function exportLandscapeCertificatePdf(certRecord, signerConfig) {
     pdfUrl,
     pdfBlob
   );
-  showToast("Full-page Landscape Certificate PDF ready.");
+  showToast(previewOnly ? "Zoom in up to 500% — crisp Vector PDF ready." : "Crisp Vector Landscape Certificate PDF ready.");
 }
 
 function renderLearning() {
@@ -2050,6 +2269,7 @@ function renderLearning() {
           ${
             displayedCert
               ? `<button type="button" class="btn btn-primary" data-action="download-certificate-pdf">Save Landscape PDF</button>
+                 <button type="button" class="btn btn-outline" data-action="zoom-certificate-pdf">Zoom / View HD</button>
                  <button type="button" class="btn btn-outline" onclick="window.print()">Print</button>`
               : ""
           }
@@ -3205,7 +3425,7 @@ function setupListeners() {
       saveState();
       showToast("Opened Demo Certificate preview.");
       render();
-    } else if (action === "download-certificate-pdf") {
+    } else if (action === "download-certificate-pdf" || action === "zoom-certificate-pdf") {
       const activeUser = getActiveUser();
       const issuedCert = state.certificatesByUser[activeUser.id];
       const demoCertAllowed = state.settings.demoCertificateEnabled !== false || isAdminUser();
@@ -3222,12 +3442,16 @@ function setupListeners() {
         showToast("Generate your PGD Certificate or open Demo Preview first.", true);
         return;
       }
-      exportLandscapeCertificatePdf(certToExport, {
-        leftSignerName: state.settings.leftSignerName || "Hasina Akter Khan",
-        leftSignerTitle: state.settings.leftSignerTitle || "Chairman & CEO",
-        rightSignerName: state.settings.authorizedSignerName || "Md. Amirul Islam",
-        rightSignerTitle: state.settings.authorizedSignerTitle || "Founder of ISCEB"
-      });
+      exportLandscapeCertificatePdf(
+        certToExport,
+        {
+          leftSignerName: state.settings.leftSignerName || "Hasina Akter Khan",
+          leftSignerTitle: state.settings.leftSignerTitle || "Chairman & CEO",
+          rightSignerName: state.settings.authorizedSignerName || "Md. Amirul Islam",
+          rightSignerTitle: state.settings.authorizedSignerTitle || "Founder of ISCEB"
+        },
+        { previewOnly: action === "zoom-certificate-pdf" }
+      );
     } else if (action === "verify-cert") {
       const serial = document.getElementById("verifyCertInput")?.value.trim();
       const out = document.getElementById("verifyCertResult");

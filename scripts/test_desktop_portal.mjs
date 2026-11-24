@@ -436,9 +436,13 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
   assert.ok(appJs.includes("saveMediaBlobToIdb") && appJs.includes("loadMediaBlobFromIdb"), "Uploaded files must persist in IndexedDB");
   assert.ok(appJs.includes('class="two-col-grid no-print"'), "Certificate print must exclude Eligibility and Verify cards");
   assert.ok(appJs.includes('class="cert-logo-wrap"'), "Certificate logo must use centered .cert-logo-wrap");
-  assert.ok(appJs.includes("buildSinglePageLandscapePdfFromJpeg") && appJs.includes("exportLandscapeCertificatePdf"), "Must include direct full-page Landscape A4 PDF generator");
+  assert.ok(appJs.includes("buildSinglePageLandscapeVectorPdf") && appJs.includes("exportLandscapeCertificatePdf"), "Must include pure Vector Landscape A4 PDF generator");
+  assert.ok(appJs.includes("buildSinglePageLandscapePdfFromJpeg"), "Must retain fallback JPEG PDF builder");
+  assert.ok(appJs.includes("/ShadingType 3") && appJs.includes("/Times-Bold"), "Certificate PDF must use true vector shading and fonts");
   assert.ok(appJs.includes("841.89") && appJs.includes("595.28"), "Generated certificate PDF must use Landscape A4 MediaBox");
   assert.ok(appJs.includes('data-action="download-certificate-pdf"'), "Must wire download-certificate-pdf action");
+  assert.ok(appJs.includes('data-action="zoom-certificate-pdf"'), "Must wire zoom-certificate-pdf action");
+  assert.ok(appJs.includes("mediaZoomInBtn") && desktopCss.includes("pinch-zoom"), "PDF & media modal must support up to 500% crisp zoom and pinch-zoom");
   assert.ok(desktopCss.includes(".cert-logo-wrap"), "Missing .cert-logo-wrap CSS");
   assert.ok(desktopCss.includes("mix-blend-mode: multiply;"), "Certificate logo must blend without white box");
   assert.ok(appJs.includes('globalCompositeOperation = "multiply"'), "PDF certificate logo must blend without white box");
@@ -451,8 +455,12 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
   assert.ok(desktopHtml.includes("Masterclass &amp; Executive Certification Portal"), "Splash overlay must display executive portal subtitle");
   assert.ok(desktopCss.includes(".splash-progress-fill") && desktopCss.includes("iscebSplashBarSweep"), "Splash overlay must include gold expanding loading bar");
 
+  const rootIndexHtml = fs.readFileSync("./public/index.html", "utf8");
+  assert.ok(!rootIndexHtml.includes("102B4C") && rootIndexHtml.includes("background: #FFFFFF"), "Root public/index.html must open with pure white theme");
+
   assert.ok(modelsKt.includes('"$HOSTING_BASE/apk.html"'), "Android DEFAULT_DOWNLOAD_PAGE_URL must point to apk.html");
   assert.ok(releaseSh.includes('f"{hosting_base}/apk.html"'), "release_apk.sh version.json generator must point downloadPageUrl to apk.html");
 });
+
 
 

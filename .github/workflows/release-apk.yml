@@ -154,10 +154,23 @@ jobs:
         with:
           enablement: true
 
+      - name: Stage clean GitHub Pages bundle (exclude chat screenshots)
+        shell: bash
+        run: |
+          rm -rf pages-dist
+          mkdir -p pages-dist
+          rsync -a --exclude 'assets/aistudio' public/ pages-dist/
+          touch pages-dist/.nojekyll
+          du -sh pages-dist
+
       - name: Upload GitHub Pages Artifact (Download Portal + QR + APK + Live PWA)
         uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: pages-dist
+
+      - name: Wait for Pages artifact indexing
+        shell: bash
+        run: sleep 5
 
       - name: Deploy Public Portal to GitHub Pages
         id: deployment

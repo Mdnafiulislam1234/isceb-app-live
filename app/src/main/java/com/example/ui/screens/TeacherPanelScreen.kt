@@ -28,8 +28,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -67,6 +65,9 @@ import com.example.model.ModuleAssignment
 import com.example.model.ModuleExam
 import com.example.model.UserProfile
 import com.example.model.UserRole
+import com.example.ui.components.AssignmentBuilderDialog
+import com.example.ui.components.ExamQuestionBuilderDialog
+import com.example.ui.components.formatAssessmentDeadline
 import com.example.ui.icons.Assignment
 import com.example.ui.icons.CloudUpload
 import com.example.ui.icons.Quiz
@@ -109,6 +110,9 @@ fun TeacherPanelScreen(
     onSaveAssignment: (ModuleAssignment) -> Unit,
     onOpenAssignmentForGrading: (ModuleAssignment) -> Unit,
     onGradeSubmission: (submissionId: String, marks: Int, feedback: String) -> Unit,
+    initialTab: Int = 0,
+    onDeleteExam: (String) -> Unit = {},
+    onDeleteAssignment: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
@@ -143,13 +147,65 @@ fun TeacherPanelScreen(
         examAttempts.filter { scopedModuleIds.contains(it.moduleId) || examIds.contains(it.examId) }
     }
 
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
     val tabs = listOf("Classes", "Assessments", "Grading")
 
     var editingExam by remember { mutableStateOf<ModuleExam?>(null) }
+    var creatingExamForModuleId by remember { mutableStateOf<String?>(null) }
     var editingAssignment by remember { mutableStateOf<ModuleAssignment?>(null) }
     var creatingAssignmentForModuleId by remember { mutableStateOf<String?>(null) }
     var inlineGradingSubId by remember { mutableStateOf<String?>(null) }
+
+    if (editingExam != null || creatingExamForModuleId != null) {
+        val targetModId = editingExam?.moduleId ?: creatingExamForModuleId ?: scopedModules.firstOrNull()?.id ?: "mod-1"
+        ExamQuestionBuilderDialog(
+            initialExam = editingExam,
+            modules = scopedModules,
+            defaultModuleId = targetModId,
+            authorUid = currentUser.authUid.ifBlank { currentUser.id },
+            onDismiss = {
+                editingExam = null
+                creatingExamForModuleId = null
+            },
+            onSave = { updated ->
+                onSaveExam(updated)
+                editingExam = null
+                creatingExamForModuleId = null
+            },
+            onDelete = editingExam?.let { ex ->
+                {
+                    onDeleteExam(ex.id)
+                    editingExam = null
+                }
+            }
+        )
+    }
+
+    if (editingAssignment != null || creatingAssignmentForModuleId != null) {
+        val targetModId = editingAssignment?.moduleId ?: creatingAssignmentForModuleId ?: scopedModules.firstOrNull()?.id ?: "mod-1"
+        AssignmentBuilderDialog(
+            initialAssignment = editingAssignment,
+            modules = scopedModules,
+            defaultModuleId = targetModId,
+            authorUid = currentUser.authUid.ifBlank { currentUser.id },
+            authorName = currentUser.fullName,
+            onDismiss = {
+                editingAssignment = null
+                creatingAssignmentForModuleId = null
+            },
+            onSave = { updated ->
+                onSaveAssignment(updated)
+                editingAssignment = null
+                creatingAssignmentForModuleId = null
+            },
+            onDelete = editingAssignment?.let { asg ->
+                {
+                    onDeleteAssignment(asg.id)
+                    editingAssignment = null
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = modifier
@@ -498,21 +554,43 @@ fun TeacherPanelScreen(
                         colors = CardDefaults.cardColors(containerColor = Color.White)
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
-                            Text(
-                                text = "Scoped Module Exams (${scopedExams.size})",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = NavyDark
-                            )
-                            Text(
-                                text = "Configure passing score threshold, duration, and attempt limits for your assigned modules.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF475569)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Scoped Module Exams (${scopedExams.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = NavyDark
+                                    )
+                                    Text(
+                                        text = "Add MCQ questions, set time limits, pass thresholds, and closing cutoffs.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF475569)
+                                    )
+                                }
+                                scopedModules.firstOrNull()?.let { defaultMod ->
+                                    Button(
+                                        onClick = { creatingExamForModuleId = defaultMod.id },
+                                        colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("btn_teacher_new_exam")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "New Exam", tint = GoldMetallic, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("New Exam", fontSize = 12.sp, color = GoldMetallic, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                             Spacer(modifier = Modifier.height(10.dp))
 
                             scopedExams.forEach { exam ->
                                 val mod = scopedModules.find { it.id == exam.moduleId }
+                                val cutoffExpired = exam.openUntilMs != null && System.currentTimeMillis() > exam.openUntilMs
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
                                     color = BgLight,
@@ -538,10 +616,22 @@ fun TeacherPanelScreen(
                                                 color = NavyDark
                                             )
                                             Text(
-                                                text = "Module ${mod?.number ?: "?"} • ${exam.totalMarks} Marks • Pass ≥${exam.passingPercentage}% • ${exam.durationMinutes}m • Max ${exam.maxAttempts} attempts",
+                                                text = "Module ${mod?.number ?: "?"} • ${exam.questions.size} Qs • ${exam.totalMarks} Marks • ${exam.durationMinutes}m • Pass ≥${exam.passingPercentage}%",
                                                 fontSize = 11.sp,
                                                 color = Color(0xFF475569)
                                             )
+                                            if (exam.openUntilMs != null) {
+                                                Text(
+                                                    text = if (cutoffExpired) {
+                                                        "Time Up • Window Closed (${formatAssessmentDeadline(exam.openUntilMs)})"
+                                                    } else {
+                                                        "Closes: ${formatAssessmentDeadline(exam.openUntilMs)}"
+                                                    },
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (cutoffExpired) DangerRed else GoldDark
+                                                )
+                                            }
                                         }
                                         OutlinedButton(
                                             onClick = { editingExam = exam },
@@ -549,22 +639,10 @@ fun TeacherPanelScreen(
                                                 .heightIn(min = 48.dp)
                                                 .testTag("btn_teacher_edit_exam_${exam.id}")
                                         ) {
-                                            Text("Configure", fontSize = 11.sp, color = NavyPrimary)
+                                            Text("Edit Q&A", fontSize = 11.sp, color = NavyPrimary, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
-                            }
-
-                            editingExam?.let { targetExam ->
-                                Spacer(modifier = Modifier.height(10.dp))
-                                TeacherExamConfigEditor(
-                                    exam = targetExam,
-                                    onCancel = { editingExam = null },
-                                    onSave = { updated ->
-                                        onSaveExam(updated)
-                                        editingExam = null
-                                    }
-                                )
                             }
                         }
                     }
@@ -592,7 +670,7 @@ fun TeacherPanelScreen(
                                         color = NavyDark
                                     )
                                     Text(
-                                        text = "Manage coursework instructions and create new module tasks.",
+                                        text = "Manage coursework prompts, submission deadlines, and grading.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color(0xFF475569)
                                     )
@@ -615,6 +693,7 @@ fun TeacherPanelScreen(
 
                             scopedAssignments.forEach { asg ->
                                 val subCount = scopedSubmissions.count { it.assignmentId == asg.id }
+                                val dueExpired = asg.dueDateMs != null && System.currentTimeMillis() > asg.dueDateMs
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
                                     color = BgLight,
@@ -644,6 +723,18 @@ fun TeacherPanelScreen(
                                                 fontSize = 11.sp,
                                                 color = Color(0xFF475569)
                                             )
+                                            if (asg.dueDateMs != null) {
+                                                Text(
+                                                    text = if (dueExpired) {
+                                                        "Time Up • Closed (${formatAssessmentDeadline(asg.dueDateMs)})"
+                                                    } else {
+                                                        "Due: ${formatAssessmentDeadline(asg.dueDateMs)}"
+                                                    },
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (dueExpired) DangerRed else GoldDark
+                                                )
+                                            }
                                         }
                                         TextButton(
                                             onClick = { onOpenAssignmentForGrading(asg) },
@@ -659,27 +750,6 @@ fun TeacherPanelScreen(
                                         }
                                     }
                                 }
-                            }
-
-                            val newModId = creatingAssignmentForModuleId
-                            if (editingAssignment != null || newModId != null) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                                TeacherAssignmentEditor(
-                                    initialAssignment = editingAssignment,
-                                    scopedModules = scopedModules,
-                                    defaultModuleId = newModId ?: editingAssignment?.moduleId ?: scopedModules.first().id,
-                                    authorUid = currentUser.authUid.ifBlank { currentUser.id },
-                                    authorName = currentUser.fullName,
-                                    onCancel = {
-                                        editingAssignment = null
-                                        creatingAssignmentForModuleId = null
-                                    },
-                                    onSave = { asg ->
-                                        onSaveAssignment(asg)
-                                        editingAssignment = null
-                                        creatingAssignmentForModuleId = null
-                                    }
-                                )
                             }
                         }
                     }
@@ -941,215 +1011,6 @@ private fun TeacherKpiChip(
                 color = Color(0xFFCBD5E1),
                 fontSize = 10.sp
             )
-        }
-    }
-}
-
-@Composable
-private fun TeacherExamConfigEditor(
-    exam: ModuleExam,
-    onCancel: () -> Unit,
-    onSave: (ModuleExam) -> Unit
-) {
-    var title by remember(exam.id) { mutableStateOf(exam.title) }
-    var passingPct by remember(exam.id) { mutableStateOf(exam.passingPercentage.toString()) }
-    var durationMin by remember(exam.id) { mutableStateOf(exam.durationMinutes.toString()) }
-    var maxAttempts by remember(exam.id) { mutableStateOf(exam.maxAttempts.toString()) }
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = NavySurface.copy(alpha = 0.08f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "Configure Exam: ${exam.id}",
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                color = NavyPrimary
-            )
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("Exam Title") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = passingPct,
-                    onValueChange = { passingPct = it.filter { c -> c.isDigit() } },
-                    label = { Text("Pass %") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = durationMin,
-                    onValueChange = { durationMin = it.filter { c -> c.isDigit() } },
-                    label = { Text("Minutes") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = maxAttempts,
-                    onValueChange = { maxAttempts = it.filter { c -> c.isDigit() } },
-                    label = { Text("Max Tries") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Cancel")
-                }
-                Button(
-                    onClick = {
-                        onSave(
-                            exam.copy(
-                                title = title.trim().ifBlank { exam.title },
-                                passingPercentage = (passingPct.toIntOrNull() ?: exam.passingPercentage).coerceIn(30, 100),
-                                durationMinutes = (durationMin.toIntOrNull() ?: exam.durationMinutes).coerceIn(5, 180),
-                                maxAttempts = (maxAttempts.toIntOrNull() ?: exam.maxAttempts).coerceIn(1, 20)
-                            )
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .testTag("btn_teacher_save_exam")
-                ) {
-                    Text("Save Exam Rules", color = GoldMetallic, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TeacherAssignmentEditor(
-    initialAssignment: ModuleAssignment?,
-    scopedModules: List<CourseModule>,
-    defaultModuleId: String,
-    authorUid: String,
-    authorName: String,
-    onCancel: () -> Unit,
-    onSave: (ModuleAssignment) -> Unit
-) {
-    var selectedModuleId by remember(initialAssignment?.id, defaultModuleId) {
-        mutableStateOf(initialAssignment?.moduleId ?: defaultModuleId)
-    }
-    var title by remember(initialAssignment?.id) { mutableStateOf(initialAssignment?.title ?: "") }
-    var topic by remember(initialAssignment?.id) { mutableStateOf(initialAssignment?.topicDescription ?: "") }
-    var instructions by remember(initialAssignment?.id) { mutableStateOf(initialAssignment?.instructions ?: "") }
-    var maxMarksText by remember(initialAssignment?.id) { mutableStateOf((initialAssignment?.maxMarks ?: 20).toString()) }
-    var isFinalProject by remember(initialAssignment?.id) { mutableStateOf(initialAssignment?.isFinalProject ?: false) }
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = NavySurface.copy(alpha = 0.08f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = if (initialAssignment == null) "Create Module Assignment" else "Edit Assignment",
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                color = NavyPrimary
-            )
-            if (scopedModules.size > 1 && initialAssignment == null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    scopedModules.take(4).forEach { mod ->
-                        val selected = selectedModuleId == mod.id
-                        Surface(
-                            onClick = { selectedModuleId = mod.id },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (selected) NavyPrimary else Color.White
-                        ) {
-                            Text(
-                                text = "M${mod.number}",
-                                color = if (selected) GoldMetallic else NavyDark,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("Assignment Title") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = topic,
-                onValueChange = { topic = it },
-                label = { Text("Topic / Case Study Summary") },
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = instructions,
-                onValueChange = { instructions = it },
-                label = { Text("Submission Instructions") },
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = maxMarksText,
-                    onValueChange = { maxMarksText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Max Marks") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = isFinalProject,
-                        onCheckedChange = { isFinalProject = it },
-                        colors = CheckboxDefaults.colors(checkedColor = NavyPrimary)
-                    )
-                    Text("Final Capstone", fontSize = 12.sp, color = NavyDark)
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Cancel")
-                }
-                Button(
-                    onClick = {
-                        if (title.isBlank()) return@Button
-                        val assignment = (initialAssignment ?: ModuleAssignment(
-                            id = "asg-${System.currentTimeMillis()}",
-                            moduleId = selectedModuleId,
-                            title = title.trim(),
-                            topicDescription = topic.trim(),
-                            instructions = instructions.trim(),
-                            createdByUid = authorUid,
-                            createdByName = authorName
-                        )).copy(
-                            moduleId = selectedModuleId,
-                            title = title.trim(),
-                            topicDescription = topic.trim(),
-                            instructions = instructions.trim().ifBlank { "Submit concise supply chain analysis report." },
-                            maxMarks = (maxMarksText.toIntOrNull() ?: 20).coerceIn(5, 200),
-                            isFinalProject = isFinalProject,
-                            isRequiredForCertification = isFinalProject || initialAssignment?.isRequiredForCertification == true
-                        )
-                        onSave(assignment)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .testTag("btn_teacher_save_assignment")
-                ) {
-                    Text("Save Assignment", color = GoldMetallic, fontWeight = FontWeight.Bold)
-                }
-            }
         }
     }
 }

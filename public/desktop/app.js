@@ -1079,6 +1079,18 @@ async function syncFromCloudFirestore(silent = false) {
         try {
           if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
           if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
+          if (c.settings.examsJson) {
+            const remoteExams = JSON.parse(c.settings.examsJson);
+            if (Array.isArray(remoteExams) && remoteExams.length) {
+              state.exams = remoteExams;
+            }
+          }
+          if (c.settings.assignmentsJson) {
+            const remoteAssignments = JSON.parse(c.settings.assignmentsJson);
+            if (Array.isArray(remoteAssignments) && remoteAssignments.length) {
+              state.assignments = remoteAssignments;
+            }
+          }
           if (c.settings.membersJson) {
             const remoteMembers = JSON.parse(c.settings.membersJson);
             if (Array.isArray(remoteMembers) && remoteMembers.length) {
@@ -1159,6 +1171,8 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
       modules: state.modules,
       classes: state.classes,
       settings: state.settings,
+      exams: state.exams,
+      assignments: state.assignments,
       founderProfile: state.founderProfile,
       developerProfile: state.developerProfile,
       members: state.members,
@@ -1688,22 +1702,291 @@ function renderCourses() {
   `;
 }
 
+function formatDeadlineLabel(ms) {
+  if (!ms || Number(ms) <= 0) return "No Deadline";
+  try {
+    return new Date(Number(ms)).toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch (_) {
+    return new Date(Number(ms)).toISOString().slice(0, 16).replace("T", " ");
+  }
+}
+
+function toDateTimeLocalValue(ms) {
+  if (!ms || Number(ms) <= 0) return "";
+  const d = new Date(Number(ms));
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function isAssignmentExpired(asg, nowMs = Date.now()) {
+  return Boolean(asg && asg.dueDateMs && Number(nowMs) > Number(asg.dueDateMs));
+}
+
+function isExamExpired(exam, nowMs = Date.now()) {
+  return Boolean(exam && exam.openUntilMs && Number(nowMs) > Number(exam.openUntilMs));
+}
+
+function formatRemainingDeadlineBadge(targetMs, nowMs = Date.now()) {
+  if (!targetMs) return "";
+  const diffSec = Math.floor((Number(targetMs) - Number(nowMs)) / 1000);
+  if (diffSec <= 0) return "Time Up • Closed";
+  const days = Math.floor(diffSec / 86400);
+  const hours = Math.floor((diffSec % 86400) / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h left`;
+  if (hours > 0) return `${hours}h ${mins}m left`;
+  return `${Math.max(1, mins)}m left`;
+}
+
+async function syncAssessmentsToCloudIfConnected(changeSummary) {
+  saveState();
+  if (cloudUser) {
+    await pushCurriculumToFirestore({
+      versionTag: state.manifest.versionTag || "v1.6.0",
+      versionCode: Number(state.manifest.versionCode || 106) + 1,
+      releaseNotes: changeSummary || "Updated exams & assignments",
+      announcement: state.manifest.announcement || "",
+      apkVersionName: state.manifest.latestApkVersionName || "1.6",
+      apkVersionCode: state.manifest.latestApkVersionCode || 7,
+      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+    });
+  } else {
+    showToast(`${changeSummary} (Saved locally. Connect Google Cloud Sync to push to all students.)`);
+    render();
+  }
+}
+
+function buildExamQuestionBuilderRowHtml(q = {}, idx = 0) {
+  const opts = Array.isArray(q.options) && q.options.length >= 4
+    ? q.options
+    : ["", "", "", ""];
+  const correctIdx = Number(q.correctOptionIndex || 0);
+  const marksVal = Number(q.marks || 5);
+  return `
+    <div class="exam-q-builder-row" data-q-index="${idx}" style="border: 1.5px solid #CBD5E1; border-radius: 12px; padding: 12px; background: #F8FAFC; display: grid; gap: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+        <strong class="exam-q-row-label" style="color: var(--navy); font-size: 13px;">Question ${idx + 1}</strong>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <label style="font-size: 11.5px; font-weight: 700; display: flex; align-items: center; gap: 4px;">Marks
+            <input type="number" class="input eq-marks-input" min="1" max="50" value="${marksVal}" style="width: 66px; padding: 4px 8px;" required />
+          </label>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-remove-question" style="color: var(--err); border-color: rgba(185,28,28,0.35);">Remove</button>
+        </div>
+      </div>
+      <textarea class="textarea eq-question-input" rows="2" placeholder="Write MCQ question prompt..." required>${escapeHtml(q.question || "")}</textarea>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;">
+        ${[0, 1, 2, 3]
+          .map(
+            (oIdx) => `
+          <input type="text" class="input eq-opt-input" data-opt-idx="${oIdx}" placeholder="Option ${String.fromCharCode(65 + oIdx)}" value="${escapeHtml(opts[oIdx] || "")}" required />
+        `
+          )
+          .join("")}
+      </div>
+      <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center;">
+        <label style="font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px;">Correct Option:
+          <select class="select eq-correct-select" style="width: auto; padding: 5px 10px;">
+            ${[0, 1, 2, 3]
+              .map((oIdx) => `<option value="${oIdx}" ${correctIdx === oIdx ? "selected" : ""}>Option ${String.fromCharCode(65 + oIdx)}</option>`)
+              .join("")}
+          </select>
+        </label>
+        <input type="text" class="input eq-exp-input" placeholder="Answer explanation (shown after submit, optional)" value="${escapeHtml(q.explanation || "")}" />
+      </div>
+    </div>
+  `;
+}
+
+function openAdminExamBuilderModal(examId = "") {
+  if (!isAdminUser()) {
+    showToast("Admin sign-in required to create or edit exams.", true);
+    return;
+  }
+  const existing = examId ? state.exams.find((e) => e.id === examId) : null;
+  const questions = existing?.questions?.length
+    ? existing.questions
+    : [
+        {
+          id: `q-${Date.now()}-1`,
+          question: "",
+          options: ["", "", "", ""],
+          correctOptionIndex: 0,
+          marks: 5,
+          explanation: ""
+        }
+      ];
+
+  const moduleOptions = state.modules
+    .slice()
+    .sort((a, b) => Number(a.number) - Number(b.number))
+    .map(
+      (m) => `<option value="${escapeHtml(m.id)}" ${(existing?.moduleId || "mod-1") === m.id ? "selected" : ""}>Module ${m.number}: ${escapeHtml(m.title)}</option>`
+    )
+    .join("");
+
+  const html = `
+    <form id="adminExamBuilderForm" data-exam-id="${escapeHtml(existing?.id || "")}" style="display: grid; gap: 10px;">
+      <label style="font-size: 12px; font-weight: 700;">Module
+        <select id="aebModuleId" class="select">${moduleOptions}</select>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Exam Title
+        <input type="text" id="aebTitle" class="input" placeholder="e.g. Module 4 Timed Assessment" value="${escapeHtml(existing?.title || "")}" required />
+      </label>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+        <label style="font-size: 12px; font-weight: 700;">Duration (Mins)
+          <input type="number" id="aebDuration" class="input" min="1" max="180" value="${Number(existing?.durationMinutes || 20)}" required />
+        </label>
+        <label style="font-size: 12px; font-weight: 700;">Passing (%)
+          <input type="number" id="aebPassing" class="input" min="20" max="100" value="${Number(existing?.passingPercentage || 60)}" required />
+        </label>
+        <label style="font-size: 12px; font-weight: 700;">Max Attempts
+          <input type="number" id="aebMaxAttempts" class="input" min="1" max="50" value="${Number(existing?.maxAttempts || 3)}" required />
+        </label>
+      </div>
+      <div style="background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 10px; display: grid; gap: 6px;">
+        <label style="font-size: 12px; font-weight: 700; color: var(--navy);">Closing Deadline / Time-Up Cutoff (Optional)
+          <input type="datetime-local" id="aebOpenUntil" class="input" value="${toDateTimeLocalValue(existing?.openUntilMs)}" style="margin-top: 4px;" />
+        </label>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aebOpenUntil" data-hours="0">No Cutoff</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aebOpenUntil" data-hours="1">+1 Hour</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aebOpenUntil" data-hours="24">+24 Hours</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aebOpenUntil" data-hours="72">+3 Days</button>
+        </div>
+        <div style="font-size: 11px; color: #78350F;">Countdown auto-submits when Exam Duration reaches 00:00, and new starts lock after the Closing Deadline.</div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px;">
+        <strong style="color: var(--navy); font-size: 13.5px;">MCQ Questions Builder</strong>
+        <button type="button" class="btn btn-primary btn-sm" data-modal-action="builder-add-question">+ Add Question</button>
+      </div>
+      <div id="examQuestionRowsHost" style="display: grid; gap: 10px;">
+        ${questions.map((q, idx) => buildExamQuestionBuilderRowHtml(q, idx)).join("")}
+      </div>
+      <button type="submit" class="btn btn-gold" style="width: 100%; margin-top: 6px;">
+        Save Exam & Questions ${cloudUser ? "(+ Publish Cloud)" : "(Local + Publish Ready)"}
+      </button>
+    </form>
+  `;
+  openModal(existing ? `Edit Exam: ${existing.title}` : "Create Timed Exam & MCQ Questions", html);
+}
+
+function openAdminAssignmentBuilderModal(asgId = "") {
+  if (!isAdminUser()) {
+    showToast("Admin sign-in required to create or edit assignments.", true);
+    return;
+  }
+  const existing = asgId ? state.assignments.find((a) => a.id === asgId) : null;
+  const moduleOptions = state.modules
+    .slice()
+    .sort((a, b) => Number(a.number) - Number(b.number))
+    .map(
+      (m) => `<option value="${escapeHtml(m.id)}" ${(existing?.moduleId || "mod-1") === m.id ? "selected" : ""}>Module ${m.number}: ${escapeHtml(m.title)}</option>`
+    )
+    .join("");
+
+  const html = `
+    <form id="adminAssignmentBuilderForm" data-asg-id="${escapeHtml(existing?.id || "")}" style="display: grid; gap: 10px;">
+      <label style="font-size: 12px; font-weight: 700;">Module
+        <select id="aabModuleId" class="select">${moduleOptions}</select>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Assignment Title
+        <input type="text" id="aabTitle" class="input" placeholder="e.g. Module 3 LC Discrepancy Case Assignment" value="${escapeHtml(existing?.title || "")}" required />
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Assignment Topic / Case Prompt
+        <textarea id="aabTopic" class="textarea" rows="3" placeholder="Explain the case scenario and deliverables..." required>${escapeHtml(existing?.topicDescription || "")}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Submission Instructions (Optional)
+        <textarea id="aabInstructions" class="textarea" rows="2" placeholder="Formatting, word limit, or upload rules...">${escapeHtml(existing?.instructions || "")}</textarea>
+      </label>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;">
+        <label style="font-size: 12px; font-weight: 700;">Max Marks
+          <input type="number" id="aabMarks" class="input" min="5" max="200" value="${Number(existing?.maxMarks || 20)}" required />
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; margin-top: 16px;">
+          <input type="checkbox" id="aabFinalProject" ${existing?.isFinalProject ? "checked" : ""} />
+          <span>Final Capstone Project</span>
+        </label>
+      </div>
+      <label style="font-size: 12px; font-weight: 700;">Reference Brief / Question Sheet URL (Optional HTTPS Link)
+        <input type="url" id="aabRefUrl" class="input" placeholder="https://example.com/assignment-brief.pdf" value="${escapeHtml(existing?.referenceUrl || "")}" />
+      </label>
+      <div style="background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 10px; display: grid; gap: 6px;">
+        <label style="font-size: 12px; font-weight: 700; color: var(--navy);">Submission Deadline / Time-Up Cutoff (Optional)
+          <input type="datetime-local" id="aabDueDate" class="input" value="${toDateTimeLocalValue(existing?.dueDateMs)}" style="margin-top: 4px;" />
+        </label>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aabDueDate" data-hours="0">No Deadline</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aabDueDate" data-hours="1">+1 Hour</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aabDueDate" data-hours="24">+24 Hours</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aabDueDate" data-hours="72">+3 Days</button>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="builder-set-deadline-preset" data-target-input="aabDueDate" data-hours="168">+7 Days</button>
+        </div>
+        <div style="font-size: 11px; color: #78350F;">After this date &amp; time, students see "Time Up • Closed" and cannot submit new answers.</div>
+      </div>
+      <button type="submit" class="btn btn-gold" style="width: 100%; margin-top: 6px;">
+        Save Assignment ${cloudUser ? "(+ Publish Cloud)" : "(Local + Publish Ready)"}
+      </button>
+    </form>
+  `;
+  openModal(existing ? `Edit Assignment: ${existing.title}` : "Create Practical Assignment & Deadline", html);
+}
+
 function renderExams() {
   const uid = getActiveUser().id;
   const attempts = state.examAttemptsByUser[uid] || [];
   const subs = state.assignmentSubmissionsByUser[uid] || {};
+  const adminLogged = isAdminUser();
+
+  const adminBar = adminLogged
+    ? `
+      <div class="card" style="margin-bottom: 16px; background: linear-gradient(135deg, #0D2240 0%, #15345C 100%); color: #fff; border: 1.5px solid var(--gold);">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div>
+            <span class="badge badge-gold">Admin Assessment &amp; Question Studio</span>
+            <h3 style="margin: 6px 0 4px; color: #fff; font-size: 16px;">Create Timed MCQ Exams &amp; Deadlined Assignments</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #D7E3F3;">
+              Questions &amp; tasks auto-lock when Time Up arrives. Connect Google Cloud Sync to push live to all students.
+            </p>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-gold btn-sm" data-action="admin-create-exam">+ New Exam &amp; Questions</button>
+            <button type="button" class="btn btn-outline btn-sm" style="background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.35);" data-action="admin-create-assignment">+ New Assignment</button>
+            <button type="button" class="btn btn-outline btn-sm" style="background: rgba(212,175,55,0.18); color: var(--gold-soft); border-color: var(--gold);" data-action="admin-publish-assessments-now">
+              ${cloudUser ? "Publish Live to Cloud" : "Connect Cloud &amp; Publish"}
+            </button>
+          </div>
+        </div>
+      </div>
+    `
+    : "";
 
   const examsHtml = state.exams
     .map((exam) => {
       const userAttempts = attempts.filter((a) => a.examId === exam.id);
       const best = userAttempts.reduce((max, a) => (a.percentage > (max?.percentage || -1) ? a : max), null);
+      const expired = isExamExpired(exam);
+      const windowBadge = exam.openUntilMs
+        ? `<span class="badge ${expired ? "badge-err" : "badge-warn"}">${expired ? "Time Up • Closed" : `Closes ${formatDeadlineLabel(exam.openUntilMs)} (${formatRemainingDeadlineBadge(exam.openUntilMs)})`}</span>`
+        : `<span class="badge badge-ok">Always Open • ${exam.durationMinutes}m Timer</span>`;
+
       return `
         <div class="card" style="margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap;">
             <div style="min-width: 0; flex: 1;">
-              <span class="badge ${exam.id === "exam-final" ? "badge-gold" : "badge-navy"}">${exam.totalMarks} Marks • ${exam.durationMinutes} Mins</span>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <span class="badge ${exam.id === "exam-final" ? "badge-gold" : "badge-navy"}">${exam.totalMarks} Marks • ${exam.durationMinutes} Mins</span>
+                ${windowBadge}
+              </div>
               <h3 style="margin: 8px 0 4px; font-size: 15.5px; color: var(--navy);">${escapeHtml(exam.title)}</h3>
-              <p style="margin: 0; font-size: 12.5px; color: var(--muted);">${exam.questions.length} Questions • Passing: ${exam.passingPercentage}%</p>
+              <p style="margin: 0; font-size: 12.5px; color: var(--muted);">${(exam.questions || []).length} Questions • Passing: ${exam.passingPercentage}% • Auto-submits at 00:00</p>
             </div>
             ${
               best
@@ -1711,10 +1994,18 @@ function renderExams() {
                 : `<span class="badge badge-warn">Not Attempted</span>`
             }
           </div>
-          <div style="margin-top: 12px;">
-            <button type="button" class="btn btn-primary btn-sm" data-action="start-exam" data-exam-id="${escapeHtml(exam.id)}">
-              ${best ? "Retake Timed Exam" : "Start Timed Exam"}
+          <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-primary btn-sm" data-action="start-exam" data-exam-id="${escapeHtml(exam.id)}" ${expired && !adminLogged ? "disabled" : ""}>
+              ${expired ? "Exam Closed (Time Up)" : best ? "Retake Timed Exam" : "Start Timed Exam"}
             </button>
+            ${
+              adminLogged
+                ? `
+                  <button type="button" class="btn btn-outline btn-sm" data-action="admin-edit-exam" data-exam-id="${escapeHtml(exam.id)}">Edit Questions / Timer</button>
+                  <button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="admin-delete-exam" data-exam-id="${escapeHtml(exam.id)}">Delete</button>
+                `
+                : ""
+            }
           </div>
         </div>
       `;
@@ -1724,25 +2015,41 @@ function renderExams() {
   const assignHtml = state.assignments
     .map((asg) => {
       const sub = subs[asg.id];
+      const expired = isAssignmentExpired(asg);
+      const deadlineChip = asg.dueDateMs
+        ? `<span class="badge ${expired ? "badge-err" : "badge-warn"}">${expired ? "Time Up • Closed" : `Due ${formatDeadlineLabel(asg.dueDateMs)} (${formatRemainingDeadlineBadge(asg.dueDateMs)})`}</span>`
+        : "";
       return `
         <div class="card" style="margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap;">
             <div style="min-width: 0; flex: 1;">
-              <span class="badge ${asg.isFinalProject ? "badge-gold" : "badge-navy"}">${asg.maxMarks} Marks${asg.isFinalProject ? " • Capstone" : ""}</span>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <span class="badge ${asg.isFinalProject ? "badge-gold" : "badge-navy"}">${asg.maxMarks} Marks${asg.isFinalProject ? " • Capstone" : ""}</span>
+                ${deadlineChip}
+              </div>
               <h3 style="margin: 8px 0 4px; font-size: 15px; color: var(--navy);">${escapeHtml(asg.title)}</h3>
               <p style="margin: 0; font-size: 12.5px; color: #334155;">${escapeHtml(asg.topicDescription)}</p>
+              ${
+                asg.referenceUrl
+                  ? `<div style="margin-top: 6px; font-size: 12px;"><a href="${escapeHtml(asg.referenceUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--navy); font-weight: 700;">Open Reference Brief Link &rsaquo;</a></div>`
+                  : ""
+              }
             </div>
-            <span class="badge ${sub?.grade !== undefined && sub?.grade !== null ? "badge-ok" : sub ? "badge-navy" : "badge-warn"}">
-              ${sub?.grade !== undefined && sub?.grade !== null ? `Graded: ${sub.grade}/${asg.maxMarks}` : sub ? "Submitted" : "Pending"}
+            <span class="badge ${sub?.grade !== undefined && sub?.grade !== null ? "badge-ok" : sub ? "badge-navy" : expired ? "badge-err" : "badge-warn"}">
+              ${sub?.grade !== undefined && sub?.grade !== null ? `Graded: ${sub.grade}/${asg.maxMarks}` : sub ? "Submitted" : expired ? "Closed" : "Pending"}
             </span>
           </div>
           <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
             <button type="button" class="btn btn-outline btn-sm" data-action="open-assignment" data-asg-id="${escapeHtml(asg.id)}">
-              ${sub ? "View / Update Submission" : "Submit Work"}
+              ${expired ? (sub ? "View Submission (Closed)" : "View Prompt (Closed)") : sub ? "View / Update Submission" : "Submit Work"}
             </button>
             ${
-              isAdminUser() && sub
-                ? `<button type="button" class="btn btn-gold btn-sm" data-action="grade-assignment" data-asg-id="${escapeHtml(asg.id)}">Admin Grade</button>`
+              adminLogged
+                ? `
+                  ${sub ? `<button type="button" class="btn btn-gold btn-sm" data-action="grade-assignment" data-asg-id="${escapeHtml(asg.id)}">Admin Grade</button>` : ""}
+                  <button type="button" class="btn btn-outline btn-sm" data-action="admin-edit-assignment" data-asg-id="${escapeHtml(asg.id)}">Edit / Deadline</button>
+                  <button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="admin-delete-assignment" data-asg-id="${escapeHtml(asg.id)}">Delete</button>
+                `
                 : ""
             }
           </div>
@@ -1752,14 +2059,15 @@ function renderExams() {
     .join("");
 
   return `
+    ${adminBar}
     <div class="two-col-grid">
       <div>
-        <h2 style="margin: 0 0 12px; color: var(--navy); font-size: 17px;">Interactive Timed Examinations</h2>
-        ${examsHtml}
+        <h2 style="margin: 0 0 12px; color: var(--navy); font-size: 17px;">Interactive Timed Examinations (${state.exams.length})</h2>
+        ${examsHtml || '<div class="card">No exams configured yet.</div>'}
       </div>
       <div>
-        <h2 style="margin: 0 0 12px; color: var(--navy); font-size: 17px;">Practical Assignments & Capstone</h2>
-        ${assignHtml}
+        <h2 style="margin: 0 0 12px; color: var(--navy); font-size: 17px;">Practical Assignments & Capstone (${state.assignments.length})</h2>
+        ${assignHtml || '<div class="card">No assignments configured yet.</div>'}
       </div>
     </div>
   `;
@@ -2706,6 +3014,15 @@ function renderAdmin() {
           </div>
         </div>
 
+        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: grid; gap: 8px;">
+          <div style="font-size: 12.5px; font-weight: 800; color: var(--navy);">Exams, MCQ Questions &amp; Deadlined Assignments</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-primary btn-sm" data-action="admin-create-exam">+ Create Exam &amp; Questions</button>
+            <button type="button" class="btn btn-gold btn-sm" data-action="admin-create-assignment">+ Create Assignment &amp; Deadline</button>
+            <button type="button" class="btn btn-outline btn-sm" data-nav="exams">Manage All (${state.exams.length} Exams / ${state.assignments.length} Tasks)</button>
+          </div>
+        </div>
+
         <div style="display: grid; gap: 6px; font-size: 12.5px; color: #334155; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px;">
           <div><strong>Firebase Project:</strong> ${escapeHtml(FIREBASE_CONFIG.projectId)}</div>
           <div><strong>Firestore DB:</strong> ${escapeHtml(FIREBASE_CONFIG.databaseId)}</div>
@@ -2978,21 +3295,32 @@ function render() {
 function openExamModal(examId) {
   const exam = state.exams.find((e) => e.id === examId);
   if (!exam) return;
-  let remainingSec = Number(exam.durationMinutes || 20) * 60;
+  if (isExamExpired(exam) && !isAdminUser()) {
+    showToast(`Examination window closed on ${formatDeadlineLabel(exam.openUntilMs)} (Time Up).`, true);
+    return;
+  }
+  const durationSec = Math.max(60, Number(exam.durationMinutes || 20) * 60);
+  const cutoffSec = exam.openUntilMs
+    ? Math.max(10, Math.floor((Number(exam.openUntilMs) - Date.now()) / 1000))
+    : durationSec;
+  let remainingSec = Math.min(durationSec, cutoffSec);
   examModalSession = { exam, remainingSec };
 
+  const m0 = Math.floor(remainingSec / 60);
+  const s0 = String(remainingSec % 60).padStart(2, "0");
+
   const html = `
-    <div style="display: flex; justify-content: space-between; align-items: center; background: var(--navy); color: #fff; padding: 10px 14px; border-radius: 10px; margin-bottom: 14px;">
-      <span>${exam.questions.length} Questions • ${exam.totalMarks} Total Marks</span>
-      <strong id="examTimerBadge" style="color: var(--gold);">Time Left: ${Math.floor(remainingSec / 60)}:00</strong>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; background: var(--navy); color: #fff; padding: 10px 14px; border-radius: 10px; margin-bottom: 14px;">
+      <span>${(exam.questions || []).length} Questions • ${exam.totalMarks} Total Marks • Auto-submits at 00:00</span>
+      <strong id="examTimerBadge" style="color: ${remainingSec <= 60 ? "#FCA5A5" : "var(--gold)"}; font-family: monospace;">Time Left: ${m0}:${s0}</strong>
     </div>
     <form id="activeExamForm">
-      ${exam.questions
+      ${(exam.questions || [])
         .map(
           (q, idx) => `
         <div style="margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
           <div style="font-weight: 700; color: var(--navy); margin-bottom: 6px;">${idx + 1}. ${escapeHtml(q.question)} (${q.marks} Marks)</div>
-          ${q.options
+          ${(q.options || [])
             .map(
               (opt, oIdx) => `
             <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13.5px; cursor: pointer;">
@@ -3018,39 +3346,45 @@ function openExamModal(examId) {
       const m = Math.floor(Math.max(0, remainingSec) / 60);
       const s = String(Math.max(0, remainingSec) % 60).padStart(2, "0");
       badge.textContent = `Time Left: ${m}:${s}`;
+      if (remainingSec <= 60) {
+        badge.style.color = "#FCA5A5";
+      }
     }
     if (remainingSec <= 0) {
-      submitActiveExam();
+      submitActiveExam(true);
     }
   }, 1000);
 }
 
-function submitActiveExam() {
+function submitActiveExam(isAutoTimeout = false) {
   if (!examModalSession) return;
   const { exam } = examModalSession;
   const form = document.getElementById("activeExamForm");
   let scored = 0;
-  exam.questions.forEach((q, idx) => {
+  (exam.questions || []).forEach((q, idx) => {
     const selected = form?.querySelector(`input[name="eq_${idx}"]:checked`)?.value;
-    if (selected !== undefined && Number(selected) === q.correctOptionIndex) {
+    if (selected !== undefined && Number(selected) === Number(q.correctOptionIndex)) {
       scored += Number(q.marks || 0);
     }
   });
-  const pct = exam.totalMarks > 0 ? Math.round((scored / exam.totalMarks) * 100) : 0;
+  const totalMarks = Number(exam.totalMarks || 0) || (exam.questions || []).reduce((s, q) => s + Number(q.marks || 0), 0) || 1;
+  const pct = totalMarks > 0 ? Math.round((scored / totalMarks) * 100) : 0;
   const passed = pct >= (exam.passingPercentage || 60);
   const uid = getActiveUser().id;
   if (!state.examAttemptsByUser[uid]) state.examAttemptsByUser[uid] = [];
   state.examAttemptsByUser[uid].push({
     examId: exam.id,
     scoredMarks: scored,
-    totalMarks: exam.totalMarks,
+    totalMarks,
     percentage: pct,
     passed,
+    isAutoSubmittedOnTimeout: Boolean(isAutoTimeout),
     timestamp: Date.now()
   });
   saveState();
   closeModal();
-  showToast(`Exam submitted: ${scored}/${exam.totalMarks} (${pct}%) — ${passed ? "PASSED" : "Try Again"}`, !passed);
+  const prefix = isAutoTimeout ? "Time Up! Exam auto-submitted" : "Exam submitted";
+  showToast(`${prefix}: ${scored}/${totalMarks} (${pct}%) — ${passed ? "PASSED" : "Try Again"}`, !passed);
   render();
 }
 
@@ -3364,17 +3698,63 @@ function setupListeners() {
       showToast("Lecture study notes saved locally on PC.");
     } else if (action === "start-exam") {
       openExamModal(actBtn.dataset.examId);
+    } else if (action === "admin-create-exam") {
+      openAdminExamBuilderModal("");
+    } else if (action === "admin-edit-exam") {
+      openAdminExamBuilderModal(actBtn.dataset.examId);
+    } else if (action === "admin-delete-exam") {
+      if (!isAdminUser()) return;
+      const exId = actBtn.dataset.examId;
+      const target = state.exams.find((x) => x.id === exId);
+      state.exams = state.exams.filter((x) => x.id !== exId);
+      syncAssessmentsToCloudIfConnected(`Deleted exam: ${target?.title || exId}`);
+    } else if (action === "admin-create-assignment") {
+      openAdminAssignmentBuilderModal("");
+    } else if (action === "admin-edit-assignment") {
+      openAdminAssignmentBuilderModal(actBtn.dataset.asgId);
+    } else if (action === "admin-delete-assignment") {
+      if (!isAdminUser()) return;
+      const asgId = actBtn.dataset.asgId;
+      const target = state.assignments.find((x) => x.id === asgId);
+      state.assignments = state.assignments.filter((x) => x.id !== asgId);
+      syncAssessmentsToCloudIfConnected(`Deleted assignment: ${target?.title || asgId}`);
+    } else if (action === "admin-publish-assessments-now") {
+      if (!isAdminUser()) return;
+      if (!cloudUser) {
+        signInWithGoogleCloud();
+      } else {
+        pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 106) + 1,
+          releaseNotes: "Published live exams, MCQ questions & deadlined assignments",
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+        });
+      }
     } else if (action === "open-assignment") {
       const asg = state.assignments.find((a) => a.id === actBtn.dataset.asgId);
       if (!asg) return;
       const uid = getActiveUser().id;
       const prev = state.assignmentSubmissionsByUser[uid]?.[asg.id]?.text || "";
+      const expired = isAssignmentExpired(asg);
+      const deadlineBanner = asg.dueDateMs
+        ? `<div style="margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 700; background: ${expired ? "#FEE2E2" : "#FFFBEB"}; color: ${expired ? "#991B1B" : "#92400E"}; border: 1px solid ${expired ? "#FCA5A5" : "#FCD34D"};">
+            ${expired ? `Time Up • Submissions closed on ${escapeHtml(formatDeadlineLabel(asg.dueDateMs))}` : `Submission Deadline: ${escapeHtml(formatDeadlineLabel(asg.dueDateMs))} (${escapeHtml(formatRemainingDeadlineBadge(asg.dueDateMs))})`}
+          </div>`
+        : "";
       openModal(
         asg.title,
-        `<p style="font-size: 13px; color: var(--muted);">${escapeHtml(asg.topicDescription)}</p>
+        `${deadlineBanner}
+         <p style="font-size: 13px; color: var(--navy); font-weight: 600;">${escapeHtml(asg.topicDescription)}</p>
+         ${asg.instructions ? `<p style="font-size: 12px; color: var(--muted);">${escapeHtml(asg.instructions)}</p>` : ""}
+         ${asg.referenceUrl ? `<p style="font-size: 12px;"><a href="${escapeHtml(asg.referenceUrl)}" target="_blank" rel="noopener noreferrer" style="color: var(--navy); font-weight: 700;">Download / Open Reference Sheet &rsaquo;</a></p>` : ""}
          <form id="submitAssignmentForm" data-asg-id="${escapeHtml(asg.id)}">
-           <textarea id="asgSubmissionText" class="textarea" rows="6" placeholder="Write or paste your executive SCM analysis (${asg.maxMarks} Marks)...">${escapeHtml(prev)}</textarea>
-           <button type="submit" class="btn btn-primary" style="margin-top: 12px; width: 100%;">Submit Assignment</button>
+           <textarea id="asgSubmissionText" class="textarea" rows="6" placeholder="Write or paste your executive SCM analysis (${asg.maxMarks} Marks)..." ${expired ? "disabled" : ""}>${escapeHtml(prev)}</textarea>
+           <button type="submit" class="btn btn-primary" style="margin-top: 12px; width: 100%;" ${expired ? "disabled" : ""}>
+             ${expired ? "Submissions Closed (Time Up)" : "Submit Assignment"}
+           </button>
          </form>`
       );
     } else if (action === "grade-assignment") {
@@ -3863,12 +4243,146 @@ function setupListeners() {
     }
   });
 
+  document.getElementById("modalBody").addEventListener("click", (e) => {
+    const mAct = e.target.closest("[data-modal-action]");
+    if (!mAct) return;
+    const modalAction = mAct.dataset.modalAction;
+    if (modalAction === "builder-add-question") {
+      const host = document.getElementById("examQuestionRowsHost");
+      if (!host) return;
+      const idx = host.querySelectorAll(".exam-q-builder-row").length;
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = buildExamQuestionBuilderRowHtml({}, idx);
+      host.appendChild(wrapper.firstElementChild);
+    } else if (modalAction === "builder-remove-question") {
+      const host = document.getElementById("examQuestionRowsHost");
+      const rows = host ? host.querySelectorAll(".exam-q-builder-row") : [];
+      if (rows.length <= 1) {
+        showToast("An exam requires at least 1 MCQ question.", true);
+        return;
+      }
+      mAct.closest(".exam-q-builder-row")?.remove();
+      host.querySelectorAll(".exam-q-builder-row").forEach((row, i) => {
+        row.dataset.qIndex = String(i);
+        const lbl = row.querySelector(".exam-q-row-label");
+        if (lbl) lbl.textContent = `Question ${i + 1}`;
+      });
+    } else if (modalAction === "builder-set-deadline-preset") {
+      const inputId = mAct.dataset.targetInput;
+      const hours = Number(mAct.dataset.hours || 0);
+      const inp = document.getElementById(inputId);
+      if (!inp) return;
+      inp.value = hours > 0 ? toDateTimeLocalValue(Date.now() + hours * 3600 * 1000) : "";
+    }
+  });
+
   document.getElementById("modalBody").addEventListener("submit", (e) => {
     e.preventDefault();
     if (e.target.id === "activeExamForm") {
-      submitActiveExam();
+      submitActiveExam(false);
+    } else if (e.target.id === "adminExamBuilderForm") {
+      if (!isAdminUser()) return;
+      const existingId = e.target.dataset.examId;
+      const moduleId = document.getElementById("aebModuleId")?.value || "mod-1";
+      const title = document.getElementById("aebTitle")?.value.trim() || "";
+      const durationMinutes = Math.max(1, Math.min(180, Number(document.getElementById("aebDuration")?.value || 20)));
+      const passingPercentage = Math.max(20, Math.min(100, Number(document.getElementById("aebPassing")?.value || 60)));
+      const maxAttempts = Math.max(1, Math.min(50, Number(document.getElementById("aebMaxAttempts")?.value || 3)));
+      const openUntilRaw = document.getElementById("aebOpenUntil")?.value || "";
+      const openUntilMs = openUntilRaw ? new Date(openUntilRaw).getTime() : null;
+
+      const qRows = Array.from(document.querySelectorAll("#examQuestionRowsHost .exam-q-builder-row"));
+      const questions = qRows.map((row, idx) => {
+        const question = row.querySelector(".eq-question-input")?.value.trim() || `Question ${idx + 1}`;
+        const options = Array.from(row.querySelectorAll(".eq-opt-input")).map((inp) => inp.value.trim());
+        const correctOptionIndex = Number(row.querySelector(".eq-correct-select")?.value || 0);
+        const marks = Math.max(1, Number(row.querySelector(".eq-marks-input")?.value || 5));
+        const explanation = row.querySelector(".eq-exp-input")?.value.trim() || "";
+        return {
+          id: `q-${Date.now()}-${idx}`,
+          question,
+          options,
+          correctOptionIndex,
+          marks,
+          explanation
+        };
+      });
+
+      if (!title || !questions.length || questions.some((q) => q.options.some((o) => !o))) {
+        showToast("Fill in the exam title and all 4 options for every MCQ question.", true);
+        return;
+      }
+
+      const totalMarks = questions.reduce((sum, q) => sum + Number(q.marks || 0), 0);
+      const prev = existingId ? state.exams.find((x) => x.id === existingId) : null;
+      const savedExam = {
+        ...(prev || {}),
+        id: existingId || `exam-${moduleId}-${Date.now()}`,
+        moduleId,
+        title,
+        totalMarks,
+        durationMinutes,
+        passingPercentage,
+        maxAttempts,
+        openUntilMs: Number.isFinite(openUntilMs) && openUntilMs > 0 ? openUntilMs : null,
+        questions
+      };
+
+      if (existingId) {
+        state.exams = state.exams.map((x) => (x.id === existingId ? savedExam : x));
+      } else {
+        state.exams = [...state.exams, savedExam];
+      }
+      closeModal();
+      syncAssessmentsToCloudIfConnected(`Saved exam '${savedExam.title}' (${questions.length} MCQ, ${durationMinutes}m)`);
+    } else if (e.target.id === "adminAssignmentBuilderForm") {
+      if (!isAdminUser()) return;
+      const existingId = e.target.dataset.asgId;
+      const moduleId = document.getElementById("aabModuleId")?.value || "mod-1";
+      const title = document.getElementById("aabTitle")?.value.trim() || "";
+      const topicDescription = document.getElementById("aabTopic")?.value.trim() || "";
+      const instructions = document.getElementById("aabInstructions")?.value.trim() || "";
+      const maxMarks = Math.max(5, Math.min(200, Number(document.getElementById("aabMarks")?.value || 20)));
+      const isFinalProject = Boolean(document.getElementById("aabFinalProject")?.checked);
+      const referenceUrl = document.getElementById("aabRefUrl")?.value.trim() || "";
+      const dueRaw = document.getElementById("aabDueDate")?.value || "";
+      const dueDateMs = dueRaw ? new Date(dueRaw).getTime() : null;
+
+      if (!title || !topicDescription) {
+        showToast("Enter assignment title and topic description.", true);
+        return;
+      }
+
+      const prev = existingId ? state.assignments.find((a) => a.id === existingId) : null;
+      const savedAsg = {
+        ...(prev || {}),
+        id: existingId || `asg-${moduleId}-${Date.now()}`,
+        moduleId,
+        title,
+        topicDescription,
+        instructions: instructions || "Submit concise supply chain analysis report.",
+        maxMarks,
+        isFinalProject,
+        referenceUrl: /^https?:\/\//i.test(referenceUrl) ? referenceUrl : "",
+        dueDateMs: Number.isFinite(dueDateMs) && dueDateMs > 0 ? dueDateMs : null
+      };
+
+      if (existingId) {
+        state.assignments = state.assignments.map((a) => (a.id === existingId ? savedAsg : a));
+      } else {
+        state.assignments = [...state.assignments, savedAsg];
+      }
+      closeModal();
+      syncAssessmentsToCloudIfConnected(`Saved assignment '${savedAsg.title}'`);
     } else if (e.target.id === "submitAssignmentForm") {
       const asgId = e.target.dataset.asgId;
+      const targetAsg = state.assignments.find((a) => a.id === asgId);
+      if (isAssignmentExpired(targetAsg)) {
+        closeModal();
+        showToast("Submission deadline expired (Time Up).", true);
+        render();
+        return;
+      }
       const uid = getActiveUser().id;
       if (!state.assignmentSubmissionsByUser[uid]) state.assignmentSubmissionsByUser[uid] = {};
       state.assignmentSubmissionsByUser[uid][asgId] = {

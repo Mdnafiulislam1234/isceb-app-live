@@ -92,6 +92,8 @@ fun ModuleDetailScreen(
     onOpenAssignment: (ModuleAssignment) -> Unit,
     canManageModule: Boolean = isAdmin,
     attemptsUsedCount: Int = 0,
+    onCreateOrEditExam: () -> Unit = {},
+    onCreateOrEditAssignment: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
@@ -311,6 +313,41 @@ fun ModuleDetailScreen(
                         }
                     }
 
+                    if (canManageModule) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onCreateOrEditExam,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("btn_module_manage_exam_${module.id}")
+                            ) {
+                                Text(
+                                    text = if (exam != null) "Edit Exam & MCQ (${exam.questions.size})" else "+ Add Timed Exam",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NavyPrimary
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = onCreateOrEditAssignment,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("btn_module_manage_assignment_${module.id}")
+                            ) {
+                                Text(
+                                    text = if (assignment != null) "Edit Task & Deadline" else "+ Add Assignment",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NavyPrimary
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     // 1. Module Exam Row
@@ -451,10 +488,17 @@ fun ModuleDetailScreen(
                                         color = if (assignmentSubmission.isGraded) SuccessGreen else GoldDark
                                     )
                                 } else {
+                                    val dueMs = assignment.dueDateMs
+                                    val expired = dueMs != null && System.currentTimeMillis() > dueMs
                                     Text(
-                                        text = "Real-world case solution & upload",
+                                        text = when {
+                                            expired -> "Time Up • Submissions Closed"
+                                            dueMs != null -> "Deadline: ${com.example.ui.components.formatAssessmentDeadline(dueMs)}"
+                                            else -> "Real-world case solution & upload"
+                                        },
                                         fontSize = 11.sp,
-                                        color = Color.Gray
+                                        fontWeight = if (dueMs != null) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (expired) DangerRed else Color.Gray
                                     )
                                 }
                             }

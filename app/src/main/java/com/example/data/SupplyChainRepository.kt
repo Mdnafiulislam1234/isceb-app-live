@@ -1158,8 +1158,11 @@ class SupplyChainRepository(
 
     fun createOrUpdateExam(exam: ModuleExam): ModuleExam {
         val existingIdx = _moduleExams.value.indexOfFirst { it.id == exam.id }
-        val normalized = if (exam.totalMarks <= 0 && exam.questions.isNotEmpty()) {
-            exam.copy(totalMarks = exam.questions.sumOf { it.marks })
+        val normalized = if (exam.questions.isNotEmpty()) {
+            val computed = exam.questions.sumOf { it.marks }
+            if (exam.totalMarks <= 0 || !exam.isSyllabusFixedMarks) {
+                exam.copy(totalMarks = computed.coerceAtLeast(1))
+            } else exam
         } else exam
         val updated = _moduleExams.value.toMutableList()
         if (existingIdx >= 0) {
@@ -1170,6 +1173,14 @@ class SupplyChainRepository(
         _moduleExams.value = updated
         persistExams(updated)
         return normalized
+    }
+
+    fun deleteExam(examId: String): Boolean {
+        val updated = _moduleExams.value.filterNot { it.id == examId }
+        if (updated.size == _moduleExams.value.size) return false
+        _moduleExams.value = updated
+        persistExams(updated)
+        return true
     }
 
     fun submitExamAttempt(
@@ -1235,6 +1246,27 @@ class SupplyChainRepository(
         _moduleAssignments.value = updated
         persistAssignments(updated)
         return assignment
+    }
+
+    fun deleteAssignment(assignmentId: String): Boolean {
+        val updated = _moduleAssignments.value.filterNot { it.id == assignmentId }
+        if (updated.size == _moduleAssignments.value.size) return false
+        _moduleAssignments.value = updated
+        persistAssignments(updated)
+        return true
+    }
+
+    fun canStudentSubmitAssignment(
+        assignmentId: String,
+        nowMs: Long = System.currentTimeMillis()
+    ): Pair<Boolean, String?> {
+        val targetAsg = _moduleAssignments.value.find { it.id == assignmentId } ?: return false to "Assignment not found."
+        val due = targetAsg.dueDateMs
+        if (due != null && nowMs > due) {
+            val df = SimpleDateFormat("MMM dd, yyyy h:mm a", Locale.US)
+            return false to "Submission deadline expired (Time Up) on ${df.format(Date(due))}."
+        }
+        return true to null
     }
 
     fun submitAssignment(
@@ -1796,6 +1828,8 @@ class SupplyChainRepository(
     fun getSerializedFounderProfile(): String = serializeFounderProfile(_founderProfile.value)
     fun getSerializedDeveloperProfile(): String = serializeDeveloperProfile(_developerProfile.value)
     fun getSerializedMembers(): String = serializeMembers(_iscebMembers.value)
+    fun getSerializedExams(): String = serializeExams(_moduleExams.value)
+    fun getSerializedAssignments(): String = serializeAssignments(_moduleAssignments.value)
 
     private fun sanitizeDeveloperProfile(profile: DeveloperProfile): DeveloperProfile {
         val safeDesignation = if (profile.designation.contains("Founder", ignoreCase = true) ||
@@ -2908,7 +2942,7 @@ class SupplyChainRepository(
         }
     }
 
-    private fun persistExams(list: List<ModuleExam>) {
+    private fun serializeExams(list: List<ModuleExam>): String {
         val arr = JSONArray()
         list.forEach { exam ->
             val qArr = JSONArray()
@@ -2942,7 +2976,11 @@ class SupplyChainRepository(
             }
             arr.put(obj)
         }
-        prefs.edit().putString("exams_json", arr.toString()).apply()
+        return arr.toString()
+    }
+
+    private fun persistExams(list: List<ModuleExam>) {
+        prefs.edit().putString("exams_json", serializeExams(list)).apply()
     }
 
     private fun deserializeExams(json: String): List<ModuleExam> {
@@ -3049,7 +3087,7 @@ class SupplyChainRepository(
         return list
     }
 
-    private fun persistAssignments(list: List<ModuleAssignment>) {
+    private fun serializeAssignments(list: List<ModuleAssignment>): String {
         val arr = JSONArray()
         list.forEach { asg ->
             val obj = JSONObject().apply {
@@ -3068,7 +3106,11 @@ class SupplyChainRepository(
             }
             arr.put(obj)
         }
-        prefs.edit().putString("assignments_json", arr.toString()).apply()
+        return arr.toString()
+    }
+
+    private fun persistAssignments(list: List<ModuleAssignment>) {
+        prefs.edit().putString("assignments_json", serializeAssignments(list)).apply()
     }
 
     private fun deserializeAssignments(json: String): List<ModuleAssignment> {
@@ -4405,6 +4447,24 @@ class SupplyChainRepository(
                     _iscebMembers.value = remoteMembers
                     persistMembers(remoteMembers)
                 }
+            }
+            if (catalog.examsJson.isNotBlank()) {
+                try {
+                    val remoteExams = deserializeExams(catalog.examsJson)
+                    if (remoteExams.isNotEmpty()) {
+                        _moduleExams.value = remoteExams
+                        persistExams(remoteExams)
+                    }
+                } catch (_: Exception) {}
+            }
+            if (catalog.assignmentsJson.isNotBlank()) {
+                try {
+                    val remoteAssignments = deserializeAssignments(catalog.assignmentsJson)
+                    if (remoteAssignments.isNotEmpty()) {
+                        _moduleAssignments.value = remoteAssignments
+                        persistAssignments(remoteAssignments)
+                    }
+                } catch (_: Exception) {}
             }
         } else {
             val cloudModulesJson = prefs.getString("cloud_modules_json", null)

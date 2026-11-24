@@ -108,6 +108,7 @@ fun AdminPanelScreen(
     onBack: () -> Unit,
     onOpenAdminSettings: () -> Unit,
     onOpenTeacherPanel: () -> Unit,
+    onOpenAssessmentStudio: () -> Unit = onOpenTeacherPanel,
     onOpenVerification: () -> Unit,
     onCreateOrUpdateTeacher: (
         fullName: String,
@@ -333,6 +334,17 @@ fun AdminPanelScreen(
                                 Icon(Icons.Default.Settings, contentDescription = "Curriculum Settings", tint = GoldMetallic)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Completion Rules & Live Cloud Publish", color = GoldMetallic, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = onOpenAssessmentStudio,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("btn_admin_open_assessment_studio")
+                            ) {
+                                Icon(Icons.Default.School, contentDescription = "Assessment Studio", tint = GoldDark)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Exams, MCQ Questions & Deadlined Assignments", color = NavyPrimary, fontWeight = FontWeight.Bold)
                             }
                             OutlinedButton(
                                 onClick = onOpenTeacherPanel,

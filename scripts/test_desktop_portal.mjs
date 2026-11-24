@@ -462,5 +462,40 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
   assert.ok(releaseSh.includes('f"{hosting_base}/apk.html"'), "release_apk.sh version.json generator must point downloadPageUrl to apk.html");
 });
 
+test("Desktop & Mobile Admin Assessment Studio builds custom MCQ exams, timed deadlines, Time Up lock, and Firestore sync", () => {
+  const catalogWithAssessments = buildFirestoreCatalogPayload({
+    authorUid: "admin-uid-123",
+    versionCode: 120,
+    modules: INITIAL_MODULES,
+    classes: INITIAL_CLASSES,
+    exams: [
+      {
+        ...INITIAL_EXAMS[0],
+        openUntilMs: 1_900_000_000_000
+      }
+    ],
+    assignments: [
+      {
+        ...INITIAL_ASSIGNMENTS[0],
+        dueDateMs: 1_900_000_000_000
+      }
+    ],
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.ok(typeof catalogWithAssessments.settings.examsJson === "string" && catalogWithAssessments.settings.examsJson.includes("1900000000000"));
+  assert.ok(typeof catalogWithAssessments.settings.assignmentsJson === "string" && catalogWithAssessments.settings.assignmentsJson.includes("1900000000000"));
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("openAdminExamBuilderModal"), "Missing openAdminExamBuilderModal in app.js");
+  assert.ok(appJs.includes("openAdminAssignmentBuilderModal"), "Missing openAdminAssignmentBuilderModal in app.js");
+  assert.ok(appJs.includes("isAssignmentExpired") && appJs.includes("isExamExpired"), "Missing deadline expiration helpers in app.js");
+  assert.ok(appJs.includes("isAutoSubmittedOnTimeout: Boolean(isAutoTimeout)"), "Timed exam auto-submit must record isAutoSubmittedOnTimeout");
+  assert.ok(appJs.includes('data-action="admin-create-exam"') && appJs.includes('data-action="admin-create-assignment"'));
+  assert.ok(appJs.includes("adminExamBuilderForm") && appJs.includes("adminAssignmentBuilderForm"));
+  assert.ok(appJs.includes("c.settings.examsJson") && appJs.includes("c.settings.assignmentsJson"), "Cloud sync listener must deserialize examsJson & assignmentsJson");
+});
+
+
 
 

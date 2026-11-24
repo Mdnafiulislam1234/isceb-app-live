@@ -34,7 +34,9 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +53,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.model.AssignmentSubmission
 import com.example.model.ModuleAssignment
 import com.example.ui.theme.BgLight
+import com.example.ui.theme.DangerRed
 import com.example.ui.theme.GoldDark
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.GoldSoft
@@ -59,6 +62,7 @@ import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
 import com.example.ui.theme.NavySurface
 import com.example.ui.theme.SuccessGreen
+import kotlinx.coroutines.delay
 
 @Composable
 fun AssignmentDialog(
@@ -92,6 +96,18 @@ fun AssignmentDialog(
         mutableStateOf(activeGradingSubmission?.feedback ?: "")
     }
     val isLockedAfterGrading = currentSubmission?.isGraded == true
+    var nowMs by remember(assignment.id, assignment.dueDateMs) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(assignment.id, assignment.dueDateMs) {
+        if (assignment.dueDateMs != null) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                delay(1000)
+            }
+        }
+    }
+    val dueMs = assignment.dueDateMs
+    val isExpired = dueMs != null && nowMs > dueMs
+    val canEditSubmission = !isLockedAfterGrading && !isExpired
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -170,6 +186,34 @@ fun AssignmentDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                            if (dueMs != null) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val remainingMs = (dueMs - nowMs).coerceAtLeast(0L)
+                                val remHrs = remainingMs / 3_600_000L
+                                val remMins = (remainingMs % 3_600_000L) / 60_000L
+                                val deadlineBadgeText = if (isExpired) {
+                                    "Time Up • Closed"
+                                } else if (remHrs >= 24) {
+                                    "Due in ${remHrs / 24}d ${remHrs % 24}h"
+                                } else {
+                                    "Due in ${remHrs}h ${remMins}m"
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            if (isExpired) DangerRed.copy(alpha = 0.25f) else GoldMetallic.copy(alpha = 0.2f),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = deadlineBadgeText,
+                                        color = if (isExpired) Color(0xFFFCA5A5) else GoldSoft,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                             if (currentSubmission != null) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Box(
@@ -240,6 +284,19 @@ fun AssignmentDialog(
                                 color = Color.Gray,
                                 lineHeight = 17.sp
                             )
+                            if (dueMs != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = if (isExpired) {
+                                        "Deadline Passed (Time Up): ${formatAssessmentDeadline(dueMs)} — Submissions Closed."
+                                    } else {
+                                        "Submission Deadline: ${formatAssessmentDeadline(dueMs)}"
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isExpired) DangerRed else GoldDark
+                                )
+                            }
                         }
                     }
 
@@ -316,8 +373,8 @@ fun AssignmentDialog(
 
                             OutlinedTextField(
                                 value = responseText,
-                                onValueChange = { if (!isLockedAfterGrading) responseText = it },
-                                enabled = !isLockedAfterGrading,
+                                onValueChange = { if (canEditSubmission) responseText = it },
+                                enabled = canEditSubmission,
                                 placeholder = { Text("Write your analysis, methodology, calculations, or executive report summary here...") },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -337,8 +394,8 @@ fun AssignmentDialog(
                             ) {
                                 OutlinedTextField(
                                     value = attachedFile,
-                                    onValueChange = { if (!isLockedAfterGrading) attachedFile = it },
-                                    enabled = !isLockedAfterGrading,
+                                    onValueChange = { if (canEditSubmission) attachedFile = it },
+                                    enabled = canEditSubmission,
                                     label = { Text("Attached Document (optional)") },
                                     placeholder = { Text("e.g. SCM_Analysis_Report.pdf") },
                                     leadingIcon = {
@@ -364,6 +421,24 @@ fun AssignmentDialog(
                                     fontWeight = FontWeight.SemiBold,
                                     color = SuccessGreen
                                 )
+                            } else if (isExpired) {
+                                Button(
+                                    onClick = {},
+                                    enabled = false,
+                                    colors = ButtonDefaults.buttonColors(
+                                        disabledContainerColor = DangerRed.copy(alpha = 0.16f),
+                                        disabledContentColor = DangerRed
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("btn_assignment_closed_time_up")
+                                ) {
+                                    Text(
+                                        text = "Submissions Closed (Time Up)",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             } else {
                                 Button(
                                     onClick = { onSubmit(responseText, attachedFile.ifBlank { null }) },

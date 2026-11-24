@@ -45,6 +45,8 @@ import com.example.model.ModuleAssignment
 import com.example.model.ModuleExam
 import com.example.ui.icons.Assignment
 import com.example.ui.icons.Quiz
+import com.example.ui.theme.BgLight
+import com.example.ui.theme.DangerRed
 import com.example.ui.theme.GoldDark
 import com.example.ui.theme.GoldMetallic
 import com.example.ui.theme.GoldSoft
@@ -172,6 +174,15 @@ fun ExamsAssignmentsHubDialog(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (exam.openUntilMs != null) {
+                                        val expired = System.currentTimeMillis() > exam.openUntilMs
+                                        Text(
+                                            text = if (expired) "Time Up • Window Closed" else "Closes: ${formatAssessmentDeadline(exam.openUntilMs)}",
+                                            color = if (expired) DangerRed else GoldDark,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.5.sp
+                                        )
+                                    }
                                     if (best != null) {
                                         Text(
                                             text = "Best: ${best.scoreMarks}/${best.totalMarks} (${best.percentage}%)" +
@@ -191,8 +202,13 @@ fun ExamsAssignmentsHubDialog(
                                     ),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
+                                    val isExpiredNoAttempt = best == null && exam.openUntilMs != null && System.currentTimeMillis() > exam.openUntilMs
                                     Text(
-                                        text = if (best != null) "Retake" else "Start",
+                                        text = when {
+                                            best != null -> "Retake"
+                                            isExpiredNoAttempt -> "Closed"
+                                            else -> "Start"
+                                        },
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 11.5.sp
                                     )
@@ -255,15 +271,27 @@ fun ExamsAssignmentsHubDialog(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    val dueMs = assignment.dueDateMs
+                                    val isExpired = dueMs != null && System.currentTimeMillis() > dueMs
+                                    if (dueMs != null) {
+                                        Text(
+                                            text = if (isExpired) "Time Up • Deadline Passed" else "Due: ${formatAssessmentDeadline(dueMs)}",
+                                            color = if (isExpired) DangerRed else GoldDark,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.5.sp
+                                        )
+                                    }
                                     Text(
                                         text = when {
                                             sub?.isGraded == true -> "Graded: ${sub.marksAwarded}/${assignment.maxMarks}"
                                             sub != null -> "Submitted • Awaiting Grading"
+                                            isExpired -> "Closed (Time Up)"
                                             else -> "Pending Submission"
                                         },
                                         color = when {
                                             sub?.isGraded == true -> SuccessGreen
                                             sub != null -> NavySecondary
+                                            isExpired -> DangerRed
                                             else -> GoldDark
                                         },
                                         fontWeight = FontWeight.Bold,

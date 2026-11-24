@@ -55,7 +55,9 @@ data class CloudCatalogSnapshot(
     val settings: AdminCompletionSettings,
     val founderProfileJson: String = "",
     val developerProfileJson: String = "",
-    val membersJson: String = ""
+    val membersJson: String = "",
+    val examsJson: String = "",
+    val assignmentsJson: String = ""
 )
 
 sealed class RemoteManifestFetchResult {
@@ -146,7 +148,9 @@ class CloudSyncRepository(
         settings: AdminCompletionSettings,
         founderProfileJson: String = "",
         developerProfileJson: String = "",
-        membersJson: String = ""
+        membersJson: String = "",
+        examsJson: String = "",
+        assignmentsJson: String = ""
     ): Result<Unit> {
         val uid = requireUserId()
         val manifestRef = db.collection(COLLECTION_MANIFESTS).document(LIVE_DOC_ID)
@@ -179,7 +183,9 @@ class CloudSyncRepository(
                 settings = settings,
                 founderProfileJson = founderProfileJson,
                 developerProfileJson = developerProfileJson,
-                membersJson = membersJson
+                membersJson = membersJson,
+                examsJson = examsJson,
+                assignmentsJson = assignmentsJson
             )
             if (!catalogSnap.exists()) {
                 val createPayload = mutableMapOf<String, Any>().apply {
@@ -967,7 +973,9 @@ class CloudSyncRepository(
         settings: AdminCompletionSettings,
         founderProfileJson: String = "",
         developerProfileJson: String = "",
-        membersJson: String = ""
+        membersJson: String = "",
+        examsJson: String = "",
+        assignmentsJson: String = ""
     ): Map<String, Any> {
         val moduleMaps = modules.map { mod ->
             mapOf(
@@ -1032,6 +1040,8 @@ class CloudSyncRepository(
             if (founderProfileJson.isNotBlank()) put("founderProfileJson", founderProfileJson)
             if (developerProfileJson.isNotBlank()) put("developerProfileJson", developerProfileJson)
             if (membersJson.isNotBlank()) put("membersJson", membersJson)
+            if (examsJson.isNotBlank()) put("examsJson", examsJson)
+            if (assignmentsJson.isNotBlank()) put("assignmentsJson", assignmentsJson)
         }
         return mapOf(
             "versionCode" to versionCode.toLong(),
@@ -1200,7 +1210,9 @@ class CloudSyncRepository(
             settings = settings,
             founderProfileJson = rawSettings["founderProfileJson"] as? String ?: "",
             developerProfileJson = rawSettings["developerProfileJson"] as? String ?: "",
-            membersJson = rawSettings["membersJson"] as? String ?: ""
+            membersJson = rawSettings["membersJson"] as? String ?: "",
+            examsJson = rawSettings["examsJson"] as? String ?: "",
+            assignmentsJson = rawSettings["assignmentsJson"] as? String ?: ""
         )
     }
 

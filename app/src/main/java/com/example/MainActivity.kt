@@ -72,6 +72,7 @@ import com.example.ui.components.AppBottomBar
 import com.example.ui.components.AppDesktopSidebar
 import com.example.ui.components.AppNavigationRail
 import com.example.ui.components.AppTopBar
+import com.example.ui.components.AssignmentBuilderDialog
 import com.example.ui.components.AssignmentDialog
 import com.example.ui.components.CertificatePreviewDialog
 import com.example.ui.components.CertificateVerificationScreen
@@ -80,6 +81,7 @@ import com.example.ui.components.CreateEditModuleDialog
 import com.example.ui.components.DeleteConfirmDialog
 import com.example.ui.components.DocumentPreviewDialog
 import com.example.ui.components.ExamDialog
+import com.example.ui.components.ExamQuestionBuilderDialog
 import com.example.ui.components.ExamsAssignmentsHubDialog
 import com.example.ui.components.FirebaseGuideDialog
 import com.example.ui.components.ImagePreviewDialog
@@ -263,6 +265,11 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     var pendingDownloadMedia by remember { mutableStateOf<LessonMedia?>(null) }
     var pendingDownloadCertificate by remember { mutableStateOf<CertificateRecord?>(null) }
     var pendingUnknownSourcesApkRetry by remember { mutableStateOf(false) }
+    var teacherPanelInitialTab by remember { mutableStateOf(0) }
+    var quickManageExam by remember { mutableStateOf<ModuleExam?>(null) }
+    var quickCreateExamModuleId by remember { mutableStateOf<String?>(null) }
+    var quickManageAssignment by remember { mutableStateOf<ModuleAssignment?>(null) }
+    var quickCreateAssignmentModuleId by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     val unknownSourcesLauncher = rememberLauncherForActivityResult(
@@ -771,7 +778,21 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                             onTakeExam = { ex -> viewModel.openExam(ex) },
                             onOpenAssignment = { asg -> viewModel.openAssignment(asg) },
                             canManageModule = canManageMod,
-                            attemptsUsedCount = attemptsUsed
+                            attemptsUsedCount = attemptsUsed,
+                            onCreateOrEditExam = {
+                                if (modExam != null) {
+                                    quickManageExam = modExam
+                                } else {
+                                    quickCreateExamModuleId = targetModule.id
+                                }
+                            },
+                            onCreateOrEditAssignment = {
+                                if (modAsg != null) {
+                                    quickManageAssignment = modAsg
+                                } else {
+                                    quickCreateAssignmentModuleId = targetModule.id
+                                }
+                            }
                         )
                     } else {
                         viewModel.handleBack()
@@ -935,7 +956,10 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                         onOpenAssignmentForGrading = { asg -> viewModel.openAssignment(asg) },
                         onGradeSubmission = { subId, marks, feedback ->
                             viewModel.gradeAssignment(subId, marks, feedback)
-                        }
+                        },
+                        initialTab = teacherPanelInitialTab,
+                        onDeleteExam = { examId -> viewModel.deleteModuleExam(examId) },
+                        onDeleteAssignment = { asgId -> viewModel.deleteModuleAssignment(asgId) }
                     )
                 }
 
@@ -951,7 +975,14 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                         adminSettings = adminSettings,
                         onBack = { viewModel.handleBack() },
                         onOpenAdminSettings = { viewModel.showAdminSettingsDialog.value = true },
-                        onOpenTeacherPanel = { viewModel.navigateTo(Screen.TeacherPanel) },
+                        onOpenTeacherPanel = {
+                            teacherPanelInitialTab = 0
+                            viewModel.navigateTo(Screen.TeacherPanel)
+                        },
+                        onOpenAssessmentStudio = {
+                            teacherPanelInitialTab = 1
+                            viewModel.navigateTo(Screen.TeacherPanel)
+                        },
                         onOpenVerification = { viewModel.navigateTo(Screen.CertificateVerification) },
                         onCreateOrUpdateTeacher = { fullName, email, desig, org, assignedIds ->
                             viewModel.createOrUpdateTeacherAccount(fullName, email, desig, org, assignedIds)
@@ -1433,6 +1464,57 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 viewModel.openAssignment(asg)
             },
             onDismiss = { showExamsAssignmentsHub = false }
+        )
+    }
+
+    if (quickManageExam != null || quickCreateExamModuleId != null) {
+        val modId = quickManageExam?.moduleId ?: quickCreateExamModuleId ?: "mod-1"
+        ExamQuestionBuilderDialog(
+            initialExam = quickManageExam,
+            modules = modules,
+            defaultModuleId = modId,
+            authorUid = currentUser.authUid.ifBlank { currentUser.id },
+            onDismiss = {
+                quickManageExam = null
+                quickCreateExamModuleId = null
+            },
+            onSave = { updated ->
+                viewModel.createOrUpdateModuleExam(updated)
+                quickManageExam = null
+                quickCreateExamModuleId = null
+            },
+            onDelete = quickManageExam?.let { ex ->
+                {
+                    viewModel.deleteModuleExam(ex.id)
+                    quickManageExam = null
+                }
+            }
+        )
+    }
+
+    if (quickManageAssignment != null || quickCreateAssignmentModuleId != null) {
+        val modId = quickManageAssignment?.moduleId ?: quickCreateAssignmentModuleId ?: "mod-1"
+        AssignmentBuilderDialog(
+            initialAssignment = quickManageAssignment,
+            modules = modules,
+            defaultModuleId = modId,
+            authorUid = currentUser.authUid.ifBlank { currentUser.id },
+            authorName = currentUser.fullName,
+            onDismiss = {
+                quickManageAssignment = null
+                quickCreateAssignmentModuleId = null
+            },
+            onSave = { updated ->
+                viewModel.createOrUpdateModuleAssignment(updated)
+                quickManageAssignment = null
+                quickCreateAssignmentModuleId = null
+            },
+            onDelete = quickManageAssignment?.let { asg ->
+                {
+                    viewModel.deleteModuleAssignment(asg.id)
+                    quickManageAssignment = null
+                }
+            }
         )
     }
             }

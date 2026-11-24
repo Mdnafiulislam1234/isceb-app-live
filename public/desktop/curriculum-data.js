@@ -517,6 +517,8 @@ export function buildFirestoreCatalogPayload({
   modules,
   classes,
   settings,
+  exams,
+  assignments,
   founderProfile,
   developerProfile,
   members,
@@ -529,7 +531,9 @@ export function buildFirestoreCatalogPayload({
     officialWebsite: "www.isceb.org",
     founderProfileJson: JSON.stringify(founderProfile || DEFAULT_FOUNDER),
     developerProfileJson: JSON.stringify(developerProfile || DEFAULT_DEVELOPER),
-    membersJson: JSON.stringify(members || DEFAULT_MEMBERS)
+    membersJson: JSON.stringify(members || DEFAULT_MEMBERS),
+    examsJson: JSON.stringify(Array.isArray(exams) && exams.length ? exams : INITIAL_EXAMS),
+    assignmentsJson: JSON.stringify(Array.isArray(assignments) && assignments.length ? assignments : INITIAL_ASSIGNMENTS)
   };
   const payload = {
     versionCode: Number(versionCode),

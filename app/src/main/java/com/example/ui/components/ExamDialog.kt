@@ -178,10 +178,12 @@ fun ExamDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val cutoffLabel = exam.openUntilMs?.let { " • Closes ${formatAssessmentDeadline(it)}" } ?: ""
                             Text(
-                                text = "${exam.scheduledWindowNote} • Attempts: $attemptsUsed/${exam.maxAttempts}",
-                                color = Color.White.copy(alpha = 0.75f),
-                                fontSize = 11.sp
+                                text = "${exam.scheduledWindowNote}$cutoffLabel • Attempts: $attemptsUsed/${exam.maxAttempts}",
+                                color = Color.White.copy(alpha = 0.78f),
+                                fontSize = 11.sp,
+                                modifier = Modifier.weight(1f)
                             )
 
                             if (!isSubmitted) {
@@ -267,9 +269,10 @@ fun ExamDialog(
                                     color = NavyPrimary
                                 )
                                 Text(
-                                    text = "Pass: ${exam.passingPercentage}% • Attempts: $attemptsUsed/${exam.maxAttempts} • ${if (attemptResult.isAutoSubmittedOnTimeout) "Auto-submitted" else "Submitted on time"}",
+                                    text = "Pass: ${exam.passingPercentage}% • Attempts: $attemptsUsed/${exam.maxAttempts} • ${if (attemptResult.isAutoSubmittedOnTimeout) "Time Up! Auto-submitted at 00:00" else "Submitted on time"}",
                                     fontSize = 11.sp,
-                                    color = Color.Gray
+                                    fontWeight = if (attemptResult.isAutoSubmittedOnTimeout) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (attemptResult.isAutoSubmittedOnTimeout) DangerRed else Color.Gray
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 OutlinedButton(

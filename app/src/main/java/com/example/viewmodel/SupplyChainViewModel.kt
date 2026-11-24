@@ -1180,7 +1180,8 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         activeExamResult.value = previousAttempt
         isExamSubmitted.value = previousAttempt != null
         examCurrentAnswers.value = previousAttempt?.studentAnswers ?: emptyMap()
-        examTimeRemainingSeconds.value = exam.durationMinutes * 60
+        val cutoffSec = exam.openUntilMs?.let { ((it - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(1) } ?: Int.MAX_VALUE
+        examTimeRemainingSeconds.value = minOf((exam.durationMinutes.coerceAtLeast(1)) * 60, cutoffSec)
 
         if (previousAttempt == null) {
             startExamCountdown()
@@ -1197,7 +1198,8 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         activeExamResult.value = null
         isExamSubmitted.value = false
         examCurrentAnswers.value = emptyMap()
-        examTimeRemainingSeconds.value = exam.durationMinutes * 60
+        val cutoffSec = exam.openUntilMs?.let { ((it - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(1) } ?: Int.MAX_VALUE
+        examTimeRemainingSeconds.value = minOf((exam.durationMinutes.coerceAtLeast(1)) * 60, cutoffSec)
         startExamCountdown()
     }
 
@@ -1233,12 +1235,13 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
 
-        val resultMsg = if (attempt.isPassed) {
+        val baseResultMsg = if (attempt.isPassed) {
             "Exam Passed! Score: ${attempt.scoreMarks}/${attempt.totalMarks} (${attempt.percentage}%) 🎉"
         } else {
             "Score: ${attempt.scoreMarks}/${attempt.totalMarks} (${attempt.percentage}%). Required: ${exam.passingPercentage}%."
         }
-        showNotification(resultMsg, isError = !attempt.isPassed)
+        val resultMsg = if (isAutoTimeout) "Time Up! Auto-submitted — $baseResultMsg" else baseResultMsg
+        showNotification(resultMsg, isError = !attempt.isPassed || isAutoTimeout)
     }
 
     fun createOrUpdateModuleExam(exam: ModuleExam) {
@@ -1250,7 +1253,7 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         val log = repository.recordAuditLog(
             actionType = "EXAM_SAVED",
             targetId = saved.id,
-            summary = "Saved exam '${saved.title}' for module ${saved.moduleId} (pass=${saved.passingPercentage}%, maxAttempts=${saved.maxAttempts})"
+            summary = "Saved exam '${saved.title}' (${saved.questions.size} Qs, ${saved.durationMinutes}m) for module ${saved.moduleId}"
         )
         viewModelScope.launch {
             if (cloudAuthUser.value != null) {
@@ -1258,7 +1261,30 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                 cloudSyncRepository?.appendAuditLog(log)
             }
         }
+        autoPublishCatalogIfCloudAdmin("Updated exam: ${saved.title}")
         showNotification("Exam saved: ${saved.title}")
+    }
+
+    fun deleteModuleExam(examId: String) {
+        val existing = moduleExams.value.find { it.id == examId } ?: return
+        if (!canManageModule(existing.moduleId)) {
+            showNotification("Permission denied: Not assigned to manage this module.", isError = true)
+            return
+        }
+        if (repository.deleteExam(examId)) {
+            val log = repository.recordAuditLog(
+                actionType = "EXAM_DELETED",
+                targetId = examId,
+                summary = "Deleted exam '${existing.title}' from module ${existing.moduleId}"
+            )
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null) {
+                    cloudSyncRepository?.appendAuditLog(log)
+                }
+            }
+            autoPublishCatalogIfCloudAdmin("Removed exam: ${existing.title}")
+            showNotification("Deleted exam: ${existing.title}")
+        }
     }
 
     fun closeExam() {
@@ -1311,10 +1337,41 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                 cloudSyncRepository?.appendAuditLog(log)
             }
         }
+        autoPublishCatalogIfCloudAdmin("Updated assignment: ${saved.title}")
         showNotification("Assignment saved: ${saved.title}")
     }
 
+    fun deleteModuleAssignment(assignmentId: String) {
+        val existing = moduleAssignments.value.find { it.id == assignmentId } ?: return
+        if (!canManageModule(existing.moduleId)) {
+            showNotification("Permission denied: Not assigned to manage this module.", isError = true)
+            return
+        }
+        if (repository.deleteAssignment(assignmentId)) {
+            val log = repository.recordAuditLog(
+                actionType = "ASSIGNMENT_DELETED",
+                targetId = assignmentId,
+                summary = "Deleted assignment '${existing.title}' from module ${existing.moduleId}"
+            )
+            viewModelScope.launch {
+                if (cloudAuthUser.value != null) {
+                    cloudSyncRepository?.appendAuditLog(log)
+                }
+            }
+            autoPublishCatalogIfCloudAdmin("Removed assignment: ${existing.title}")
+            showNotification("Deleted assignment: ${existing.title}")
+        }
+    }
+
+    fun canStudentSubmitAssignment(assignmentId: String): Pair<Boolean, String?> =
+        repository.canStudentSubmitAssignment(assignmentId)
+
     fun submitAssignment(assignmentId: String, text: String, fileName: String? = null) {
+        val (allowed, reason) = repository.canStudentSubmitAssignment(assignmentId)
+        if (!allowed) {
+            showNotification(reason ?: "Submission deadline expired (Time Up).", isError = true)
+            return
+        }
         if (text.isBlank()) {
             showNotification("Please provide assignment text or report summary.", isError = true)
             return
@@ -2412,7 +2469,9 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             settings = adminSettings.value,
             founderProfileJson = repository.getSerializedFounderProfile(),
             developerProfileJson = repository.getSerializedDeveloperProfile(),
-            membersJson = repository.getSerializedMembers()
+            membersJson = repository.getSerializedMembers(),
+            examsJson = repository.getSerializedExams(),
+            assignmentsJson = repository.getSerializedAssignments()
         )
     }
 
@@ -2603,7 +2662,9 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
                     settings = adminSettings.value,
                     founderProfileJson = repository.getSerializedFounderProfile(),
                     developerProfileJson = repository.getSerializedDeveloperProfile(),
-                    membersJson = repository.getSerializedMembers()
+                    membersJson = repository.getSerializedMembers(),
+                    examsJson = repository.getSerializedExams(),
+                    assignmentsJson = repository.getSerializedAssignments()
                 )
                 if (res.isSuccess) {
                     _cloudSyncError.value = null

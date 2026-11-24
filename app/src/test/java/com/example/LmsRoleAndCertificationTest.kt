@@ -184,4 +184,86 @@ class LmsRoleAndCertificationTest {
         val log = repository.recordAuditLog("CERTIFICATE_REISSUED", reissued.certificateId, "Re-issued certificate")
         assertTrue(repository.auditLogs.value.any { it.logId == log.logId })
     }
+
+    @Test
+    fun `admin creates timed MCQ exam and deadlined assignment with time-up enforcement and catalog sync`() {
+        val customQuestions = listOf(
+            com.example.model.ExamQuestion(
+                id = "q-cust-1",
+                question = "Which metric measures on-time in-full supplier delivery?",
+                options = listOf("OTIF", "EOQ", "LIFO", "ROP"),
+                correctOptionIndex = 0,
+                marks = 10,
+                explanation = "OTIF stands for On-Time In-Full delivery."
+            ),
+            com.example.model.ExamQuestion(
+                id = "q-cust-2",
+                question = "Safety stock protects supply chains primarily against:",
+                options = listOf("Fixed rent", "Demand & lead-time variability", "Office lighting", "Brand logos"),
+                correctOptionIndex = 1,
+                marks = 10,
+                explanation = "Safety stock buffers uncertainty in demand and lead time."
+            )
+        )
+        val futureCutoff = System.currentTimeMillis() + 3_600_000L
+        val pastCutoff = System.currentTimeMillis() - 60_000L
+
+        val customExam = repository.createOrUpdateExam(
+            com.example.model.ModuleExam(
+                id = "exam-custom-timed",
+                moduleId = "mod-4",
+                title = "Module 4 Custom Timed Exam",
+                durationMinutes = 15,
+                passingPercentage = 60,
+                totalMarks = 20,
+                questions = customQuestions,
+                isSyllabusFixedMarks = false,
+                openUntilMs = pastCutoff
+            )
+        )
+        assertEquals(20, customExam.totalMarks)
+        assertEquals(2, customExam.questions.size)
+
+        repository.signInOrRegisterStudentAccount("Nabila Chowdhury", "nabila@example.com")
+        val (canStartExpiredExam, examReason) = repository.canStudentStartExam(customExam.id)
+        assertFalse("Expired exam cutoff must block starting exam", canStartExpiredExam)
+        assertNotNull(examReason)
+
+        // Extend exam window into the future -> student can start & timeout auto-submit records score
+        repository.createOrUpdateExam(customExam.copy(openUntilMs = futureCutoff))
+        assertTrue(repository.canStudentStartExam(customExam.id).first)
+        val timeoutAttempt = repository.submitExamAttempt(
+            examId = customExam.id,
+            studentAnswers = mapOf("q-cust-1" to 0),
+            isAutoSubmittedOnTimeout = true
+        )
+        assertTrue(timeoutAttempt.isAutoSubmittedOnTimeout)
+        assertEquals(10, timeoutAttempt.scoreMarks)
+
+        // Assignment deadline enforcement
+        val timedAssignment = repository.createOrUpdateAssignment(
+            com.example.model.ModuleAssignment(
+                id = "asg-timed-1",
+                moduleId = "mod-4",
+                title = "Bonded Warehouse Audit Report",
+                topicDescription = "Prepare customs compliance checklist.",
+                instructions = "Upload summary before deadline.",
+                maxMarks = 25,
+                dueDateMs = pastCutoff
+            )
+        )
+        val (canSubmitExpired, asgReason) = repository.canStudentSubmitAssignment(timedAssignment.id)
+        assertFalse("Expired assignment deadline must block submissions", canSubmitExpired)
+        assertTrue(asgReason?.contains("Time Up", ignoreCase = true) == true)
+
+        // Verify cloud catalog serialization round-trip preserves custom exam & deadlined assignment
+        val examsJson = repository.getSerializedExams()
+        val assignmentsJson = repository.getSerializedAssignments()
+        assertTrue(examsJson.contains("exam-custom-timed"))
+        assertTrue(assignmentsJson.contains("asg-timed-1"))
+
+        assertTrue(repository.deleteExam(customExam.id))
+        assertTrue(repository.deleteAssignment(timedAssignment.id))
+    }
 }
+

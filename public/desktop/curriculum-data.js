@@ -63,9 +63,33 @@ export const DEFAULT_DEVELOPER = {
   location: "Dhaka, Bangladesh"
 };
 
-export const DEFAULT_MEMBERS_ROSTER_VERSION = 3;
+export const DEFAULT_MEMBERS_ROSTER_VERSION = 4;
 
 export const DEFAULT_MEMBERS = [
+  {
+    id: "member-hasina-khan",
+    builtInPhotoKey: "hasina",
+    photoUrl: "./member-hasina.webp",
+    fullName: "Hasina Akter Khan",
+    designation: "Chairman & CEO",
+    professionalIdentity: "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    currentOrganization: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+    educationalQualification: "M.Sc. in Clothing and Textile — University of Dhaka",
+    professionalExperience:
+      "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
+    skillsAndExpertise: [
+      "Academic Leadership",
+      "Curriculum & Course Coordination",
+      "Professional Capacity Building",
+      "Industrial Education & Training",
+      "Student Mentorship"
+    ],
+    roleInIsceb: "Chairman & Chief Executive Officer (CEO) • ISCEB",
+    contactInformation: "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+    biography:
+      "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
+    displayOrder: 1
+  },
   {
     id: "member-founder-amirul",
     builtInPhotoKey: "amirul",
@@ -90,30 +114,6 @@ export const DEFAULT_MEMBERS = [
     contactInformation: "Mobile: 01715-282905 • Email: amirul.islam@isceb.org",
     biography:
       "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, where he oversees procurement, logistics, warehousing, planning, and supplier relationship management to drive efficiency, innovation, and sustainable business growth.\n\nThroughout his distinguished career, Mr. Islam has held key leadership positions in reputed organizations such as NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. His deep understanding of both local and international supply chain ecosystems has enabled him to deliver excellence in strategic sourcing, vendor management, bonded warehouse operations, international trade compliance, demand forecasting, and risk management.\n\nBeyond his corporate accomplishments, he serves as Lead Trainer at Industrial Engineering and Consultant Bangladesh (IECB) and Founder of ISCEB, inspiring the next generation of leaders with the vision: \"Connect. Learn. Achieve.\"",
-    displayOrder: 1
-  },
-  {
-    id: "member-hasina-khan",
-    builtInPhotoKey: "hasina",
-    photoUrl: "./member-hasina.webp",
-    fullName: "Hasina Akter Khan",
-    designation: "Chairman & CEO",
-    professionalIdentity: "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
-    currentOrganization: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
-    educationalQualification: "M.Sc. in Clothing and Textile — University of Dhaka",
-    professionalExperience:
-      "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
-    skillsAndExpertise: [
-      "Academic Leadership",
-      "Curriculum & Course Coordination",
-      "Professional Capacity Building",
-      "Industrial Education & Training",
-      "Student Mentorship"
-    ],
-    roleInIsceb: "Chairman & Chief Executive Officer (CEO) • ISCEB",
-    contactInformation: "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
-    biography:
-      "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
     displayOrder: 2
   },
   {

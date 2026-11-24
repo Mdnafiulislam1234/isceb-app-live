@@ -275,7 +275,10 @@ object CertificatePdfGenerator {
                     val top = 39f
                     val dest = RectF(left, top, left + targetWidth, top + targetHeight)
                     val src = Rect(0, 0, logoBmp.width, logoBmp.height)
-                    canvas.drawBitmap(logoBmp, src, dest, Paint(Paint.FILTER_BITMAP_FLAG))
+                    val logoPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.MULTIPLY)
+                    }
+                    canvas.drawBitmap(logoBmp, src, dest, logoPaint)
                     headerTextY = top + targetHeight + 17f
                 }
             } catch (_: Throwable) {

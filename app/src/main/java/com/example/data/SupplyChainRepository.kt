@@ -73,7 +73,7 @@ class SupplyChainRepository(
     }
 
     private val CURRENT_SYLLABUS_VERSION = "v8_isceb_exact_syllabus_48"
-    private val CURRENT_MEMBERS_ROSTER_VERSION = 3
+    private val CURRENT_MEMBERS_ROSTER_VERSION = 4
 
     private val DEMO_ACCOUNT_IDS = setOf("student-1", "student-2", "student-3")
     private val DEMO_ACCOUNT_NAMES = setOf("Sarah Jenkins", "Alex Rivera", "Tanvir Ahmed")
@@ -1818,7 +1818,30 @@ class SupplyChainRepository(
 
     private fun getInitialMembers(): List<IscebMember> {
         return listOf(
-            // 1. Amirul Islam
+            // 1. Hasina Akter Khan (Chairman & CEO)
+            IscebMember(
+                id = "member-hasina-khan",
+                photoUri = "",
+                builtInPhotoKey = "hasina",
+                fullName = "Hasina Akter Khan",
+                designation = "Chairman & CEO",
+                professionalIdentity = "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                currentOrganization = "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+                educationalQualification = "M.Sc. in Clothing and Textile — University of Dhaka",
+                professionalExperience = "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
+                skillsAndExpertise = listOf(
+                    "Academic Leadership",
+                    "Curriculum & Course Coordination",
+                    "Professional Capacity Building",
+                    "Industrial Education & Training",
+                    "Student Mentorship"
+                ),
+                roleInIsceb = "Chairman & Chief Executive Officer (CEO) • ISCEB",
+                contactInformation = "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
+                biography = "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
+                displayOrder = 1
+            ),
+            // 2. Amirul Islam (Founder of ISCEB)
             IscebMember(
                 id = "member-founder-amirul",
                 photoUri = "",
@@ -1840,29 +1863,6 @@ class SupplyChainRepository(
                 roleInIsceb = "Founder & Lead Trainer • Institute of Supply Chain Excellence Bangladesh (ISCEB)",
                 contactInformation = "Mobile: 01715-282905 • Email: amirul.islam@isceb.org",
                 biography = "Md. Amirul Islam is a seasoned Supply Chain Management professional with over two decades of proven expertise in leading and optimizing end-to-end supply chain operations across some of Bangladesh’s most respected conglomerates. He currently serves as the Head of Supply Chain Management at BRB Group, where he oversees procurement, logistics, warehousing, planning, and supplier relationship management to drive efficiency, innovation, and sustainable business growth.\n\nThroughout his distinguished career, Mr. Islam has held key leadership positions in reputed organizations such as NIPRO JMI Company Ltd, Paradise Cables Ltd, Bengal Group of Industries, and Masud Steel Design BD Ltd. His deep understanding of both local and international supply chain ecosystems has enabled him to deliver excellence in strategic sourcing, vendor management, bonded warehouse operations, international trade compliance, demand forecasting, and risk management.\n\nBeyond his corporate accomplishments, he serves as Lead Trainer at Industrial Engineering and Consultant Bangladesh (IECB) and Founder of ISCEB, inspiring the next generation of leaders with the vision: \"Connect. Learn. Achieve.\"",
-                displayOrder = 1
-            ),
-            // 2. Hasina Khan
-            IscebMember(
-                id = "member-hasina-khan",
-                photoUri = "",
-                builtInPhotoKey = "hasina",
-                fullName = "Hasina Akter Khan",
-                designation = "Chairman & CEO",
-                professionalIdentity = "Chairman & CEO — Institute of Supply Chain Excellence Bangladesh (ISCEB)",
-                currentOrganization = "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
-                educationalQualification = "M.Sc. in Clothing and Textile — University of Dhaka",
-                professionalExperience = "Over 15 years of teaching and academic coordination experience. Formerly served as Teacher at Quality Learner’s High School and Viqarunnisa Noon School & College. Serves as Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), and Chairman & CEO of ISCEB.",
-                skillsAndExpertise = listOf(
-                    "Academic Leadership",
-                    "Curriculum & Course Coordination",
-                    "Professional Capacity Building",
-                    "Industrial Education & Training",
-                    "Student Mentorship"
-                ),
-                roleInIsceb = "Chairman & Chief Executive Officer (CEO) • ISCEB",
-                contactInformation = "Institute of Supply Chain Excellence Bangladesh (ISCEB) • www.isceb.org",
-                biography = "Hasina Akter Khan is the Chairman and Chief Executive Officer (CEO) of the Institute of Supply Chain Excellence Bangladesh (ISCEB). She holds an M.Sc. in Clothing and Textile from the prestigious University of Dhaka and brings over 15 years of teaching and academic coordination experience to the field of education and professional development.\n\nBefore founding ISCEB, she served as a teacher at Quality Learner’s High School and Viqarunnisa Noon School & College, where she earned recognition for her dedication, academic excellence, and ability to inspire students. Her career reflects a deep commitment to empowering learners through knowledge, discipline, and creativity.\n\nIn addition to her leadership at ISCEB, Ms. Hasina Akter Khan serves as an Instructor and Course Co-Coordinator at Industrial Engineering & Consultants Bangladesh (IECB), contributing to training programs in industrial education, skills development, and professional capacity building. Her visionary leadership continues to guide ISCEB toward achieving its mission—to Connect, Learn, and Achieve through excellence in supply chain and professional education.",
                 displayOrder = 2
             ),
             // 3. Masudur Rahman
@@ -4380,7 +4380,27 @@ class SupplyChainRepository(
                 prefs.edit().putString("developer_profile_json", serializeDeveloperProfile(remoteDev)).apply()
             }
             if (catalog.membersJson.isNotBlank()) {
-                val remoteMembers = deserializeMembers(catalog.membersJson).sortedBy { it.displayOrder }
+                val parsedRemote = deserializeMembers(catalog.membersJson)
+                val amirul = parsedRemote.find { it.id == "member-founder-amirul" }
+                val hasina = parsedRemote.find { it.id == "member-hasina-khan" }
+                val normalizedRemote = if (
+                    catalog.versionCode <= 106 &&
+                    amirul != null &&
+                    hasina != null &&
+                    amirul.displayOrder == 1 &&
+                    hasina.displayOrder == 2
+                ) {
+                    parsedRemote.map { member ->
+                        when (member.id) {
+                            "member-hasina-khan" -> member.copy(displayOrder = 1)
+                            "member-founder-amirul" -> member.copy(displayOrder = 2)
+                            else -> member
+                        }
+                    }
+                } else {
+                    parsedRemote
+                }
+                val remoteMembers = normalizedRemote.sortedBy { it.displayOrder }
                 if (remoteMembers.isNotEmpty()) {
                     _iscebMembers.value = remoteMembers
                     persistMembers(remoteMembers)

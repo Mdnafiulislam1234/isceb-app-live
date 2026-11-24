@@ -511,8 +511,8 @@ class ExampleRobolectricTest {
         assertEquals(8, initialMembers.size)
 
         val expectedIds = listOf(
-            "member-founder-amirul",
             "member-hasina-khan",
+            "member-founder-amirul",
             "member-masudur-rahman",
             "member-asif-mahmud",
             "member-mashiur-rahman",
@@ -523,15 +523,16 @@ class ExampleRobolectricTest {
         assertEquals(expectedIds, initialMembers.map { it.id })
         assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8), initialMembers.map { it.displayOrder })
         assertEquals(
-            listOf("amirul", "hasina", "masudur", "asif", "mashiur", "shajibul", "tonmoy", "nafiul"),
+            listOf("hasina", "amirul", "masudur", "asif", "mashiur", "shajibul", "tonmoy", "nafiul"),
             initialMembers.map { it.builtInPhotoKey }
         )
 
-        val founderEntry = initialMembers[0]
+        assertEquals("Hasina Akter Khan", initialMembers[0].fullName)
+        assertEquals("Chairman & CEO", initialMembers[0].designation)
+        val founderEntry = initialMembers[1]
         assertEquals("Md. Amirul Islam", founderEntry.fullName)
         assertEquals("Founder of ISCEB", founderEntry.designation)
         assertTrue(founderEntry.biography.contains("Connect. Learn. Achieve."))
-        assertEquals("Hasina Akter Khan", initialMembers[1].fullName)
         assertEquals("MD. MASUDUR RAHMAN", initialMembers[2].fullName)
         assertEquals("Shah Mohammad Asif Mahmud", initialMembers[3].fullName)
         assertEquals("Mr. Md. Mashiur Rahman", initialMembers[4].fullName)
@@ -588,7 +589,7 @@ class ExampleRobolectricTest {
         // Delete custom member restores 8 official members
         reloaded.deleteMember("member-custom-1")
         assertEquals(8, reloaded.iscebMembers.value.size)
-        assertEquals("Md. Amirul Islam", reloaded.iscebMembers.value.first().fullName)
+        assertEquals("Hasina Akter Khan", reloaded.iscebMembers.value.first().fullName)
     }
 
     @Test

@@ -990,7 +990,25 @@ async function syncFromCloudFirestore(silent = false) {
         try {
           if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
           if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
-          if (c.settings.membersJson) state.members = JSON.parse(c.settings.membersJson);
+          if (c.settings.membersJson) {
+            const remoteMembers = JSON.parse(c.settings.membersJson);
+            if (Array.isArray(remoteMembers) && remoteMembers.length) {
+              const amirul = remoteMembers.find((m) => m.id === "member-founder-amirul");
+              const hasina = remoteMembers.find((m) => m.id === "member-hasina-khan");
+              if (
+                Number(c.versionCode || 0) <= 106 &&
+                amirul &&
+                hasina &&
+                Number(amirul.displayOrder) === 1 &&
+                Number(hasina.displayOrder) === 2
+              ) {
+                hasina.displayOrder = 1;
+                amirul.displayOrder = 2;
+              }
+              remoteMembers.sort((a, b) => Number(a.displayOrder || 99) - Number(b.displayOrder || 99));
+              state.members = remoteMembers;
+            }
+          }
         } catch (_) {}
       }
     }
@@ -1811,13 +1829,16 @@ async function exportLandscapeCertificatePdf(certRecord, signerConfig) {
     ctx.restore();
   }
 
-  // 4. Centered Official ISCEB Logo
+  // 4. Centered Official ISCEB Logo (blended onto parchment without white box)
   let y = 105;
   const logoImg = await loadImageAsset("./isceb-logo.webp");
   if (logoImg && logoImg.width > 0 && logoImg.height > 0) {
     const logoH = 126;
     const logoW = (logoImg.width / logoImg.height) * logoH;
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
     ctx.drawImage(logoImg, cx - logoW / 2, y, logoW, logoH);
+    ctx.restore();
     y += logoH + 26;
   } else {
     y += 40;

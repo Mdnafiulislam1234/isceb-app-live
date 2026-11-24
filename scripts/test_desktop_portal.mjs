@@ -69,8 +69,8 @@ test("Desktop ISCEB Members directory enforces exact 1..8 order, portraits, and 
   assert.deepEqual(
     DEFAULT_MEMBERS.map((m) => m.fullName),
     [
-      "Md. Amirul Islam",
       "Hasina Akter Khan",
+      "Md. Amirul Islam",
       "MD. MASUDUR RAHMAN",
       "Shah Mohammad Asif Mahmud",
       "Mr. Md. Mashiur Rahman",
@@ -440,10 +440,13 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
   assert.ok(appJs.includes("841.89") && appJs.includes("595.28"), "Generated certificate PDF must use Landscape A4 MediaBox");
   assert.ok(appJs.includes('data-action="download-certificate-pdf"'), "Must wire download-certificate-pdf action");
   assert.ok(desktopCss.includes(".cert-logo-wrap"), "Missing .cert-logo-wrap CSS");
+  assert.ok(desktopCss.includes("mix-blend-mode: multiply;"), "Certificate logo must blend without white box");
+  assert.ok(appJs.includes('globalCompositeOperation = "multiply"'), "PDF certificate logo must blend without white box");
   assert.ok(desktopCss.includes(".pdf-canvas-pages"), "Missing .pdf-canvas-pages CSS");
 
   const manifestJson = JSON.parse(fs.readFileSync("./public/desktop/manifest.webmanifest", "utf8"));
   assert.equal(manifestJson.background_color, "#FFFFFF", "PWA splash screen background_color must be white #FFFFFF");
+  assert.equal(manifestJson.theme_color, "#FFFFFF", "PWA manifest theme_color must be white #FFFFFF during boot");
   assert.ok(desktopHtml.includes('id="appSplashOverlay"'), "Missing white animated #appSplashOverlay in desktop/index.html");
   assert.ok(desktopHtml.includes("Masterclass &amp; Executive Certification Portal"), "Splash overlay must display executive portal subtitle");
   assert.ok(desktopCss.includes(".splash-progress-fill") && desktopCss.includes("iscebSplashBarSweep"), "Splash overlay must include gold expanding loading bar");

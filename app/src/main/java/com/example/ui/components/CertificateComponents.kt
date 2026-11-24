@@ -56,14 +56,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.geometry.Offset
@@ -71,6 +81,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import com.example.R
 import com.example.model.CertificateRecord
@@ -148,9 +159,11 @@ fun CertificatePreviewCard(
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF0E9), contentColor = Color(0xFF0F172A)),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
+        val logoBitmap = ImageBitmap.imageResource(id = R.drawable.img_isceb_logo)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
@@ -189,15 +202,33 @@ fun CertificatePreviewCard(
                     .padding(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Official ISCEB Logo
-                Image(
-                    painter = painterResource(id = R.drawable.img_isceb_logo),
-                    contentDescription = "ISCEB - Connect. learn. Achieve.",
+                // Official ISCEB Logo blended cleanly onto warm parchment background
+                Canvas(
                     modifier = Modifier
                         .width(92.dp)
-                        .height(64.dp),
-                    contentScale = ContentScale.Fit
-                )
+                        .height(64.dp)
+                        .semantics { contentDescription = "ISCEB - Connect. learn. Achieve." }
+                ) {
+                    val imgAspect = logoBitmap.width.toFloat() / logoBitmap.height.toFloat().coerceAtLeast(1f)
+                    val boxAspect = size.width / size.height.coerceAtLeast(1f)
+                    val drawW: Float
+                    val drawH: Float
+                    if (imgAspect > boxAspect) {
+                        drawW = size.width
+                        drawH = size.width / imgAspect
+                    } else {
+                        drawH = size.height
+                        drawW = size.height * imgAspect
+                    }
+                    val left = ((size.width - drawW) / 2f).roundToInt()
+                    val top = ((size.height - drawH) / 2f).roundToInt()
+                    drawImage(
+                        image = logoBitmap,
+                        dstOffset = IntOffset(left, top),
+                        dstSize = IntSize(drawW.roundToInt().coerceAtLeast(1), drawH.roundToInt().coerceAtLeast(1)),
+                        blendMode = BlendMode.Multiply
+                    )
+                }
 
                 if (isDemoCert) {
                     Spacer(modifier = Modifier.height(4.dp))

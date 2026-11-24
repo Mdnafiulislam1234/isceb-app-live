@@ -61,6 +61,81 @@ button, input, select, textarea {
   flex-shrink: 0;
 }
 
+/* White Opening Splash Screen (matches Native Android ISCEB Splash) */
+.splash-center {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: iscebSplashReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.splash-logo {
+  width: min(82vw, 310px);
+  height: auto;
+  object-fit: contain;
+  margin-bottom: 24px;
+}
+
+.splash-kicker {
+  color: #A67C00;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+
+.splash-subtitle {
+  margin-top: 5px;
+  color: #64748B;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.splash-progress-track {
+  position: relative;
+  margin-top: 22px;
+  width: 156px;
+  height: 3.5px;
+  background: #E2E8F0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.splash-progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 46%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #C99E2C, #D4AF37, #E5C158);
+  animation: iscebSplashBarSweep 1.15s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.splash-footer {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  font-size: 11px;
+  font-weight: 600;
+  color: #94A3B8;
+  text-align: center;
+}
+
+@keyframes iscebSplashReveal {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes iscebSplashBarSweep {
+  0% { left: -45%; width: 32%; }
+  50% { left: 22%; width: 58%; }
+  100% { left: 105%; width: 32%; }
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);
@@ -659,6 +734,45 @@ button, input, select, textarea {
   margin-bottom: 12px;
 }
 
+.lecture-hero-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.lecture-hero-meta {
+  width: 100%;
+  min-width: 0;
+}
+
+.lecture-hero-badge {
+  display: inline-block;
+  max-width: 100%;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-height: 1.35;
+}
+
+.lecture-hero-title {
+  margin: 8px 0 4px;
+  font-size: clamp(17px, 4.4vw, 21px);
+  line-height: 1.32;
+  color: var(--navy);
+  font-weight: 800;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.lecture-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+}
+
 .pdf-canvas-pages {
   display: grid;
   gap: 12px;
@@ -1096,22 +1210,43 @@ button, input, select, textarea {
 
 @page {
   size: A4 landscape;
-  margin: 8mm;
+  margin: 0;
 }
 
 @media print {
-  .sidebar, .topbar, .mobile-topbar, .mobile-bottom-nav, .drawer-backdrop, .toast, .modal-backdrop, .no-print { display: none !important; }
+  .app-splash-overlay, .sidebar, .topbar, .mobile-topbar, .mobile-bottom-nav, .drawer-backdrop, .toast, .modal-backdrop, .no-print { display: none !important; }
+  html, body {
+    width: 297mm !important;
+    height: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FBF0E9 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
   .app-shell { display: block !important; min-height: auto !important; }
   .main-area { display: block !important; }
-  .content { padding: 0 !important; margin: 0 auto !important; max-width: none !important; width: 100% !important; }
+  .content { padding: 0 !important; margin: 0 !important; max-width: none !important; width: 100% !important; height: 210mm !important; }
   .cert-sheet {
     box-shadow: none !important;
-    margin: 0 auto !important;
-    max-width: 980px !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
     width: 100% !important;
+    min-height: 210mm !important;
+    padding: 10mm !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
     break-inside: avoid;
     page-break-inside: avoid;
   }
+  .cert-sheet-inner {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 12mm 14mm !important;
+  }
   .cert-signatories-grid { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important; }
-  body { background: #fff !important; }
 }

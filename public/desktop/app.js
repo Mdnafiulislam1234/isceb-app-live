@@ -1344,13 +1344,13 @@ function renderCourses() {
       </div>
 
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
-          <div style="min-width: 0; flex: 1;">
-            <span class="badge badge-navy">${escapeHtml(selectedModule?.part === "PART_1_BASIC" ? "Part 1 • Basic Level" : "Part 2 • Advance Level")} • Module ${escapeHtml(selectedModule?.number || "")}</span>
-            <h2 style="margin: 8px 0 4px; font-size: 20px; color: var(--navy);">Lecture ${escapeHtml(selectedClass.lectureCode)}: ${escapeHtml(selectedClass.title)}</h2>
+        <div class="lecture-hero-header">
+          <div class="lecture-hero-meta">
+            <span class="badge badge-navy lecture-hero-badge">${escapeHtml(selectedModule?.part === "PART_1_BASIC" ? "Part 1 • Basic Level" : "Part 2 • Advance Level")} • Module ${escapeHtml(selectedModule?.number || "")}</span>
+            <h2 class="lecture-hero-title">Lecture ${escapeHtml(selectedClass.lectureCode)}: ${escapeHtml(selectedClass.title)}</h2>
             <p style="margin: 0; font-size: 13px; color: var(--muted);">Duration: ${escapeHtml(selectedClass.durationMinutes)} mins • Study Logged: ${formatSeconds(prog.activeSeconds)}</p>
           </div>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <div class="lecture-hero-actions">
             <button type="button" class="btn ${timerRunning ? "btn-danger" : "btn-outline"} btn-sm" data-action="toggle-study-timer" data-class-id="${escapeHtml(selectedClass.id)}">
               ${timerRunning ? "Stop Study Timer" : "Start Study Timer"}
             </button>
@@ -1658,6 +1658,327 @@ function renderExams() {
   `;
 }
 
+function loadImageAsset(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+function wrapCanvasTextLines(ctx, text, maxWidth) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const candidate = line ? `${line} ${w}` : w;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      line = candidate;
+    } else {
+      if (line) lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function buildSinglePageLandscapePdfFromJpeg(jpegBytes, pxWidth, pxHeight) {
+  const enc = new TextEncoder();
+  const pageW = 841.89;
+  const pageH = 595.28;
+  const contentStreamStr = `q ${pageW.toFixed(2)} 0 0 ${pageH.toFixed(2)} 0 0 cm /Im0 Do Q\n`;
+
+  const chunks = [];
+  let offset = 0;
+  const pushBytes = (u8) => {
+    chunks.push(u8);
+    offset += u8.length;
+  };
+  const pushText = (str) => pushBytes(enc.encode(str));
+
+  pushText("%PDF-1.4\n%\xFF\xFF\xFF\xFF\n");
+  const offsets = [0];
+
+  offsets.push(offset);
+  pushText("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+  offsets.push(offset);
+  pushText("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+  offsets.push(offset);
+  pushText(
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(2)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`
+  );
+
+  offsets.push(offset);
+  pushText(
+    `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${pxWidth} /Height ${pxHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`
+  );
+  pushBytes(jpegBytes);
+  pushText("\nendstream\nendobj\n");
+
+  offsets.push(offset);
+  pushText(`5 0 obj\n<< /Length ${contentStreamStr.length} >>\nstream\n${contentStreamStr}endstream\nendobj\n`);
+
+  const xrefStart = offset;
+  pushText("xref\n0 6\n0000000000 65535 f \n");
+  for (let i = 1; i <= 5; i++) {
+    pushText(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+  pushText(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
+
+  const out = new Uint8Array(offset);
+  let pos = 0;
+  for (const c of chunks) {
+    out.set(c, pos);
+    pos += c.length;
+  }
+  return out;
+}
+
+async function exportLandscapeCertificatePdf(certRecord, signerConfig) {
+  if (!certRecord) return;
+  showToast("Preparing full-page Landscape Certificate PDF...");
+  const width = 1754;
+  const height = 1240;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  // 1. Full-bleed warm reddish-cream parchment background (edge-to-edge landscape, zero outer white sheet)
+  const grad = ctx.createRadialGradient(cx, cy * 0.92, 40, cx, cy, width * 0.62);
+  grad.addColorStop(0, "#FDF7F3");
+  grad.addColorStop(0.65, "#FBF0E9");
+  grad.addColorStop(1, "#F3DDD1");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+
+  // 2. Subtle same-tone guilloche & emblem watermark in background center
+  ctx.save();
+  ctx.strokeStyle = "rgba(223, 193, 178, 0.36)";
+  for (const [r, lw, dash] of [[295, 2.5, null], [260, 1.8, [10, 10]], [205, 2.2, null], [148, 1.8, null]]) {
+    ctx.beginPath();
+    ctx.lineWidth = lw;
+    ctx.setLineDash(dash || []);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (let deg = 0; deg < 360; deg += 15) {
+    const rad = (deg * Math.PI) / 180;
+    const rIn = deg % 30 === 0 ? 120 : 175;
+    const rOut = 285;
+    ctx.beginPath();
+    ctx.lineWidth = 1.4;
+    ctx.moveTo(cx + Math.cos(rad) * rIn, cy + Math.sin(rad) * rIn);
+    ctx.lineTo(cx + Math.cos(rad) * rOut, cy + Math.sin(rad) * rOut);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(223, 193, 178, 0.25)";
+  ctx.font = "bold 92px Georgia, serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("I S C E B", cx, cy);
+  ctx.restore();
+
+  // 3. Full-frame official double Gold + inner Navy borders
+  ctx.strokeStyle = "#D4AF37";
+  ctx.lineWidth = 10;
+  ctx.strokeRect(30, 30, width - 60, height - 60);
+
+  ctx.strokeStyle = "#071A33";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(46, 46, width - 92, height - 92);
+
+  ctx.strokeStyle = "rgba(166, 124, 0, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(64, 64, width - 128, height - 128);
+
+  // Corner gold diamonds
+  for (const [dx, dy] of [[64, 64], [width - 64, 64], [64, height - 64], [width - 64, height - 64]]) {
+    ctx.save();
+    ctx.translate(dx, dy);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = "#D4AF37";
+    ctx.fillRect(-7, -7, 14, 14);
+    ctx.restore();
+  }
+
+  // 4. Centered Official ISCEB Logo
+  let y = 105;
+  const logoImg = await loadImageAsset("./isceb-logo.webp");
+  if (logoImg && logoImg.width > 0 && logoImg.height > 0) {
+    const logoH = 126;
+    const logoW = (logoImg.width / logoImg.height) * logoH;
+    ctx.drawImage(logoImg, cx - logoW / 2, y, logoW, logoH);
+    y += logoH + 26;
+  } else {
+    y += 40;
+  }
+
+  // Optional centered Demo badge
+  if (certRecord.isDemo) {
+    const pillW = 330;
+    const pillH = 38;
+    const px = cx - pillW / 2;
+    const py = y;
+    ctx.fillStyle = "#F4E2A3";
+    ctx.strokeStyle = "#D4AF37";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(px, py, pillW, pillH, 19);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#071A33";
+    ctx.font = "bold 18px Inter, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("DEMO CERTIFICATE PREVIEW", cx, py + pillH / 2 + 1);
+    y += pillH + 28;
+  }
+
+  // 5. Institution Header & Subtitle
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "#071A33";
+  ctx.font = "bold 24px Georgia, serif";
+  ctx.fillText("INSTITUTE OF SUPPLY CHAIN EXCELLENCE BANGLADESH (ISCEB)", cx, y);
+  y += 32;
+
+  ctx.fillStyle = "#A67C00";
+  ctx.font = "bold 20px Inter, Arial, sans-serif";
+  ctx.fillText("POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT", cx, y);
+  y += 28;
+
+  // Decorative gold diamond divider
+  ctx.strokeStyle = "#D4AF37";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 340, y);
+  ctx.lineTo(cx - 24, y);
+  ctx.moveTo(cx + 24, y);
+  ctx.lineTo(cx + 340, y);
+  ctx.stroke();
+  ctx.save();
+  ctx.translate(cx, y);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = "#D4AF37";
+  ctx.fillRect(-7, -7, 14, 14);
+  ctx.restore();
+  y += 66;
+
+  // 6. Main Diploma Title
+  ctx.fillStyle = "#071A33";
+  ctx.font = "bold 42px Georgia, serif";
+  const titleLines = wrapCanvasTextLines(ctx, "POST GRADUATE DIPLOMA (PGD) IN SUPPLY CHAIN MANAGEMENT (SCM)", width - 240);
+  for (const tl of titleLines) {
+    ctx.fillText(tl, cx, y);
+    y += 52;
+  }
+  y += 14;
+
+  // 7. Conferral & Recipient Name
+  ctx.fillStyle = "#5C4B45";
+  ctx.font = "italic 26px Georgia, serif";
+  ctx.fillText("This authoritative academic credential is officially conferred upon", cx, y);
+  y += 74;
+
+  ctx.fillStyle = "#071A33";
+  ctx.font = "bold 54px Georgia, serif";
+  ctx.fillText(String(certRecord.recipientName || "ISCEB Candidate"), cx, y);
+  const nameWidth = Math.max(420, Math.min(width - 360, ctx.measureText(String(certRecord.recipientName || "")).width + 90));
+  y += 18;
+  ctx.strokeStyle = "#D4AF37";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cx - nameWidth / 2, y);
+  ctx.lineTo(cx + nameWidth / 2, y);
+  ctx.stroke();
+  y += 58;
+
+  // 8. Recognition Narrative
+  ctx.fillStyle = "#3E332F";
+  ctx.font = "24px Georgia, serif";
+  const narrative = "in recognition of successfully completing all 12 Specialization Modules and 48 Executive Lessons, Part 1: Basic (Foundation Level) & Part 2: Advance (Strategic & Analytical Level), Module Examinations, Capstone Project, and Final Comprehensive Assessment.";
+  const narrativeLines = wrapCanvasTextLines(ctx, narrative, width - 340);
+  for (const nl of narrativeLines) {
+    ctx.fillText(nl, cx, y);
+    y += 36;
+  }
+
+  // 9. Symmetrical 3-Column Footer Signatories
+  const sigLineY = height - 185;
+  const leftX = 365;
+  const rightX = width - 365;
+
+  ctx.strokeStyle = "#8C7A72";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(leftX - 185, sigLineY);
+  ctx.lineTo(leftX + 185, sigLineY);
+  ctx.moveTo(rightX - 185, sigLineY);
+  ctx.lineTo(rightX + 185, sigLineY);
+  ctx.stroke();
+
+  ctx.fillStyle = "#071A33";
+  ctx.font = "bold 25px Georgia, serif";
+  ctx.fillText(signerConfig.leftSignerName, leftX, sigLineY + 34);
+  ctx.fillText(signerConfig.rightSignerName, rightX, sigLineY + 34);
+
+  ctx.fillStyle = "#A67C00";
+  ctx.font = "bold 21px Inter, Arial, sans-serif";
+  if (signerConfig.leftSignerTitle) ctx.fillText(signerConfig.leftSignerTitle, leftX, sigLineY + 66);
+  ctx.fillText(signerConfig.rightSignerTitle, rightX, sigLineY + 66);
+
+  ctx.fillStyle = "#A67C00";
+  ctx.font = "bold 22px Inter, Arial, sans-serif";
+  ctx.fillText(`Serial: ${certRecord.serial}`, cx, sigLineY + 26);
+  ctx.fillStyle = "#5A6E85";
+  ctx.font = "20px Inter, Arial, sans-serif";
+  ctx.fillText(`Issued: ${certRecord.issuedDate}`, cx, sigLineY + 58);
+
+  const jpegBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
+  if (!jpegBlob) {
+    window.print();
+    return;
+  }
+  const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
+  const pdfBytes = buildSinglePageLandscapePdfFromJpeg(jpegBytes, width, height);
+  const pdfBlob = new Blob([pdfBytes], { type: "application/pdf" });
+  const safeSerial = String(certRecord.serial || "ISCEB-PGD").replace(/[^A-Za-z0-9_-]/g, "_");
+  const fileName = `ISCEB-Certificate-${safeSerial}.pdf`;
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  // Trigger clean file save & open in-app Landscape PDF Viewer
+  const dlLink = document.createElement("a");
+  dlLink.href = pdfUrl;
+  dlLink.download = fileName;
+  document.body.appendChild(dlLink);
+  dlLink.click();
+  dlLink.remove();
+
+  presentMediaPreviewModal(
+    {
+      id: `cert-pdf-${safeSerial}`,
+      type: "PDF",
+      title: `ISCEB Official Landscape Certificate (${certRecord.serial})`,
+      fileName,
+      fileSizeBytes: pdfBlob.size,
+      fileSizeFormatted: formatBytes(pdfBlob.size)
+    },
+    pdfUrl,
+    pdfBlob
+  );
+  showToast("Full-page Landscape Certificate PDF ready.");
+}
+
 function renderLearning() {
   const user = getActiveUser();
   const stats = getOverallStats();
@@ -1705,7 +2026,12 @@ function renderLearning() {
                 </button>`
               : ""
           }
-          ${displayedCert ? `<button type="button" class="btn btn-primary" onclick="window.print()">Print / Save PDF</button>` : ""}
+          ${
+            displayedCert
+              ? `<button type="button" class="btn btn-primary" data-action="download-certificate-pdf">Save Landscape PDF</button>
+                 <button type="button" class="btn btn-outline" onclick="window.print()">Print</button>`
+              : ""
+          }
         </div>
       </div>
 
@@ -2344,7 +2670,7 @@ function renderProfile() {
               ? `<button type="button" class="btn btn-gold btn-sm" data-action="trigger-pwa-install">${deferredInstallPrompt ? "Install App (No Badge)" : "Install Guide"}</button>`
               : ""
           }
-          <button type="button" class="btn btn-outline btn-sm" data-action="check-pwa-update-now">Check Updates</button>
+          <button type="button" class="btn btn-outline btn-sm" data-action="check-pwa-update-now">Auto-Update / Check Latest</button>
           <a href="${escapeHtml(apkUrl)}" download="ISCEB-latest.apk" class="btn btn-primary btn-sm">Download Latest APK</a>
           <button type="button" class="btn btn-outline btn-sm" data-action="export-workspace-json">Backup Workspace JSON</button>
           <label for="importWorkspaceJsonInput" class="btn btn-outline btn-sm" style="cursor: pointer;">Restore JSON Backup</label>
@@ -2488,25 +2814,61 @@ function submitActiveExam() {
 }
 
 async function runAppUpdateCheck() {
+  showToast("Checking GitHub Pages for latest ISCEB app update...");
   await fetchVersionJson();
+  let swTriggeredUpdate = false;
   if ("serviceWorker" in navigator) {
     try {
       const reg = window.__iscebSwRegistration || (await navigator.serviceWorker.getRegistration("./"));
       if (reg) {
         await reg.update();
         if (reg.waiting) {
+          swTriggeredUpdate = true;
           reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          showToast("New ISCEB PWA version ready — applying update now...");
+          showToast("New ISCEB update ready — applying update now...");
           return;
+        }
+        if (reg.installing) {
+          swTriggeredUpdate = true;
+          showToast("Downloading latest ISCEB update...");
+          await new Promise((resolve) => {
+            const worker = reg.installing;
+            const timer = setTimeout(resolve, 6000);
+            worker.addEventListener("statechange", () => {
+              if (worker.state === "installed" || worker.state === "redundant") {
+                clearTimeout(timer);
+                resolve();
+              }
+            });
+          });
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+            showToast("Applying new ISCEB update...");
+            return;
+          }
         }
       }
     } catch (_) {}
   }
+
   const verRes = await fetch(`./pwa-version.json?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
   if (verRes && verRes.ok) {
     const info = await verRes.json().catch(() => null);
     if (info && info.buildId) {
+      const prevBuild = localStorage.getItem("isceb_pwa_build_id");
       pwaBuildInfo = info;
+      localStorage.setItem("isceb_pwa_build_id", info.buildId);
+      if ((prevBuild && prevBuild !== info.buildId) || swTriggeredUpdate) {
+        if ("caches" in window) {
+          try {
+            const keys = await caches.keys();
+            await Promise.all(keys.filter((k) => k.startsWith("isceb-")).map((k) => caches.delete(k)));
+          } catch (_) {}
+        }
+        showToast(`Applying ISCEB Build ${info.buildId}...`);
+        setTimeout(() => window.location.reload(), 350);
+        return;
+      }
       showToast(`ISCEB Live PWA is up to date (Build ${info.buildId}).`);
       render();
       return;
@@ -2822,6 +3184,29 @@ function setupListeners() {
       saveState();
       showToast("Opened Demo Certificate preview.");
       render();
+    } else if (action === "download-certificate-pdf") {
+      const activeUser = getActiveUser();
+      const issuedCert = state.certificatesByUser[activeUser.id];
+      const demoCertAllowed = state.settings.demoCertificateEnabled !== false || isAdminUser();
+      const certToExport =
+        demoCertificateActive && demoCertAllowed
+          ? {
+              recipientName: activeUser.fullName || "ISCEB Executive Candidate",
+              serial: "ISCEB-DEMO-PGD-2026",
+              issuedDate: new Date().toISOString().slice(0, 10),
+              isDemo: true
+            }
+          : issuedCert;
+      if (!certToExport) {
+        showToast("Generate your PGD Certificate or open Demo Preview first.", true);
+        return;
+      }
+      exportLandscapeCertificatePdf(certToExport, {
+        leftSignerName: state.settings.leftSignerName || "Hasina Akter Khan",
+        leftSignerTitle: state.settings.leftSignerTitle || "Chairman & CEO",
+        rightSignerName: state.settings.authorizedSignerName || "Md. Amirul Islam",
+        rightSignerTitle: state.settings.authorizedSignerTitle || "Founder of ISCEB"
+      });
     } else if (action === "verify-cert") {
       const serial = document.getElementById("verifyCertInput")?.value.trim();
       const out = document.getElementById("verifyCertResult");

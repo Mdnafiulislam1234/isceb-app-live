@@ -431,12 +431,22 @@ test("Mobile Web PWA mirrors Native Android 5-tab bottom bar, topbar, Student Pr
 
   assert.ok(appJs.includes("courseDetailOpen"), "Tapping a class must open dedicated lecture page");
   assert.ok(appJs.includes('data-action="back-to-modules"'), "Dedicated lecture page must include Back to Modules button");
+  assert.ok(appJs.includes("lecture-hero-header") && desktopCss.includes(".lecture-hero-header"), "Lecture detail title must render full-width above action buttons");
   assert.ok(appJs.includes("renderPdfInlineIntoHost"), "Web/Mobile PWA must render PDFs inline on canvas");
   assert.ok(appJs.includes("saveMediaBlobToIdb") && appJs.includes("loadMediaBlobFromIdb"), "Uploaded files must persist in IndexedDB");
   assert.ok(appJs.includes('class="two-col-grid no-print"'), "Certificate print must exclude Eligibility and Verify cards");
   assert.ok(appJs.includes('class="cert-logo-wrap"'), "Certificate logo must use centered .cert-logo-wrap");
+  assert.ok(appJs.includes("buildSinglePageLandscapePdfFromJpeg") && appJs.includes("exportLandscapeCertificatePdf"), "Must include direct full-page Landscape A4 PDF generator");
+  assert.ok(appJs.includes("841.89") && appJs.includes("595.28"), "Generated certificate PDF must use Landscape A4 MediaBox");
+  assert.ok(appJs.includes('data-action="download-certificate-pdf"'), "Must wire download-certificate-pdf action");
   assert.ok(desktopCss.includes(".cert-logo-wrap"), "Missing .cert-logo-wrap CSS");
   assert.ok(desktopCss.includes(".pdf-canvas-pages"), "Missing .pdf-canvas-pages CSS");
+
+  const manifestJson = JSON.parse(fs.readFileSync("./public/desktop/manifest.webmanifest", "utf8"));
+  assert.equal(manifestJson.background_color, "#FFFFFF", "PWA splash screen background_color must be white #FFFFFF");
+  assert.ok(desktopHtml.includes('id="appSplashOverlay"'), "Missing white animated #appSplashOverlay in desktop/index.html");
+  assert.ok(desktopHtml.includes("Masterclass &amp; Executive Certification Portal"), "Splash overlay must display executive portal subtitle");
+  assert.ok(desktopCss.includes(".splash-progress-fill") && desktopCss.includes("iscebSplashBarSweep"), "Splash overlay must include gold expanding loading bar");
 
   assert.ok(modelsKt.includes('"$HOSTING_BASE/apk.html"'), "Android DEFAULT_DOWNLOAD_PAGE_URL must point to apk.html");
   assert.ok(releaseSh.includes('f"{hosting_base}/apk.html"'), "release_apk.sh version.json generator must point downloadPageUrl to apk.html");

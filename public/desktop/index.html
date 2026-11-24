@@ -23,8 +23,55 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./isceb-icon-192.png" />
   <link rel="apple-touch-icon" href="./isceb-icon-512.png" />
   <link rel="stylesheet" href="./styles.css" />
+  <style>
+    .app-splash-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      transition: opacity 0.28s ease, visibility 0.28s ease;
+    }
+    .app-splash-overlay.splash-hiding {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+  </style>
 </head>
 <body>
+  <div id="appSplashOverlay" class="app-splash-overlay" role="presentation" onclick="window.__dismissIscebSplash && window.__dismissIscebSplash()">
+    <div class="splash-center">
+      <img src="./isceb-logo.webp" alt="ISCEB - Connect. learn. Achieve." class="splash-logo" />
+      <div class="splash-kicker">POST GRADUATE DIPLOMA (PGD)</div>
+      <div class="splash-subtitle">Masterclass &amp; Executive Certification Portal</div>
+      <div class="splash-progress-track" aria-hidden="true">
+        <div class="splash-progress-fill"></div>
+      </div>
+    </div>
+    <div class="splash-footer">Official Academic Registry: www.scmglobal.org</div>
+  </div>
+  <script>
+    (function () {
+      var dismissed = false;
+      window.__dismissIscebSplash = function () {
+        if (dismissed) return;
+        dismissed = true;
+        var el = document.getElementById("appSplashOverlay");
+        if (!el) return;
+        el.classList.add("splash-hiding");
+        window.setTimeout(function () {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        }, 320);
+      };
+      window.setTimeout(window.__dismissIscebSplash, 1150);
+    })();
+  </script>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="drawerBackdrop" class="drawer-backdrop" aria-hidden="true"></div>
 

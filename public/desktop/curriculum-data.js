@@ -8,9 +8,9 @@ export const FIREBASE_CONFIG = {
 };
 
 export const AVAILABLE_USERS = [
-  { id: "student-1", fullName: "Sarah Jenkins", email: "sarah.jenkins@isceb.org", role: "STUDENT", organization: "ISCEB PGD Candidate", designation: "PGD Candidate" },
-  { id: "student-2", fullName: "Alex Rivera", email: "alex.rivera@freightcorp.com", role: "STUDENT", organization: "Pacific Maritime Forwarding", designation: "PGD Candidate" },
-  { id: "student-3", fullName: "Tanvir Ahmed", email: "tanvir.ahmed@dhakalogistics.com", role: "STUDENT", organization: "Apex SCM Bangladesh", designation: "PGD Candidate" },
+  { id: "student-1", fullName: "Ayman Rahman", email: "ayman.rahman@isceb.org", role: "STUDENT", organization: "ISCEB PGD Candidate", designation: "PGD Candidate" },
+  { id: "student-2", fullName: "Arham Hossain", email: "arham.hossain@freightcorp.com", role: "STUDENT", organization: "Pacific Maritime Forwarding", designation: "PGD Candidate" },
+  { id: "student-3", fullName: "Zayan Ahmed", email: "zayan.ahmed@dhakalogistics.com", role: "STUDENT", organization: "Apex SCM Bangladesh", designation: "PGD Candidate" },
   { id: "admin-2", fullName: "Md. Amirul Islam", email: "amirul.islam@isceb.org", role: "ADMIN", organization: "Head of Supply Chain Management at BRB Group", designation: "Founder of ISCEB", additionalRole: "Lead Trainer of ISCEB", mobileNumber: "01715-282905" },
   { id: "admin-1", fullName: "Md. Nafiul Islam Nahin", email: "www.mdnafiulislam@gmail.com", role: "ADMIN", organization: "ISCEB App Engineering", designation: "Developer of ISCEB App" }
 ];

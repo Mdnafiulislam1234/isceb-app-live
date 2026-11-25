@@ -59,6 +59,10 @@ test("Desktop role integrity separates Founder Md. Amirul Islam and Developer Md
   const students = getStudentSwitcherUsers(AVAILABLE_USERS);
   assert.equal(students.length, 3);
   assert.ok(students.every((u) => u.role === "STUDENT"));
+  assert.deepEqual(
+    students.map((u) => u.fullName),
+    ["Ayman Rahman", "Arham Hossain", "Zayan Ahmed"]
+  );
 });
 
 test("Desktop ISCEB Members directory enforces exact 1..8 order, portraits, and full bios", () => {

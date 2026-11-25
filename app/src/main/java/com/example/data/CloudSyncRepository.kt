@@ -291,13 +291,20 @@ class CloudSyncRepository(
         val docRef = db.collection(COLLECTION_USERS).document(targetUid)
         return try {
             val snap = docRef.get().await()
+            val safePhotoUrl = profile.photoUrl.trim().takeIf {
+                it.length <= 95000 && (
+                    it.startsWith("https://", ignoreCase = true) ||
+                        it.startsWith("http://", ignoreCase = true) ||
+                        it.startsWith("data:image/", ignoreCase = true)
+                    )
+            }
             if (!snap.exists()) {
                 val payload = buildMap<String, Any> {
                     put("uid", targetUid)
                     put("studentId", profile.studentId.ifBlank { "ISCEB-PGD-2026-0001" })
                     put("fullName", profile.fullName.ifBlank { "ISCEB Learner" }.take(160))
                     put("email", profile.email.ifBlank { "${targetUid}@isceb.org" }.take(200))
-                    if (profile.photoUrl.isNotBlank()) put("photoUrl", profile.photoUrl.take(1000))
+                    if (!safePhotoUrl.isNullOrBlank()) put("photoUrl", safePhotoUrl)
                     put("role", if (allowRoleAndPrivileges) profile.role.name else UserRole.STUDENT.name)
                     if (profile.organization.isNotBlank()) put("organization", profile.organization.take(200))
                     if (profile.designation.isNotBlank()) put("designation", profile.designation.take(200))
@@ -311,9 +318,11 @@ class CloudSyncRepository(
                 }
                 docRef.set(payload).await()
             } else {
+                val existingRemotePhoto = snap.getString("photoUrl")?.takeIf { it.isNotBlank() && it.length <= 95000 }
+                val effectivePhotoUrl = safePhotoUrl ?: existingRemotePhoto ?: ""
                 val updatePayload = buildMap<String, Any> {
                     put("fullName", profile.fullName.ifBlank { "ISCEB Learner" }.take(160))
-                    put("photoUrl", profile.photoUrl.take(1000))
+                    put("photoUrl", effectivePhotoUrl)
                     put("organization", profile.organization.take(200))
                     put("designation", profile.designation.take(200))
                     put("mobileNumber", profile.mobileNumber.take(64))

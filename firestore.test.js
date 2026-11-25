@@ -184,11 +184,20 @@ test("Student user: can create & update own safe profile fields; CANNOT self-pro
     aliceDb.collection("users").doc(ALICE_UID).set(validStudentAccountPayload(ALICE_UID, "ISCEB-PGD-2026-1001", "Alice Rahman", "alice@test.com"))
   );
 
-  // Self-updating safe profile fields succeeds
+  // Self-updating safe profile fields (including compressed avatar data URI) succeeds
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).update({
       fullName: "Alice Rahman MBA",
       organization: "Chattogram Freight",
+      photoUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/",
+      updatedAt: nowPast(),
+    })
+  );
+
+  // Oversized > 100000 char photoUrl is rejected
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      photoUrl: "data:image/jpeg;base64," + "A".repeat(100050),
       updatedAt: nowPast(),
     })
   );

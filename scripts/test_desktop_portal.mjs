@@ -517,9 +517,25 @@ test("Profile hero layout avoids vertical character breaking and Admin Roster tr
   assert.equal(createUserDoc.accountStatus, "ACTIVE");
   assert.equal(createUserDoc.isVerified, false);
   assert.deepEqual(createUserDoc.assignedModuleIds, []);
-  assert.ok(!("photoUrl" in createUserDoc), "Base64 data URIs must be excluded so photoUrl never breaches firestore.rules size limit");
+  assert.equal(
+    createUserDoc.photoUrl,
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+    "Compact data:image/ avatars must be preserved for Firestore cloud sync"
+  );
   assert.equal(createUserDoc.createdAt, "TS");
   assert.equal(createUserDoc.updatedAt, "TS");
+
+  const oversizedPhotoDoc = buildFirestoreUserAccountPayload({
+    uid: "stu-uid-9837",
+    studentId: "ISCEB-2026-9837",
+    fullName: "Khondokar Jerin Anjum",
+    email: "khondokarjerinanjum66@gmail.com",
+    mobileNumber: "01886442994",
+    photoUrl: `data:image/jpeg;base64,${"A".repeat(96000)}`,
+    isCreate: true,
+    serverTimestampToken: "TS"
+  });
+  assert.ok(!("photoUrl" in oversizedPhotoDoc), "Oversized >95KB data URIs must be excluded to respect firestore.rules limit");
 
   const updateUserDoc = buildFirestoreUserAccountPayload({
     uid: "stu-uid-9837",
@@ -546,4 +562,5 @@ test("Profile hero layout avoids vertical character breaking and Admin Roster tr
   assert.ok(appJs.includes("syncStudentAccountToFirestore"), "Google Cloud Sync must persist student profiles into Firestore users collection");
   assert.ok(appJs.includes('id="signedInStudentPhotoInput"') && appJs.includes('id="editStuPhotoInput"'), "Signed-in students must be able to add or change photo after registration");
   assert.ok(appJs.includes('data-modal-action="clear-edit-student-photo"'), "Edit Student Profile modal must allow removing profile photo");
+  assert.ok(appJs.includes('stu.photoUrl') && appJs.includes('<img src="${escapeHtml(stu.photoUrl)}"'), "Admin Registered Students card must render student photoUrl avatar when available");
 });

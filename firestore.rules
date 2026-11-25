@@ -65,7 +65,7 @@ service cloud.firestore {
              data.studentId is string && data.studentId.size() >= 4 && data.studentId.size() <= 64 &&
              data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 160 &&
              data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
-             (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 1000)) &&
+             (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 100000)) &&
              data.role is string && data.role in ['STUDENT', 'TEACHER', 'ADMIN'] &&
              (!('organization' in data) || data.organization == null || (data.organization is string && data.organization.size() <= 200)) &&
              (!('designation' in data) || data.designation == null || (data.designation is string && data.designation.size() <= 200)) &&

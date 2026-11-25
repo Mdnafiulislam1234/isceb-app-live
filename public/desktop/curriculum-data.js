@@ -599,9 +599,13 @@ export function buildFirestoreUserAccountPayload({
   const safeStudentId = String(studentId || "ISCEB-PGD-2026-0001").trim().slice(0, 64);
   const safeName = String(fullName || "ISCEB Learner").trim().slice(0, 160) || "ISCEB Learner";
   const safeEmail = String(email || `${safeUid}@isceb.org`).trim().slice(0, 200);
-  const safePhoto = typeof photoUrl === "string" && photoUrl.length > 0 && photoUrl.length <= 1000 && !photoUrl.startsWith("data:")
-    ? photoUrl
-    : "";
+  const rawPhoto = typeof photoUrl === "string" ? photoUrl.trim() : "";
+  const safePhoto =
+    rawPhoto.length > 0 &&
+    rawPhoto.length <= 95000 &&
+    (rawPhoto.startsWith("https://") || rawPhoto.startsWith("http://") || rawPhoto.startsWith("data:image/"))
+      ? rawPhoto
+      : "";
   const safeProgram = String(enrolledProgram || "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)").trim().slice(0, 200);
   const safeOrg = String(organization || "").trim().slice(0, 200);
   const safeDesignation = String(designation || "PGD Candidate").trim().slice(0, 200);

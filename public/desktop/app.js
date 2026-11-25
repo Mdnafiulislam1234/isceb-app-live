@@ -1003,7 +1003,8 @@ async function initFirebaseSdk() {
   }
 }
 
-async function syncStudentAccountToFirestore(studentProfile) {
+async function syncStudentAccountToFirestore(studentProfile, options = {}) {
+  const { allowEmptyPhoto = false } = options || {};
   const fb = await initFirebaseSdk();
   if (!fb || !cloudUser) return false;
   if (!studentProfile || studentProfile.id === GUEST_USER.id || studentProfile.role === "ADMIN" || isAdminUser()) {
@@ -1018,12 +1019,23 @@ async function syncStudentAccountToFirestore(studentProfile) {
     const ref = doc(fb.db, "users", cloudUser.uid);
     const snap = await getDoc(ref);
     const isCreate = !snap.exists();
+    const existingRemotePhoto = snap.exists() ? String(snap.data()?.photoUrl || "") : "";
+    const resolvedPhoto = allowEmptyPhoto
+      ? ""
+      : (studentProfile.photoUrl || existingRemotePhoto || cloudUser.photoURL || "");
+    if (!allowEmptyPhoto && !studentProfile.photoUrl && existingRemotePhoto) {
+      const idx = (state.customStudents || []).findIndex((s) => s.id === studentProfile.id);
+      if (idx >= 0) {
+        state.customStudents[idx] = { ...state.customStudents[idx], photoUrl: existingRemotePhoto };
+        saveState();
+      }
+    }
     const payload = buildFirestoreUserAccountPayload({
       uid: cloudUser.uid,
       studentId: studentProfile.studentId || `ISCEB-2026-${cloudUser.uid.slice(0, 6).toUpperCase()}`,
       fullName: studentProfile.fullName || cloudUser.displayName || "ISCEB Learner",
       email: studentProfile.email || cloudUser.email,
-      photoUrl: studentProfile.photoUrl || cloudUser.photoURL || "",
+      photoUrl: resolvedPhoto,
       organization: studentProfile.organization || "",
       designation: studentProfile.designation || "PGD Candidate",
       mobileNumber: studentProfile.mobileNumber || "",
@@ -3242,9 +3254,11 @@ function renderAdminRegisteredStudentsCard() {
                     <div class="registered-student-card">
                       <div class="flex-header-between" style="align-items: flex-start;">
                         <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 220px;">
-                          <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--navy); color: var(--gold); display: grid; place-items: center; font-weight: 800; font-size: 14px; flex-shrink: 0;">
-                            ${escapeHtml(initials || "S")}
-                          </div>
+                          ${
+                            stu.photoUrl
+                              ? `<img src="${escapeHtml(stu.photoUrl)}" alt="${escapeHtml(stu.fullName)}" class="portrait-avatar" style="width: 46px; height: 46px; border: 2px solid var(--gold); flex-shrink: 0; object-fit: cover; object-position: center 20%;" />`
+                              : `<div style="width: 46px; height: 46px; border-radius: 50%; background: var(--navy); color: var(--gold); display: grid; place-items: center; font-weight: 800; font-size: 14px; flex-shrink: 0;">${escapeHtml(initials || "S")}</div>`
+                          }
                           <div style="min-width: 0; flex: 1;">
                             <div style="font-weight: 800; color: var(--navy); font-size: 14.5px; word-break: normal; overflow-wrap: break-word;">${escapeHtml(stu.fullName)}</div>
                             <div style="font-size: 12px; color: var(--gold-dark); font-weight: 700;">${escapeHtml(stu.studentId || "ID Pending")} • ${escapeHtml(stu.organization || "ISCEB Enrolled")}</div>
@@ -3711,7 +3725,7 @@ function resizePhotoFileToDataUrl(file) {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const maxDim = 256;
+        const maxDim = 200;
         const scale = Math.min(1, maxDim / Math.max(img.width || maxDim, img.height || maxDim));
         const w = Math.max(1, Math.round(img.width * scale));
         const h = Math.max(1, Math.round(img.height * scale));
@@ -3720,7 +3734,12 @@ function resizePhotoFileToDataUrl(file) {
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
+        let out = canvas.toDataURL("image/jpeg", 0.8);
+        for (const q of [0.65, 0.5, 0.35]) {
+          if (out.length <= 75000) break;
+          out = canvas.toDataURL("image/jpeg", q);
+        }
+        resolve(out);
       };
       img.onerror = () => resolve(String(reader.result || ""));
       img.src = String(reader.result || "");
@@ -4155,7 +4174,7 @@ function setupListeners() {
     } else if (action === "refresh-cloud-users") {
       fetchCloudRegisteredUsers(true);
     } else if (action === "profile-sync-now") {
-      syncFromCloudFirestore(false);
+      syncStudentAccountToFirestore(getActiveUser()).finally(() => syncFromCloudFirestore(false));
     } else if (action === "google-signout") {
       if (firebaseModules?.authMod && firebaseModules?.auth) {
         firebaseModules.authMod.signOut(firebaseModules.auth).then(() => {
@@ -4806,7 +4825,7 @@ function setupListeners() {
       showToast("Student profile updated.");
       render();
       if (cloudUser) {
-        syncStudentAccountToFirestore(updatedRecord);
+        syncStudentAccountToFirestore(updatedRecord, { allowEmptyPhoto: !updatedRecord.photoUrl });
       }
     }
   });

@@ -280,6 +280,8 @@ let desktopAdminAuthMode = "login"; // login | setup | reset
 let lastIssuedSecretNotice = "";
 let verifiedAdminSessionId = null;
 let pendingStudentPhotoDataUrl = "";
+let pendingEditStudentPhotoDataUrl = "";
+let pendingEditStudentPhotoCleared = false;
 const localAttachmentUrls = new Map();
 const localAttachmentBlobs = new Map();
 
@@ -3331,9 +3333,17 @@ function renderProfile() {
         <div class="profile-hero-header">
           <div class="profile-hero-identity">
             ${
-              user.photoUrl || isAdminUser()
+              isAdminUser()
                 ? `<img src="${escapeHtml(user.photoUrl || (user.id === ADMIN_AMIRUL_ID ? "./admin-amirul.webp" : "./admin-nafiul.webp"))}" alt="${escapeHtml(user.fullName)}" class="portrait-avatar" style="width: 60px; height: 60px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold); flex-shrink: 0;" />`
-                : `<div style="width: 60px; height: 60px; border-radius: 50%; background: var(--gold); color: var(--navy-dark); display: grid; place-items: center; font-weight: 800; font-size: 19px; flex-shrink: 0;">${escapeHtml(user.fullName.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase())}</div>`
+                : `<label for="signedInStudentPhotoInput" title="${user.photoUrl ? "Change Profile Photo" : "Add Profile Photo"}" style="cursor: pointer; position: relative; flex-shrink: 0; display: inline-block;">
+                    ${
+                      user.photoUrl
+                        ? `<img src="${escapeHtml(user.photoUrl)}" alt="${escapeHtml(user.fullName)}" class="portrait-avatar" style="width: 60px; height: 60px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold); display: block;" />`
+                        : `<div style="width: 60px; height: 60px; border-radius: 50%; background: var(--gold); color: var(--navy-dark); display: grid; place-items: center; font-weight: 800; font-size: 19px;">${escapeHtml(user.fullName.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase())}</div>`
+                    }
+                    <span style="position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--navy-dark); color: var(--gold); border: 1.5px solid var(--gold); display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1;" aria-hidden="true">+</span>
+                  </label>
+                  <input type="file" id="signedInStudentPhotoInput" accept="image/*" style="display: none;" />`
             }
             <div class="profile-hero-meta">
               <span class="badge badge-gold">${isAdminUser() ? "VERIFIED ADMINISTRATOR" : "VERIFIED STUDENT • ACTIVE"}</span>
@@ -3343,6 +3353,7 @@ function renderProfile() {
             </div>
           </div>
           <div class="profile-hero-actions">
+            ${!isAdminUser() ? `<label for="signedInStudentPhotoInput" class="btn btn-outline btn-sm" style="cursor: pointer; background: rgba(212,175,55,0.16); color: #F4E2A3; border-color: rgba(212,175,55,0.45);">${user.photoUrl ? "Change Photo" : "Add Photo"}</label>` : ""}
             ${!isAdminUser() ? `<button type="button" class="btn btn-gold btn-sm" data-action="open-edit-student-modal">Edit Profile</button>` : ""}
             <button type="button" class="btn btn-outline btn-sm" data-action="${isAdminUser() ? "admin-logout" : "student-signout"}" style="background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.3);">
               Sign Out
@@ -4177,9 +4188,25 @@ function setupListeners() {
     } else if (action === "open-edit-student-modal") {
       const cur = getActiveUser();
       if (isGuestUser() || isAdminUser()) return;
+      pendingEditStudentPhotoDataUrl = "";
+      pendingEditStudentPhotoCleared = false;
+      const initials = cur.fullName.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "PGD";
       openModal(
         "Edit Student Profile",
         `<form id="editStudentProfileForm" style="display: grid; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted);">
+            <div id="editStuPhotoPreviewWrap" data-initials="${escapeHtml(initials)}" style="width: 56px; height: 56px; border-radius: 50%; overflow: hidden; border: 2px solid var(--gold); background: var(--navy); color: var(--gold); display: grid; place-items: center; font-weight: 800; font-size: 18px; flex-shrink: 0;">
+              ${cur.photoUrl ? `<img src="${escapeHtml(cur.photoUrl)}" alt="${escapeHtml(cur.fullName)}" style="width: 100%; height: 100%; object-fit: cover;" />` : `<span>${escapeHtml(initials)}</span>`}
+            </div>
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 12.5px; font-weight: 700; color: var(--navy); margin-bottom: 6px;">Profile Photo</div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <label for="editStuPhotoInput" class="btn btn-outline btn-sm" style="cursor: pointer;">${cur.photoUrl ? "Change Photo" : "Add Photo"}</label>
+                <input type="file" id="editStuPhotoInput" accept="image/*" style="display: none;" />
+                ${cur.photoUrl ? `<button type="button" class="btn btn-outline btn-sm" data-modal-action="clear-edit-student-photo">Remove Photo</button>` : ""}
+              </div>
+            </div>
+          </div>
           <input type="text" id="editStuName" class="input" placeholder="Full Name" value="${escapeHtml(cur.fullName)}" required />
           <input type="email" id="editStuEmail" class="input" placeholder="Registered Email" value="${escapeHtml(cur.email || "")}" required />
           <input type="tel" id="editStuMobile" class="input" placeholder="Mobile Number" value="${escapeHtml(cur.mobileNumber || "")}" />
@@ -4296,6 +4323,35 @@ function setupListeners() {
           wrap.innerHTML = `<img id="profilePhotoPreviewImg" src="${escapeHtml(dataUrl)}" alt="Profile Preview" style="width: 100%; height: 100%; object-fit: cover;" />`;
         }
         showToast("Profile photo attached.");
+      }).catch(() => {
+        showToast("Could not load selected photo.", true);
+      });
+    } else if (e.target.id === "signedInStudentPhotoInput") {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      const cur = getActiveUser();
+      if (isGuestUser() || isAdminUser()) return;
+      resizePhotoFileToDataUrl(file).then((dataUrl) => {
+        if (!dataUrl) {
+          showToast("Could not load selected photo.", true);
+          return;
+        }
+        const existingIdx = (state.customStudents || []).findIndex((s) => s.id === cur.id);
+        const updatedRecord = { ...cur, photoUrl: dataUrl };
+        if (existingIdx >= 0) {
+          state.customStudents[existingIdx] = updatedRecord;
+        } else {
+          state.customStudents = [updatedRecord, ...(state.customStudents || [])];
+        }
+        state.activeUserId = updatedRecord.id;
+        saveState();
+        syncAccountSwitcherOptions();
+        showToast("Profile photo updated.");
+        render();
+        if (cloudUser) {
+          syncStudentAccountToFirestore(updatedRecord);
+        }
       }).catch(() => {
         showToast("Could not load selected photo.", true);
       });
@@ -4528,6 +4584,38 @@ function setupListeners() {
       const inp = document.getElementById(inputId);
       if (!inp) return;
       inp.value = hours > 0 ? toDateTimeLocalValue(Date.now() + hours * 3600 * 1000) : "";
+    } else if (modalAction === "clear-edit-student-photo") {
+      pendingEditStudentPhotoDataUrl = "";
+      pendingEditStudentPhotoCleared = true;
+      const wrap = document.getElementById("editStuPhotoPreviewWrap");
+      if (wrap) {
+        const initials = wrap.dataset.initials || "PGD";
+        wrap.innerHTML = `<span>${escapeHtml(initials)}</span>`;
+      }
+      showToast("Photo cleared — tap Save Student Profile to apply.");
+    }
+  });
+
+  document.getElementById("modalBody").addEventListener("change", (e) => {
+    if (e.target.id === "editStuPhotoInput") {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      resizePhotoFileToDataUrl(file).then((dataUrl) => {
+        if (!dataUrl) {
+          showToast("Could not load selected photo.", true);
+          return;
+        }
+        pendingEditStudentPhotoDataUrl = dataUrl;
+        pendingEditStudentPhotoCleared = false;
+        const wrap = document.getElementById("editStuPhotoPreviewWrap");
+        if (wrap) {
+          wrap.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Profile Preview" style="width: 100%; height: 100%; object-fit: cover;" />`;
+        }
+        showToast("Photo selected — tap Save Student Profile.");
+      }).catch(() => {
+        showToast("Could not load selected photo.", true);
+      });
     }
   });
 
@@ -4692,14 +4780,20 @@ function setupListeners() {
         return;
       }
       const existingIdx = (state.customStudents || []).findIndex((s) => s.id === cur.id);
+      const nextPhotoUrl = pendingEditStudentPhotoCleared
+        ? ""
+        : (pendingEditStudentPhotoDataUrl || cur.photoUrl || "");
       const updatedRecord = {
         ...cur,
         fullName: updatedName,
         email: updatedEmail,
         mobileNumber: updatedMobile,
         organization: updatedOrg,
-        enrolledProgram: updatedProgram || GUEST_USER.enrolledProgram
+        enrolledProgram: updatedProgram || GUEST_USER.enrolledProgram,
+        photoUrl: nextPhotoUrl
       };
+      pendingEditStudentPhotoDataUrl = "";
+      pendingEditStudentPhotoCleared = false;
       if (existingIdx >= 0) {
         state.customStudents[existingIdx] = updatedRecord;
       } else {

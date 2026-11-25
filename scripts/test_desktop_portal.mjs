@@ -544,4 +544,6 @@ test("Profile hero layout avoids vertical character breaking and Admin Roster tr
   assert.ok(appJs.includes('class="profile-hero-header"') && appJs.includes('class="profile-hero-name"'), "Profile card must use responsive hero header classes");
   assert.ok(appJs.includes("renderAdminRegisteredStudentsCard") && appJs.includes("fetchCloudRegisteredUsers"), "Admin view must include Registered Students & Cloud Directory");
   assert.ok(appJs.includes("syncStudentAccountToFirestore"), "Google Cloud Sync must persist student profiles into Firestore users collection");
+  assert.ok(appJs.includes('id="signedInStudentPhotoInput"') && appJs.includes('id="editStuPhotoInput"'), "Signed-in students must be able to add or change photo after registration");
+  assert.ok(appJs.includes('data-modal-action="clear-edit-student-photo"'), "Edit Student Profile modal must allow removing profile photo");
 });

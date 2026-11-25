@@ -14,6 +14,7 @@ import {
   MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
   buildFirestoreManifestPayload,
+  buildFirestoreUserAccountPayload,
   splitBytesIntoLessonFileChunks
 } from "../public/desktop/curriculum-data.js";
 import {
@@ -496,6 +497,47 @@ test("Desktop & Mobile Admin Assessment Studio builds custom MCQ exams, timed de
   assert.ok(appJs.includes("c.settings.examsJson") && appJs.includes("c.settings.assignmentsJson"), "Cloud sync listener must deserialize examsJson & assignmentsJson");
 });
 
+test("Profile hero layout avoids vertical character breaking and Admin Roster tracks cloud & local registered students", () => {
+  const createUserDoc = buildFirestoreUserAccountPayload({
+    uid: "stu-uid-9837",
+    studentId: "ISCEB-2026-9837",
+    fullName: "Khondokar Jerin Anjum",
+    email: "khondokarjerinanjum66@gmail.com",
+    mobileNumber: "01886442994",
+    photoUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+    isCreate: true,
+    serverTimestampToken: "TS"
+  });
+  assert.equal(createUserDoc.uid, "stu-uid-9837");
+  assert.equal(createUserDoc.role, "STUDENT");
+  assert.equal(createUserDoc.accountStatus, "ACTIVE");
+  assert.equal(createUserDoc.isVerified, false);
+  assert.deepEqual(createUserDoc.assignedModuleIds, []);
+  assert.ok(!("photoUrl" in createUserDoc), "Base64 data URIs must be excluded so photoUrl never breaches firestore.rules size limit");
+  assert.equal(createUserDoc.createdAt, "TS");
+  assert.equal(createUserDoc.updatedAt, "TS");
 
+  const updateUserDoc = buildFirestoreUserAccountPayload({
+    uid: "stu-uid-9837",
+    studentId: "ISCEB-2026-9837",
+    fullName: "Khondokar Jerin Anjum",
+    email: "khondokarjerinanjum66@gmail.com",
+    mobileNumber: "01886442994",
+    photoUrl: "https://lh3.googleusercontent.com/a/avatar.jpg",
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.deepEqual(Object.keys(updateUserDoc).sort(), [
+    "designation", "enrolledProgram", "fullName", "mobileNumber", "organization", "photoUrl", "updatedAt"
+  ]);
+  assert.equal(updateUserDoc.photoUrl, "https://lh3.googleusercontent.com/a/avatar.jpg");
 
+  const css = fs.readFileSync("./public/desktop/styles.css", "utf8");
+  assert.ok(css.includes(".profile-hero-header") && css.includes(".profile-hero-name"), "Missing responsive profile hero CSS");
+  assert.ok(css.includes("word-break: normal;"), "Profile name must keep whole words intact instead of vertical letter splits");
 
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes('class="profile-hero-header"') && appJs.includes('class="profile-hero-name"'), "Profile card must use responsive hero header classes");
+  assert.ok(appJs.includes("renderAdminRegisteredStudentsCard") && appJs.includes("fetchCloudRegisteredUsers"), "Admin view must include Registered Students & Cloud Directory");
+  assert.ok(appJs.includes("syncStudentAccountToFirestore"), "Google Cloud Sync must persist student profiles into Firestore users collection");
+});

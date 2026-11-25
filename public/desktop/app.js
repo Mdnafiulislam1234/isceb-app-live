@@ -12,6 +12,7 @@ import {
   MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
   buildFirestoreManifestPayload,
+  buildFirestoreUserAccountPayload,
   splitBytesIntoLessonFileChunks
 } from "./curriculum-data.js";
 import {
@@ -262,6 +263,10 @@ let state = loadState();
 let remoteVersionInfo = null;
 let pwaBuildInfo = null;
 let cloudUser = null;
+let cloudRegisteredUsers = [];
+let cloudUsersLoadedAt = 0;
+let cloudUsersAccessNote = "";
+let adminStudentSearch = "";
 let firebaseModules = null;
 let deferredInstallPrompt = null;
 let activeTimerInterval = null;
@@ -498,6 +503,10 @@ function registerOrSignInCustomStudent({ fullName, email, mobileNumber, organiza
   syncAccountSwitcherOptions();
   render();
   showToast(`Signed in as ${cleanName}`);
+  const createdOrUpdated = (state.customStudents || []).find((s) => s.id === state.activeUserId);
+  if (createdOrUpdated && cloudUser) {
+    syncStudentAccountToFirestore(createdOrUpdated);
+  }
   return true;
 }
 
@@ -968,8 +977,14 @@ async function initFirebaseSdk() {
 
     authMod.onAuthStateChanged(auth, (user) => {
       cloudUser = user || null;
+      if (!user) {
+        cloudRegisteredUsers = [];
+        cloudUsersLoadedAt = 0;
+        cloudUsersAccessNote = "";
+      }
       updateChromeBadges();
       if (user) {
+        syncStudentAccountToFirestore(getActiveUser()).catch(() => {});
         syncFromCloudFirestore(true).then(() => {
           if (pendingMediaAfterSignIn) {
             const mediaToOpen = pendingMediaAfterSignIn;
@@ -983,6 +998,92 @@ async function initFirebaseSdk() {
   } catch (err) {
     console.warn("Firebase JS SDK unavailable offline:", err);
     return null;
+  }
+}
+
+async function syncStudentAccountToFirestore(studentProfile) {
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) return false;
+  if (!studentProfile || studentProfile.id === GUEST_USER.id || studentProfile.role === "ADMIN" || isAdminUser()) {
+    return false;
+  }
+  const authEmail = String(cloudUser.email || "").trim().toLowerCase();
+  if (authEmail === "www.mdnafiulislam@gmail.com" || authEmail === "amirul.islam@isceb.org") {
+    return false;
+  }
+  try {
+    const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = fb.fsMod;
+    const ref = doc(fb.db, "users", cloudUser.uid);
+    const snap = await getDoc(ref);
+    const isCreate = !snap.exists();
+    const payload = buildFirestoreUserAccountPayload({
+      uid: cloudUser.uid,
+      studentId: studentProfile.studentId || `ISCEB-2026-${cloudUser.uid.slice(0, 6).toUpperCase()}`,
+      fullName: studentProfile.fullName || cloudUser.displayName || "ISCEB Learner",
+      email: studentProfile.email || cloudUser.email,
+      photoUrl: studentProfile.photoUrl || cloudUser.photoURL || "",
+      organization: studentProfile.organization || "",
+      designation: studentProfile.designation || "PGD Candidate",
+      mobileNumber: studentProfile.mobileNumber || "",
+      enrolledProgram: studentProfile.enrolledProgram || GUEST_USER.enrolledProgram,
+      isCreate,
+      serverTimestampToken: serverTimestamp()
+    });
+    if (isCreate) {
+      await setDoc(ref, payload);
+    } else {
+      await updateDoc(ref, payload);
+    }
+    return true;
+  } catch (err) {
+    console.warn("Cloud student profile sync skipped:", err?.message || err);
+    return false;
+  }
+}
+
+async function fetchCloudRegisteredUsers(showResultToast = false) {
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) {
+    cloudRegisteredUsers = [];
+    cloudUsersAccessNote = "Sign in with an authorized Admin Google account to view cloud-registered students.";
+    if (showResultToast) showToast("Sign in with Google first to load cloud-registered students.", true);
+    return [];
+  }
+  try {
+    const { collection, getDocs } = fb.fsMod;
+    const snap = await getDocs(collection(fb.db, "users"));
+    const rows = snap.docs.map((d) => {
+      const data = d.data() || {};
+      return {
+        uid: data.uid || d.id,
+        studentId: data.studentId || "",
+        fullName: data.fullName || "ISCEB Learner",
+        email: data.email || "",
+        mobileNumber: data.mobileNumber || "",
+        organization: data.organization || "",
+        designation: data.designation || "PGD Candidate",
+        enrolledProgram: data.enrolledProgram || GUEST_USER.enrolledProgram,
+        role: data.role || "STUDENT",
+        accountStatus: data.accountStatus || "ACTIVE",
+        isVerified: Boolean(data.isVerified),
+        photoUrl: data.photoUrl || "",
+        source: "CLOUD"
+      };
+    });
+    rows.sort((a, b) => String(a.fullName || "").localeCompare(String(b.fullName || "")));
+    cloudRegisteredUsers = rows;
+    cloudUsersLoadedAt = Date.now();
+    cloudUsersAccessNote = "";
+    if (showResultToast) {
+      const studentCount = rows.filter((r) => r.role === "STUDENT").length;
+      showToast(`Loaded ${studentCount} registered student(s) from Firestore.`);
+    }
+    render();
+    return rows;
+  } catch (err) {
+    cloudUsersAccessNote = "Admin Google account (www.mdnafiulislam@gmail.com or amirul.islam@isceb.org) required to list all students.";
+    if (showResultToast) showToast(cloudUsersAccessNote, true);
+    return [];
   }
 }
 
@@ -1005,6 +1106,8 @@ async function signInWithGoogleCloud() {
         enrolledProgram: GUEST_USER.enrolledProgram,
         photoUrl: cred.user.photoURL || ""
       });
+    } else if (!isGuestUser() && !isAdminUser()) {
+      await syncStudentAccountToFirestore(getActiveUser());
     }
     showToast(`Cloud connected as ${cred.user.email}`);
     await syncFromCloudFirestore(false);
@@ -1114,6 +1217,9 @@ async function syncFromCloudFirestore(silent = false) {
       }
     }
     saveState();
+    if (isAdminUser() || ["www.mdnafiulislam@gmail.com", "amirul.islam@isceb.org"].includes(String(cloudUser.email || "").toLowerCase())) {
+      await fetchCloudRegisteredUsers(false);
+    }
     updateChromeBadges();
     render();
     if (!silent) showToast(`Synced Live Cloud Curriculum (${state.manifest.versionTag})`);
@@ -3031,6 +3137,135 @@ function renderAdmin() {
         </div>
       </div>
     </div>
+
+    ${renderAdminRegisteredStudentsCard()}
+  `;
+}
+
+function getMergedRegisteredStudentsForAdmin() {
+  const byKey = new Map();
+  for (const row of cloudRegisteredUsers || []) {
+    const key = String(row.email || row.uid || row.studentId).trim().toLowerCase();
+    if (key) byKey.set(key, { ...row, source: "CLOUD" });
+  }
+  for (const loc of state.customStudents || []) {
+    const key = String(loc.email || loc.id || loc.studentId).trim().toLowerCase();
+    if (!key) continue;
+    if (!byKey.has(key)) {
+      byKey.set(key, { ...loc, source: "LOCAL" });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function renderAdminRegisteredStudentsCard() {
+  const allAccounts = getMergedRegisteredStudentsForAdmin();
+  const studentAccounts = allAccounts.filter((u) => (u.role || "STUDENT") === "STUDENT");
+  const cloudCount = studentAccounts.filter((u) => u.source === "CLOUD").length;
+  const localCount = studentAccounts.filter((u) => u.source === "LOCAL").length;
+  const q = String(adminStudentSearch || "").trim().toLowerCase();
+  const filtered = q
+    ? allAccounts.filter((u) =>
+        `${u.fullName || ""} ${u.studentId || ""} ${u.email || ""} ${u.mobileNumber || ""} ${u.organization || ""}`
+          .toLowerCase()
+          .includes(q)
+      )
+    : allAccounts;
+
+  return `
+    <div class="card" id="adminRegisteredStudentsCard" style="margin-top: 16px;">
+      <div class="flex-header-between" style="margin-bottom: 12px;">
+        <div>
+          <span class="badge badge-navy">Student Enrollment Roster</span>
+          <h3 style="margin: 6px 0 2px; color: var(--navy);">Registered Students &amp; Cloud Directory</h3>
+          <div style="font-size: 12px; color: var(--muted);">
+            Students who sign in with Google Cloud Sync appear automatically across both Android &amp; Web Admin rosters.
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-primary btn-sm" data-action="refresh-cloud-users">Refresh Cloud Roster</button>
+          ${!cloudUser ? `<button type="button" class="btn btn-gold btn-sm" data-action="trigger-google-auth">Sign in Google (Cloud Sync)</button>` : ""}
+        </div>
+      </div>
+
+      <div class="stats-grid" style="margin-bottom: 12px;">
+        <div class="stat-card">
+          <div class="stat-label">Registered Students</div>
+          <div class="stat-value">${studentAccounts.length}</div>
+          <div class="stat-sub">Total Enrolled</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cloud Synced</div>
+          <div class="stat-value">${cloudCount}</div>
+          <div class="stat-sub">All Devices (Firestore)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Local Browser Only</div>
+          <div class="stat-value">${localCount}</div>
+          <div class="stat-sub">Pending Google Sync</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">All Directory Users</div>
+          <div class="stat-value">${allAccounts.length}</div>
+          <div class="stat-sub">${cloudUsersLoadedAt ? "Live Synced" : "Local Snapshot"}</div>
+        </div>
+      </div>
+
+      ${
+        cloudUsersAccessNote
+          ? `<div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 600;">${escapeHtml(cloudUsersAccessNote)}</div>`
+          : ""
+      }
+
+      <div style="margin-bottom: 12px;">
+        <input type="search" id="adminStudentSearchInput" class="input" placeholder="Search registered students by name, Student ID, email, or phone..." value="${escapeHtml(adminStudentSearch)}" />
+      </div>
+
+      ${
+        filtered.length === 0
+          ? `<div style="padding: 16px; border: 1px dashed var(--border); border-radius: 12px; color: var(--muted); font-size: 13px; text-align: center;">
+              ${allAccounts.length === 0 ? "No student registrations synced yet. Once a student signs in with Google Cloud Auto-Sync, their full profile appears here automatically." : "No students match your search filter."}
+            </div>`
+          : `<div class="registered-student-grid">
+              ${filtered
+                .map((stu) => {
+                  const initials = String(stu.fullName || "S")
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((p) => p[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase();
+                  return `
+                    <div class="registered-student-card">
+                      <div class="flex-header-between" style="align-items: flex-start;">
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 220px;">
+                          <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--navy); color: var(--gold); display: grid; place-items: center; font-weight: 800; font-size: 14px; flex-shrink: 0;">
+                            ${escapeHtml(initials || "S")}
+                          </div>
+                          <div style="min-width: 0; flex: 1;">
+                            <div style="font-weight: 800; color: var(--navy); font-size: 14.5px; word-break: normal; overflow-wrap: break-word;">${escapeHtml(stu.fullName)}</div>
+                            <div style="font-size: 12px; color: var(--gold-dark); font-weight: 700;">${escapeHtml(stu.studentId || "ID Pending")} • ${escapeHtml(stu.organization || "ISCEB Enrolled")}</div>
+                          </div>
+                        </div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                          <span class="badge ${stu.source === "CLOUD" ? "badge-ok" : "badge-warn"}">${stu.source === "CLOUD" ? "Cloud Synced" : "Local Device"}</span>
+                          <span class="badge ${stu.isVerified ? "badge-gold" : "badge-navy"}">${escapeHtml(stu.role || "STUDENT")} • ${stu.isVerified ? "Verified" : escapeHtml(stu.accountStatus || "ACTIVE")}</span>
+                        </div>
+                      </div>
+                      <div style="font-size: 12px; color: #334155; overflow-wrap: anywhere;">
+                        <strong>Email:</strong> ${escapeHtml(stu.email || "—")}${stu.mobileNumber ? ` &nbsp;•&nbsp; <strong>Mobile:</strong> ${escapeHtml(stu.mobileNumber)}` : ""}
+                      </div>
+                      <div style="font-size: 11.5px; color: var(--muted);">
+                        <strong>Program:</strong> ${escapeHtml(stu.enrolledProgram || GUEST_USER.enrolledProgram)}
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>`
+      }
+    </div>
   `;
 }
 
@@ -3093,21 +3328,21 @@ function renderProfile() {
     `
     : `
       <div class="card card-navy">
-        <div class="flex-header-between" style="align-items: flex-start;">
-          <div style="display: flex; gap: 14px; align-items: center; min-width: 0; flex: 1;">
+        <div class="profile-hero-header">
+          <div class="profile-hero-identity">
             ${
               user.photoUrl || isAdminUser()
-                ? `<img src="${escapeHtml(user.photoUrl || (user.id === ADMIN_AMIRUL_ID ? "./admin-amirul.webp" : "./admin-nafiul.webp"))}" alt="${escapeHtml(user.fullName)}" class="portrait-avatar" style="width: 64px; height: 64px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold); flex-shrink: 0;" />`
-                : `<div style="width: 64px; height: 64px; border-radius: 50%; background: var(--gold); color: var(--navy-dark); display: grid; place-items: center; font-weight: 800; font-size: 20px; flex-shrink: 0;">${escapeHtml(user.fullName.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase())}</div>`
+                ? `<img src="${escapeHtml(user.photoUrl || (user.id === ADMIN_AMIRUL_ID ? "./admin-amirul.webp" : "./admin-nafiul.webp"))}" alt="${escapeHtml(user.fullName)}" class="portrait-avatar" style="width: 60px; height: 60px; object-fit: cover; object-position: center 20%; border: 2px solid var(--gold); flex-shrink: 0;" />`
+                : `<div style="width: 60px; height: 60px; border-radius: 50%; background: var(--gold); color: var(--navy-dark); display: grid; place-items: center; font-weight: 800; font-size: 19px; flex-shrink: 0;">${escapeHtml(user.fullName.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase())}</div>`
             }
-            <div style="min-width: 0;">
+            <div class="profile-hero-meta">
               <span class="badge badge-gold">${isAdminUser() ? "VERIFIED ADMINISTRATOR" : "VERIFIED STUDENT • ACTIVE"}</span>
-              <h2 style="margin: 6px 0 3px; font-size: 20px; color: #fff;">${escapeHtml(user.fullName)}</h2>
-              <div style="font-size: 12.5px; color: #E2E8F0;">${escapeHtml(user.studentId || user.designation || "PGD Candidate")} • ${escapeHtml(user.organization || "ISCEB")}</div>
-              <div style="font-size: 12px; color: #B0C2D6; margin-top: 2px;">${escapeHtml(user.email || "")}${user.mobileNumber ? ` • ${escapeHtml(user.mobileNumber)}` : ""}</div>
+              <h2 class="profile-hero-name">${escapeHtml(user.fullName)}</h2>
+              <div class="profile-hero-line" style="color: #E2E8F0;">${escapeHtml(user.studentId || user.designation || "PGD Candidate")} • ${escapeHtml(user.organization || "ISCEB")}</div>
+              <div class="profile-hero-line" style="font-size: 12px; color: #B0C2D6; margin-top: 2px;">${escapeHtml(user.email || "")}${user.mobileNumber ? ` • ${escapeHtml(user.mobileNumber)}` : ""}</div>
             </div>
           </div>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <div class="profile-hero-actions">
             ${!isAdminUser() ? `<button type="button" class="btn btn-gold btn-sm" data-action="open-edit-student-modal">Edit Profile</button>` : ""}
             <button type="button" class="btn btn-outline btn-sm" data-action="${isAdminUser() ? "admin-logout" : "student-signout"}" style="background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.3);">
               Sign Out
@@ -3117,6 +3352,13 @@ function renderProfile() {
         <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.16); font-size: 12px; color: #F4E2A3;">
           Program: ${escapeHtml(user.enrolledProgram || GUEST_USER.enrolledProgram)}
         </div>
+        ${
+          !isAdminUser() && !cloudUser
+            ? `<div style="margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 11.5px; color: #CBD5E1;">
+                Saved on this device. Connect <strong>Google Cloud Auto-Sync</strong> below so your profile &amp; progress sync to Admin roster.
+              </div>`
+            : ""
+        }
       </div>
 
       <div class="stats-grid" style="margin-bottom: 0;">
@@ -3899,6 +4141,8 @@ function setupListeners() {
       });
     } else if (action === "trigger-google-auth") {
       signInWithGoogleCloud();
+    } else if (action === "refresh-cloud-users") {
+      fetchCloudRegisteredUsers(true);
     } else if (action === "profile-sync-now") {
       syncFromCloudFirestore(false);
     } else if (action === "google-signout") {
@@ -4010,6 +4254,14 @@ function setupListeners() {
       saveState();
       render();
       const inp = document.getElementById("courseSearchInput");
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    } else if (e.target.id === "adminStudentSearchInput") {
+      adminStudentSearch = e.target.value;
+      render();
+      const inp = document.getElementById("adminStudentSearchInput");
       if (inp) {
         inp.focus();
         inp.setSelectionRange(inp.value.length, inp.value.length);
@@ -4193,6 +4445,9 @@ function setupListeners() {
           verifiedAdminSessionId = res.adminId;
           lastIssuedSecretNotice = "";
           showToast(res.message);
+          if (cloudUser) {
+            fetchCloudRegisteredUsers(false);
+          }
         } else {
           showToast(res.error, true);
         }
@@ -4456,6 +4711,9 @@ function setupListeners() {
       syncAccountSwitcherOptions();
       showToast("Student profile updated.");
       render();
+      if (cloudUser) {
+        syncStudentAccountToFirestore(updatedRecord);
+      }
     }
   });
 }

@@ -581,3 +581,65 @@ export function buildFirestoreCatalogPayload({
   }
   return payload;
 }
+
+export function buildFirestoreUserAccountPayload({
+  uid,
+  studentId,
+  fullName,
+  email,
+  photoUrl = "",
+  organization = "",
+  designation = "PGD Candidate",
+  mobileNumber = "",
+  enrolledProgram = "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)",
+  isCreate = false,
+  serverTimestampToken = null
+}) {
+  const safeUid = String(uid || "").trim().slice(0, 128);
+  const safeStudentId = String(studentId || "ISCEB-PGD-2026-0001").trim().slice(0, 64);
+  const safeName = String(fullName || "ISCEB Learner").trim().slice(0, 160) || "ISCEB Learner";
+  const safeEmail = String(email || `${safeUid}@isceb.org`).trim().slice(0, 200);
+  const safePhoto = typeof photoUrl === "string" && photoUrl.length > 0 && photoUrl.length <= 1000 && !photoUrl.startsWith("data:")
+    ? photoUrl
+    : "";
+  const safeProgram = String(enrolledProgram || "Post Graduate Diploma (PGD) in Supply Chain Management (SCM)").trim().slice(0, 200);
+  const safeOrg = String(organization || "").trim().slice(0, 200);
+  const safeDesignation = String(designation || "PGD Candidate").trim().slice(0, 200);
+  const safeMobile = String(mobileNumber || "").trim().slice(0, 64);
+
+  if (isCreate) {
+    const payload = {
+      uid: safeUid,
+      studentId: safeStudentId.length >= 4 ? safeStudentId : "ISCEB-2026-0001",
+      fullName: safeName,
+      email: safeEmail.length >= 3 ? safeEmail : `${safeUid}@isceb.org`,
+      role: "STUDENT",
+      enrolledProgram: safeProgram,
+      accountStatus: "ACTIVE",
+      isVerified: false,
+      assignedModuleIds: []
+    };
+    if (safePhoto) payload.photoUrl = safePhoto;
+    if (safeOrg) payload.organization = safeOrg;
+    if (safeDesignation) payload.designation = safeDesignation;
+    if (safeMobile) payload.mobileNumber = safeMobile;
+    if (serverTimestampToken !== null) {
+      payload.createdAt = serverTimestampToken;
+      payload.updatedAt = serverTimestampToken;
+    }
+    return payload;
+  }
+
+  const updatePayload = {
+    fullName: safeName,
+    photoUrl: safePhoto || null,
+    organization: safeOrg || null,
+    designation: safeDesignation || null,
+    mobileNumber: safeMobile || null,
+    enrolledProgram: safeProgram
+  };
+  if (serverTimestampToken !== null) {
+    updatePayload.updatedAt = serverTimestampToken;
+  }
+  return updatePayload;
+}

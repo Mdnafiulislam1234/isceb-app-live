@@ -566,6 +566,83 @@ button, input, select, textarea {
   color: var(--navy);
 }
 
+.profile-hero-header {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profile-hero-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  width: 100%;
+}
+
+.profile-hero-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.profile-hero-name {
+  margin: 6px 0 4px;
+  font-size: clamp(16px, 4.4vw, 20px);
+  line-height: 1.25;
+  color: #fff;
+  font-weight: 800;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.profile-hero-line {
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.profile-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .profile-hero-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .profile-hero-identity {
+    flex: 1 1 320px;
+    width: auto;
+  }
+
+  .profile-hero-actions {
+    width: auto;
+    flex-shrink: 0;
+    justify-content: flex-end;
+  }
+}
+
+.registered-student-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.registered-student-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* Inputs & Tables */
 .search-row {
   display: flex;

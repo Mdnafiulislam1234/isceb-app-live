@@ -61,11 +61,20 @@ object BulkMcqQuestionParser {
         val safeMarks = defaultMarks.coerceIn(1, 50)
         val lines = rawText.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
-        val answerKeyStart = lines.indexOfFirst {
-            Regex(
-                "^(?:answer\\s*key|answers\\s*key|correct\\s*answers?|উত্তরমালা|সঠিক\\s*উত্তরসমূহ)\\s*[:\\-–.]?\\s*.*$",
+        val answerKeyStart = lines.withIndex().indexOfFirst { (idx, line) ->
+            val trimmed = line.trim()
+            val isKeyHeader = Regex(
+                "^(?:answer\\s*key|answers\\s*key|উত্তরমালা|সঠিক\\s*উত্তরসমূহ)\\s*[:\\-–.]?\\s*.*$",
                 RegexOption.IGNORE_CASE
-            ).matches(it.trim())
+            ).matches(trimmed) || Regex(
+                "^(?:correct\\s*answers|answers)\\s*[:\\-–.]?\\s*$",
+                RegexOption.IGNORE_CASE
+            ).matches(trimmed)
+            if (!isKeyHeader) false
+            else {
+                val tail = lines.subList(idx, lines.size)
+                tail.none { Regex("^\\s*[(\\[]?[B-Db-dখগঘ][)\\].:]\\s+").containsMatchIn(it) }
+            }
         }
         val bodyLines = if (answerKeyStart >= 0) lines.subList(0, answerKeyStart) else lines
         val answerKeyMap = mutableMapOf<Int, Int>()

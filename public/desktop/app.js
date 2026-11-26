@@ -2845,7 +2845,7 @@ function openAdminExamBuilderModal(examId = "") {
             Default Marks/Q:
             <input type="number" id="aebImportDefaultMarks" class="input" min="1" max="50" value="5" style="width: 62px; padding: 4px 8px; color: #0F172A;" />
           </label>
-          <button type="button" class="btn btn-outline btn-sm" data-modal-action="apply-default-marks-all" style="color: #F4D06F; border-color: rgba(244,208,111,0.5);">Apply Marks to All</button>
+          <button type="button" class="btn btn-sm" data-modal-action="apply-default-marks-all" style="background: rgba(255,255,255,0.14); color: #FDE68A; border: 1px solid rgba(253,230,138,0.55);">Apply Marks to All</button>
           <select id="aebImportMode" class="select" style="width: auto; padding: 5px 10px; font-size: 11.5px; color: #0F172A;">
             <option value="replace">Replace Questions Below</option>
             <option value="append">Append to Existing</option>

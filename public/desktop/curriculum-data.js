@@ -955,11 +955,17 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
 
   const allLines = normalizedInput.split("\n");
 
-  // Detect optional Answer Key block near bottom
+  // Detect optional Answer Key block near bottom (must NOT falsely match per-question "Correct Answer: ...")
   let answerKeyStartIdx = -1;
   for (let i = 0; i < allLines.length; i++) {
     const trimmed = allLines[i].trim();
-    if (/^(?:answer\s*key|answers\s*key|correct\s*answers?|key\s*to\s*answers?|উত্তরমালা|সঠিক\s*উত্তরসমূহ)\s*[:\-–.]?\s*(.*)$/i.test(trimmed)) {
+    const isExplicitKeyHeader =
+      /^(?:answer\s*key|answers\s*key|key\s*to\s*answers?|উত্তরমালা|সঠিক\s*উত্তরসমূহ)\s*[:\-–.]?\s*(.*)$/i.test(trimmed) ||
+      /^(?:correct\s*answers|answers)\s*[:\-–.]?\s*$/i.test(trimmed);
+    if (!isExplicitKeyHeader) continue;
+    const tailSlice = allLines.slice(i);
+    const hasTrailingOptions = tailSlice.some((ln) => /^\s*[\(\[]?[B-Db-dখগঘ][\)\].:]\s+/.test(ln));
+    if (!hasTrailingOptions && parseAnswerKeyBlock(tailSlice).size >= 1) {
       answerKeyStartIdx = i;
       break;
     }
@@ -1027,6 +1033,8 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
     }
   };
 
+  let expectingAnswerNextLine = false;
+
   for (let i = 0; i < bodyLines.length; i++) {
     const rawLine = bodyLines[i];
     const trimmed = rawLine.trim();
@@ -1040,34 +1048,32 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
       continue;
     }
 
-    // Check explicit Explanation / Note line
-    const expMatch = trimmed.match(/^(?:explanation|rationale|note|solution|ব্যাখ্যা)\s*[:\-–.]\s*(.+)$/i);
-    if (expMatch && currentQ) {
-      currentQ.explanationLines.push(expMatch[1].trim());
-      currentQ.inExplanation = true;
-      prevLineWasBlank = false;
-      continue;
-    }
-
-    // Check explicit Answer line
-    const ansMatch = trimmed.match(/^(?:correct\s*answer|right\s*answer|answer|ans|সঠিক\s*উত্তর|উত্তর)\s*[:.\-–]?\s*(.+)$/i);
-    if (ansMatch && currentQ && (currentQ.options.some(Boolean) || currentQ.activeOptIdx >= 0)) {
-      const ansBody = ansMatch[1].trim();
-      const letterMatch = ansBody.match(/^(?:option\s*)?[\(\[]?([A-Da-dকখগঘ])(?:[\)\].:\s\-]|$)/i);
+    const resolveAnswerBody = (ansBody) => {
+      if (!currentQ || !ansBody) return;
+      const cleanBody = String(ansBody).replace(/^[\*•\-✓✔✅👉\s]+/, "").trim();
+      const letterMatch = cleanBody.match(/^(?:option\s*)?(?:[\(\[]([A-Da-dকখগঘ])[\)\]]|([A-Da-dকখগঘ])(?:[\)\].:\-–]|$))/i);
       if (letterMatch) {
-        const idx = mapMcqOptionTokenToIndex(letterMatch[1]);
+        const token = letterMatch[1] || letterMatch[2];
+        const idx = mapMcqOptionTokenToIndex(token);
         if (idx >= 0) currentQ.explicitAnswerIdx = idx;
       } else {
-        currentQ.explicitAnswerText = ansBody;
+        currentQ.explicitAnswerText = cleanBody;
       }
       currentQ.sawAnswerLine = true;
       currentQ.inExplanation = false;
+    };
+
+    if (expectingAnswerNextLine && currentQ) {
+      expectingAnswerNextLine = false;
+      resolveAnswerBody(trimmed);
       prevLineWasBlank = false;
       continue;
     }
 
-    // Check explicit numbered Question header
-    const qHeaderMatch = trimmed.match(/^(?:(Q(?:uestion)?\.?\s*#?\s*|প্রশ্ন\s*))?([0-9০-৯]{1,4})\s*[\)\].:\-]\s*(.*)$/i);
+    // Check explicit numbered Question header FIRST so it can never be swallowed by explanation/answer blocks
+    const qHeaderMatch =
+      trimmed.match(/^(?:(Q(?:uestion)?\.?\s*#?\s*|প্রশ্ন\s*))?[\(\[]?([0-9০-৯]{1,4})[\)\]]?\s*[\)\].:\-]\s*(.*)$/i) ||
+      trimmed.match(/^(Q(?:uestion)?\.?\s*#?\s*|প্রশ্ন\s*)([0-9০-৯]{1,4})\s*(.*)$/i);
     if (qHeaderMatch) {
       const hasExplicitWord = Boolean(qHeaderMatch[1]);
       const qNum = Number(normalizeQuestionDigits(qHeaderMatch[2]));
@@ -1078,7 +1084,7 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
         Number.isFinite(qNum) &&
         qNum >= 1 &&
         qNum <= 500 &&
-        (!currentQ || currentHasOptions || hasExplicitWord || qNum === expectedNextNum || (currentQ.sawAnswerLine));
+        (!currentQ || currentHasOptions || hasExplicitWord || qNum === expectedNextNum || currentQ.sawAnswerLine);
 
       if (canStartQuestion) {
         const { prefixText, optionSegments } = splitInlineMcqOptions(restOfLine);
@@ -1091,6 +1097,36 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
         prevLineWasBlank = false;
         continue;
       }
+    }
+
+    // Check explicit Answer line
+    const ansMatch = trimmed.match(/^(?:[\*•\-✓✔✅👉\s]*)(?:correct\s*(?:answer|option)|right\s*(?:answer|option)|answer|ans|correct|সঠিক\s*উত্তর|উত্তর)\s*[:.\-–]?\s*(.*)$/i);
+    if (ansMatch && currentQ && (currentQ.options.some(Boolean) || currentQ.activeOptIdx >= 0)) {
+      const ansBody = (ansMatch[1] || "").trim();
+      if (!ansBody) {
+        expectingAnswerNextLine = true;
+      } else {
+        resolveAnswerBody(ansBody);
+      }
+      prevLineWasBlank = false;
+      continue;
+    }
+
+    // Check Solution line that starts directly with an Option letter (e.g. "Solution: B")
+    const solAnsMatch = trimmed.match(/^solution\s*[:.\-–]\s*((?:option\s*)?(?:[\(\[]([A-Da-dকখগঘ])[\)\]]|([A-Da-dকখগঘ])(?:[\)\].:\-–]|$)).*)$/i);
+    if (solAnsMatch && currentQ && (currentQ.options.some(Boolean) || currentQ.activeOptIdx >= 0)) {
+      resolveAnswerBody(solAnsMatch[1]);
+      prevLineWasBlank = false;
+      continue;
+    }
+
+    // Check explicit Explanation / Note line
+    const expMatch = trimmed.match(/^(?:explanation|rationale|note|solution|ব্যাখ্যা)\s*[:\-–.]\s*(.+)$/i);
+    if (expMatch && currentQ) {
+      currentQ.explanationLines.push(expMatch[1].trim());
+      currentQ.inExplanation = true;
+      prevLineWasBlank = false;
+      continue;
     }
 
     // Check for MCQ option(s) on this line (single or multi-column inline)

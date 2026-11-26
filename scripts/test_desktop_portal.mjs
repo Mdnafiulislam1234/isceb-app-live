@@ -787,6 +787,36 @@ Answer: Waste and excess inventory
   assert.equal(textAnsRes.questions.length, 1);
   assert.equal(textAnsRes.questions[0].correctOptionIndex, 1);
 
+  // Regression test: per-question "Correct Answer:" must NEVER truncate Questions 2..N as an Answer Key block
+  const multiWithCorrectAnswerLine = parseMcqQuestionsFromText(`
+1. Which of the following is the first step in the procurement process?
+A. Payment
+B. Identifying the purchasing need
+C. Receiving goods
+D. Preparing a purchase order
+Correct Answer: B) Identifying the purchasing need
+
+2. Which document authorizes a supplier to deliver goods at an agreed price?
+A. Invoice
+B. A purchase order
+C. Packing list
+D. Credit note
+Correct Answer: A purchase order
+
+3. What does EOQ stand for?
+A. Economic Order Quantity
+B. Equal Order Quality
+C. Estimated Output Quota
+D. External Order Queue
+Correct Answer:
+A
+  `);
+  assert.equal(multiWithCorrectAnswerLine.questions.length, 3);
+  assert.equal(multiWithCorrectAnswerLine.detectedAnswerCount, 3);
+  assert.equal(multiWithCorrectAnswerLine.questions[0].correctOptionIndex, 1);
+  assert.equal(multiWithCorrectAnswerLine.questions[1].correctOptionIndex, 1);
+  assert.equal(multiWithCorrectAnswerLine.questions[2].correctOptionIndex, 0);
+
   const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
   assert.ok(appJs.includes('id="examPdfImportInput"') && appJs.includes("extractOrderedTextFromPdfBytes"));
   assert.ok(appJs.includes("applyImportedMcqQuestionsToBuilder") && appJs.includes("parseMcqQuestionsFromText"));

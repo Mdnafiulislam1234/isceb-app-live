@@ -309,10 +309,14 @@ const recentlyUploadedMediaIds = new Map();
 const recentlyDeletedMediaIds = new Map();
 let adminUploadStatusBanner = null;
 const IDLE_THRESHOLD_MS = 45_000;
+const MAX_EXTERNAL_PDF_TAB_MS = 30 * 60 * 1000;
 let lastUserInteractionMs = Date.now();
 let activeMediaEngagementTimer = null;
 let activeMediaEngagementClassId = "";
+let activeMediaEngagementFlags = {};
+let activeMediaEngagementFlushFn = null;
 let activeMediaIsPlaying = false;
+let activeNewTabMediaSession = null;
 let lastProgressCloudSyncMap = new Map();
 let cloudProgressByStudentUid = new Map();
 let cloudExamAttemptsByStudentUid = new Map();
@@ -762,7 +766,10 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
     if (tracking && typeof tracking.onTotalPages === "function") {
       tracking.onTotalPages(pdf.numPages, maxPages);
     }
-    const baseCssWidth = Math.max(hostEl.clientWidth - 24, 320);
+    if (typeof requestAnimationFrame === "function") {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const baseCssWidth = Math.max(hostEl.clientWidth - 10, 320);
     const pageRecords = [];
     let renderChain = Promise.resolve();
 
@@ -846,7 +853,7 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
 
   const trackEngagement = Boolean(classId && !isAdminUser());
   const engagementBarHtml = trackEngagement
-    ? `<div id="mediaEngagementTrackerBar" style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; font-weight: 700; color: var(--navy);">
+    ? `<div id="mediaEngagementTrackerBar" style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 10px; padding: 6px 10px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; font-weight: 700; color: var(--navy); flex-shrink: 0;">
          <span id="mediaEngagementProgressLabel">Active Study Verification: Tracking...</span>
          <span id="mediaEngagementStateBadge" class="badge badge-ok">Active</span>
        </div>`
@@ -854,13 +861,14 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
 
   const zoomToolbarHtml = (isPdf || isImage)
     ? `
-      <div class="media-zoom-toolbar">
-        <span style="font-size: 12px; font-weight: 700; color: var(--navy);">HD Zoom (Up to 500%)</span>
+      <div class="media-zoom-toolbar" style="margin-bottom: 6px; padding: 6px 8px; flex-shrink: 0;">
+        <span style="font-size: 11.5px; font-weight: 700; color: var(--navy);">Zoom (500%)</span>
         <div class="media-zoom-controls">
           <button type="button" class="btn btn-outline btn-sm" id="mediaZoomOutBtn" aria-label="Zoom out">−</button>
-          <span id="mediaZoomLabel" style="min-width: 46px; text-align: center; font-size: 12.5px; font-weight: 800; color: var(--navy);">100%</span>
+          <span id="mediaZoomLabel" style="min-width: 44px; text-align: center; font-size: 12px; font-weight: 800; color: var(--navy);">100%</span>
           <button type="button" class="btn btn-outline btn-sm" id="mediaZoomInBtn" aria-label="Zoom in">+</button>
           <button type="button" class="btn btn-outline btn-sm" id="mediaZoomResetBtn">Fit</button>
+          <button type="button" class="btn btn-outline btn-sm" id="mediaFullscreenToggleBtn" aria-label="Toggle full screen">Full</button>
         </div>
       </div>
     `
@@ -909,16 +917,44 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
     `
       ${engagementBarHtml}
       ${previewBody}
-      <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 14px;">
-        <a class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open in New Tab</a>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 8px; flex-shrink: 0;">
+        <a id="mediaOpenNewTabBtn" class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener">Open in New Tab</a>
         <a class="btn btn-gold btn-sm" href="${safeUrl}" download="${safeName}">Download File</a>
       </div>
       <div id="textPreviewContainer"></div>
-    `
+    `,
+    { fullscreenReader: isPdf || isImage }
   );
 
   if (trackEngagement) {
     startActiveMediaEngagementSession(classId, { isPdf, isVideo, isAudio, isDocument: !isPdf && !isVideo && !isAudio });
+  }
+
+  const openNewTabBtn = document.getElementById("mediaOpenNewTabBtn");
+  if (openNewTabBtn && trackEngagement && (isPdf || (!isVideo && !isAudio))) {
+    openNewTabBtn.addEventListener("click", () => {
+      noteStudentInteraction();
+      activeNewTabMediaSession = {
+        classId,
+        startedAtMs: Date.now(),
+        isPdf: Boolean(isPdf)
+      };
+      refreshModalEngagementLabel(classId, activeMediaEngagementFlags);
+      showToast("Reading in New Tab — study time stays Active while you read!");
+    });
+  }
+
+  const fullscreenToggleBtn = document.getElementById("mediaFullscreenToggleBtn");
+  if (fullscreenToggleBtn) {
+    const syncFullBtnLabel = () => {
+      const isFull = document.getElementById("modalBackdrop")?.classList.contains("modal-fullscreen-reader");
+      fullscreenToggleBtn.textContent = isFull ? "Normal" : "Full";
+    };
+    syncFullBtnLabel();
+    fullscreenToggleBtn.addEventListener("click", () => {
+      document.getElementById("modalBackdrop")?.classList.toggle("modal-fullscreen-reader");
+      syncFullBtnLabel();
+    });
   }
 
   const zoomOutBtn = document.getElementById("mediaZoomOutBtn");
@@ -928,6 +964,9 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
 
   if (isPdf) {
     const host = document.getElementById("pdfCanvasHost");
+    if (host) {
+      host.addEventListener("scroll", noteStudentInteraction, { passive: true });
+    }
     const zoomController = { labelEl: zoomLabelEl, onZoomChange: null };
     let currentZoom = 100;
     const setPdfZoom = (next) => {
@@ -1267,7 +1306,18 @@ function noteStudentInteraction() {
   lastUserInteractionMs = Date.now();
 }
 
-function isUserActivelyStudyingNow(requireMediaPlaying = false) {
+function isExternalPdfTabReadingActive(classId = "") {
+  if (!activeNewTabMediaSession) return false;
+  if (classId && activeNewTabMediaSession.classId !== classId) return false;
+  const elapsed = Date.now() - Number(activeNewTabMediaSession.startedAtMs || 0);
+  return elapsed >= 0 && elapsed <= MAX_EXTERNAL_PDF_TAB_MS;
+}
+
+function isUserActivelyStudyingNow(requireMediaPlaying = false, classId = "") {
+  const cid = classId || activeMediaEngagementClassId || "";
+  if (!requireMediaPlaying && isExternalPdfTabReadingActive(cid)) {
+    return true;
+  }
   if (typeof document !== "undefined" && document.hidden) return false;
   if (requireMediaPlaying) return activeMediaIsPlaying;
   return Date.now() - lastUserInteractionMs < IDLE_THRESHOLD_MS;
@@ -1304,29 +1354,37 @@ function getLectureVerificationStatus(cls, prog) {
 }
 
 function refreshModalEngagementLabel(classId, flags = {}) {
+  const effectiveFlags = Object.keys(flags || {}).length ? flags : activeMediaEngagementFlags;
   const lbl = document.getElementById("mediaEngagementProgressLabel");
   const badge = document.getElementById("mediaEngagementStateBadge");
   if (!lbl || !badge) return;
   const prog = getClassProgress(classId);
-  const activeNow = isUserActivelyStudyingNow(Boolean(flags.isVideo || flags.isAudio));
-  if (flags.isVideo || flags.isAudio) {
+  const extActive = isExternalPdfTabReadingActive(classId);
+  const activeNow = isUserActivelyStudyingNow(Boolean(effectiveFlags.isVideo || effectiveFlags.isAudio), classId);
+  if (effectiveFlags.isVideo || effectiveFlags.isAudio) {
     const pct = Math.round(Number(prog.maxPlaybackPercent || 0));
     lbl.textContent = `Watched: ${pct}% (80% required) • Active Time: ${formatSeconds(prog.activeSeconds)}`;
     badge.textContent = pct >= 80 ? "Verified ✓" : activeNow ? "Playing" : "Paused";
     badge.className = `badge ${pct >= 80 ? "badge-ok" : activeNow ? "badge-ok" : "badge-warn"}`;
-  } else if (flags.isPdf) {
+  } else if (effectiveFlags.isPdf) {
     const total = Number(prog.totalPdfPages || 0);
     const req = total > 0 ? Math.min(total, 40) : 0;
     const seen = (prog.visitedPdfPages || []).length;
     const done = prog.isPdfConfirmed || (req > 0 && seen >= req);
     lbl.textContent = req > 0
       ? `PDF Pages Read: ${Math.min(seen, req)}/${req} • Active: ${formatSeconds(prog.activeSeconds)}${prog.idleExcludedSeconds ? ` (Idle ignored: ${formatSeconds(prog.idleExcludedSeconds)})` : ""}`
-      : `Active Reading: ${formatSeconds(prog.activeSeconds)}`;
-    badge.textContent = done ? "All Pages Read ✓" : activeNow ? "Active Reading" : "Paused (Idle)";
-    badge.className = `badge ${done ? "badge-ok" : activeNow ? "badge-ok" : "badge-warn"}`;
+      : `Active Reading: ${formatSeconds(prog.activeSeconds)}${prog.idleExcludedSeconds ? ` (Idle ignored: ${formatSeconds(prog.idleExcludedSeconds)})` : ""}`;
+    badge.textContent = extActive
+      ? "Reading (New Tab)"
+      : done
+      ? "All Pages Read ✓"
+      : activeNow
+      ? "Active Reading"
+      : "Paused (Idle)";
+    badge.className = `badge ${done || activeNow ? "badge-ok" : "badge-warn"}`;
   } else {
     lbl.textContent = `Document Reviewed • Active Time: ${formatSeconds(prog.activeSeconds)}`;
-    badge.textContent = activeNow ? "Active" : "Paused (Idle)";
+    badge.textContent = extActive ? "Reading (New Tab)" : activeNow ? "Active" : "Paused (Idle)";
     badge.className = `badge ${activeNow ? "badge-ok" : "badge-warn"}`;
   }
 }
@@ -1334,39 +1392,81 @@ function refreshModalEngagementLabel(classId, flags = {}) {
 function startActiveMediaEngagementSession(classId, flags = {}) {
   stopActiveMediaEngagementSession(false);
   activeMediaEngagementClassId = classId;
+  activeMediaEngagementFlags = flags || {};
   activeMediaIsPlaying = Boolean(flags.isVideo || flags.isAudio);
   noteStudentInteraction();
-  let ticksSinceSync = 0;
-  activeMediaEngagementTimer = setInterval(() => {
-    const cur = getClassProgress(classId);
-    const activeNow = isUserActivelyStudyingNow(Boolean(flags.isVideo || flags.isAudio));
-    if (activeNow) {
-      updateClassProgress(classId, {
-        activeSeconds: Number(cur.activeSeconds || 0) + 1,
-        pdfReadingSeconds: flags.isPdf || flags.isDocument ? Number(cur.pdfReadingSeconds || 0) + 1 : cur.pdfReadingSeconds
-      });
-    } else {
-      updateClassProgress(classId, {
-        idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + 1
-      });
+  let lastTickMs = Date.now();
+  let secSinceSync = 0;
+
+  const flushTick = (forceSyncOnReturn = false) => {
+    const now = Date.now();
+    const rawDeltaSec = Math.floor((now - lastTickMs) / 1000);
+    if (rawDeltaSec <= 0 && !forceSyncOnReturn) return;
+    lastTickMs += rawDeltaSec * 1000;
+    const deltaSec = Math.min(1800, Math.max(0, rawDeltaSec));
+
+    if (deltaSec > 0) {
+      if (
+        activeNewTabMediaSession &&
+        !document.hidden &&
+        !activeNewTabMediaSession.didLeaveTab &&
+        now - Number(activeNewTabMediaSession.startedAtMs || 0) > 15_000
+      ) {
+        activeNewTabMediaSession = null;
+      }
+      const cur = getClassProgress(classId);
+      const extActive = !flags.isVideo && !flags.isAudio && isExternalPdfTabReadingActive(classId);
+      const activeNow = isUserActivelyStudyingNow(Boolean(flags.isVideo || flags.isAudio), classId);
+
+      if (extActive) {
+        const capRemainSec = Math.max(0, Math.floor((MAX_EXTERNAL_PDF_TAB_MS - Math.max(0, now - activeNewTabMediaSession.startedAtMs - deltaSec * 1000)) / 1000));
+        const activeCredit = Math.min(deltaSec, Math.max(deltaSec > 0 && capRemainSec > 0 ? capRemainSec : 0, 0));
+        const idleOverCap = Math.max(0, deltaSec - activeCredit);
+        const totalExternalSec = Math.round((now - activeNewTabMediaSession.startedAtMs) / 1000);
+        updateClassProgress(classId, {
+          activeSeconds: Number(cur.activeSeconds || 0) + activeCredit,
+          pdfReadingSeconds: flags.isPdf || flags.isDocument ? Number(cur.pdfReadingSeconds || 0) + activeCredit : cur.pdfReadingSeconds,
+          idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + idleOverCap,
+          isPdfConfirmed: Boolean(cur.isPdfConfirmed || totalExternalSec >= 8)
+        });
+      } else if (activeNow) {
+        updateClassProgress(classId, {
+          activeSeconds: Number(cur.activeSeconds || 0) + deltaSec,
+          pdfReadingSeconds: flags.isPdf || flags.isDocument ? Number(cur.pdfReadingSeconds || 0) + deltaSec : cur.pdfReadingSeconds
+        });
+      } else {
+        updateClassProgress(classId, {
+          idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + deltaSec
+        });
+      }
+      secSinceSync += deltaSec;
     }
-    ticksSinceSync += 1;
+
     refreshModalEngagementLabel(classId, flags);
-    if (ticksSinceSync >= 15) {
-      ticksSinceSync = 0;
+    if (forceSyncOnReturn || secSinceSync >= 15) {
+      secSinceSync = 0;
       syncStudentClassProgressToFirestore(classId);
     }
-  }, 1000);
+  };
+
+  activeMediaEngagementFlushFn = flushTick;
+  activeMediaEngagementTimer = setInterval(() => flushTick(false), 1000);
 }
 
 function stopActiveMediaEngagementSession(shouldSync = true) {
   const prevCid = activeMediaEngagementClassId;
+  if (typeof activeMediaEngagementFlushFn === "function") {
+    try { activeMediaEngagementFlushFn(false); } catch (_) {}
+  }
+  activeMediaEngagementFlushFn = null;
+  activeMediaEngagementFlags = {};
   if (activeMediaEngagementTimer) {
     clearInterval(activeMediaEngagementTimer);
     activeMediaEngagementTimer = null;
   }
   activeMediaEngagementClassId = "";
   activeMediaIsPlaying = false;
+  activeNewTabMediaSession = null;
   if (shouldSync && prevCid) {
     syncStudentClassProgressToFirestore(prevCid);
   }
@@ -1421,12 +1521,13 @@ function showToast(msg, isError = false) {
   }, 3600);
 }
 
-function openModal(title, htmlContent) {
+function openModal(title, htmlContent, opts = {}) {
   const backdrop = document.getElementById("modalBackdrop");
   const titleEl = document.getElementById("modalTitle");
   const bodyEl = document.getElementById("modalBody");
   titleEl.textContent = title;
   bodyEl.innerHTML = htmlContent;
+  backdrop.classList.toggle("modal-fullscreen-reader", Boolean(opts?.fullscreenReader));
   backdrop.classList.add("open");
 }
 
@@ -1445,7 +1546,8 @@ function closeModal() {
     bodyEl.innerHTML = "";
   }
   examModalSession = null;
-  document.getElementById("modalBackdrop").classList.remove("open");
+  const backdrop = document.getElementById("modalBackdrop");
+  backdrop.classList.remove("open", "modal-fullscreen-reader");
   if (closedMediaCid) {
     const cls = state.classes.find((c) => c.id === closedMediaCid);
     const cur = getClassProgress(closedMediaCid);
@@ -5011,12 +5113,32 @@ function resizePhotoFileToDataUrl(file) {
 }
 
 function setupListeners() {
-  ["pointerdown", "touchstart", "keydown", "scroll"].forEach((evt) => {
+  ["pointerdown", "touchstart", "keydown", "scroll", "wheel"].forEach((evt) => {
     window.addEventListener(evt, noteStudentInteraction, { passive: true });
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) noteStudentInteraction();
-    if (activeMediaEngagementClassId) refreshModalEngagementLabel(activeMediaEngagementClassId);
+    if (document.hidden) {
+      if (activeNewTabMediaSession) {
+        activeNewTabMediaSession.didLeaveTab = true;
+      }
+      return;
+    }
+    if (!document.hidden) {
+      noteStudentInteraction();
+      if (typeof activeMediaEngagementFlushFn === "function") {
+        activeMediaEngagementFlushFn(true);
+      }
+      if (activeNewTabMediaSession) {
+        const awaySec = Math.round((Date.now() - Number(activeNewTabMediaSession.startedAtMs || 0)) / 1000);
+        activeNewTabMediaSession = null;
+        if (awaySec >= 8 && activeMediaEngagementClassId) {
+          showToast(`External PDF reading (${formatSeconds(awaySec)}) counted as Active Study!`);
+        }
+      }
+      if (activeMediaEngagementClassId) {
+        refreshModalEngagementLabel(activeMediaEngagementClassId);
+      }
+    }
   });
 
   const select = document.getElementById("accountSwitcher");
@@ -5260,14 +5382,25 @@ function setupListeners() {
       } else {
         if (activeTimerInterval) clearInterval(activeTimerInterval);
         noteStudentInteraction();
+        let lastStudyTickMs = Date.now();
         let ticksSinceSync = 0;
         activeTimerInterval = setInterval(() => {
-          const cur = getClassProgress(cid);
-          const activeNow = isUserActivelyStudyingNow(false);
-          if (activeNow) {
-            updateClassProgress(cid, { activeSeconds: Number(cur.activeSeconds || 0) + 1 });
-          } else {
-            updateClassProgress(cid, { idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + 1 });
+          const now = Date.now();
+          const rawDeltaSec = Math.floor((now - lastStudyTickMs) / 1000);
+          if (rawDeltaSec <= 0) return;
+          lastStudyTickMs += rawDeltaSec * 1000;
+          const deltaSec = Math.min(1800, Math.max(1, rawDeltaSec));
+
+          // Avoid double-counting if modal media engagement session is already ticking for this same class
+          const modalAlreadyCounting = activeMediaEngagementClassId === cid && Boolean(activeMediaEngagementTimer);
+          const activeNow = isUserActivelyStudyingNow(false, cid);
+          if (!modalAlreadyCounting) {
+            const cur = getClassProgress(cid);
+            if (activeNow) {
+              updateClassProgress(cid, { activeSeconds: Number(cur.activeSeconds || 0) + deltaSec });
+            } else {
+              updateClassProgress(cid, { idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + deltaSec });
+            }
           }
           const latest = getClassProgress(cid);
           const clsObj = state.classes.find((c) => c.id === cid);
@@ -5280,7 +5413,7 @@ function setupListeners() {
           if (pill) {
             pill.textContent = `Active Study: ${formatSeconds(latest.activeSeconds)}${latest.idleExcludedSeconds ? ` (${formatSeconds(latest.idleExcludedSeconds)} idle ignored)` : ""}`;
           }
-          ticksSinceSync += 1;
+          ticksSinceSync += deltaSec;
           if (ticksSinceSync >= 15) {
             ticksSinceSync = 0;
             syncStudentClassProgressToFirestore(cid);

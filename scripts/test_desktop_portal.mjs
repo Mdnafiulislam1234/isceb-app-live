@@ -823,5 +823,18 @@ A
   assert.ok(appJs.includes('id="aebPasteQuestionsInput"') && appJs.includes('id="aebQuestionCountBadge"'));
 });
 
+test("PDF Reader opens full-screen edge-to-edge and Open in New Tab credits genuine active reading instead of idle ignored", () => {
+  const css = fs.readFileSync("./public/desktop/styles.css", "utf8");
+  assert.ok(css.includes(".modal-backdrop.modal-fullscreen-reader"));
+  assert.ok(css.includes("height: 100dvh;"));
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("fullscreenReader: isPdf || isImage"));
+  assert.ok(appJs.includes('id="mediaOpenNewTabBtn"') && appJs.includes('id="mediaFullscreenToggleBtn"'));
+  assert.ok(appJs.includes("isExternalPdfTabReadingActive") && appJs.includes("activeNewTabMediaSession"));
+  assert.ok(appJs.includes("activeMediaEngagementFlushFn"));
+  assert.ok(appJs.includes('host.addEventListener("scroll", noteStudentInteraction'));
+});
+
 
 

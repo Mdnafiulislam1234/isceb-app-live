@@ -728,6 +728,36 @@ button, input, select, textarea {
   box-shadow: 0 24px 48px rgba(4, 16, 34, 0.35);
 }
 
+.modal-backdrop.modal-fullscreen-reader {
+  padding: 12px;
+}
+
+.modal-backdrop.modal-fullscreen-reader .modal-card {
+  max-width: 1120px;
+  width: 96vw;
+  height: 94vh;
+  max-height: 94vh;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-backdrop.modal-fullscreen-reader #modalBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.modal-backdrop.modal-fullscreen-reader .pdf-canvas-pages {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding: 4px;
+}
+
 .toast {
   position: fixed;
   top: 16px;
@@ -1287,6 +1317,26 @@ button, input, select, textarea {
     width: 100%;
     max-width: 100%;
     padding: 16px;
+  }
+
+  .modal-backdrop.modal-fullscreen-reader {
+    padding: 0;
+  }
+
+  .modal-backdrop.modal-fullscreen-reader .modal-card {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    padding: 8px 6px;
+  }
+
+  .modal-backdrop.modal-fullscreen-reader #modalTitle {
+    font-size: 15px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .stats-grid {

@@ -15,6 +15,7 @@ import {
   buildFirestoreCatalogPayload,
   buildFirestoreManifestPayload,
   buildFirestoreUserAccountPayload,
+  isCloudSyncedMedia,
   splitBytesIntoLessonFileChunks
 } from "../public/desktop/curriculum-data.js";
 import {
@@ -330,11 +331,43 @@ test("Desktop chunked lesson_files helper complies with firestore.rules limits a
   assert.equal(catalog.classes[0].pdfMedia.url, "");
   assert.equal(catalog.classes[0].attachments[0].url, "");
 
+  // Unsynced local-only attachments (no cloudFileId and no https:// URL) must NEVER leak to Firestore student catalog
+  assert.equal(isCloudSyncedMedia({ id: "bad-1", url: "blob:https://example.com/abc", cloudFileId: "", cloudChunkCount: 0 }), false);
+  assert.equal(isCloudSyncedMedia({ id: "bad-2", url: "/data/user/0/app/file.pdf", cloudFileId: "", cloudChunkCount: 0 }), false);
+  assert.equal(isCloudSyncedMedia({ id: "ok-1", url: "", cloudFileId: "cf1", cloudChunkCount: 2 }), true);
+  assert.equal(isCloudSyncedMedia({ id: "ok-2", url: "https://cdn.example.com/lec1.pdf", cloudFileId: "", cloudChunkCount: 0 }), true);
+
+  const catalogFilteringUnsynced = buildFirestoreCatalogPayload({
+    authorUid: "admin-uid-123",
+    versionCode: 111,
+    modules: INITIAL_MODULES,
+    classes: INITIAL_CLASSES.map((c, idx) =>
+      idx === 0
+        ? {
+            ...c,
+            pdfMedia: { id: "ghost-1", type: "PDF", fileName: "LocalOnly.pdf", url: "", cloudFileId: "", cloudChunkCount: 0 },
+            attachments: [
+              { id: "ghost-1", type: "PDF", fileName: "LocalOnly.pdf", url: "", cloudFileId: "", cloudChunkCount: 0 },
+              { id: "ok-1", type: "PDF", fileName: "CloudSynced.pdf", url: "", cloudFileId: "cf_ok_1", cloudChunkCount: 2 }
+            ]
+          }
+        : c
+    ),
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.equal(catalogFilteringUnsynced.classes[0].pdfMedia, undefined, "Unsynced pdfMedia must not be pushed to Firestore");
+  assert.equal(catalogFilteringUnsynced.classes[0].attachments.length, 1);
+  assert.equal(catalogFilteringUnsynced.classes[0].attachments[0].cloudFileId, "cf_ok_1");
+
   const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
   assert.ok(appJs.includes("presentMediaPreviewModal"));
   assert.ok(appJs.includes("handleAdminMediaFilesSelected"));
   assert.ok(appJs.includes("adminAttachRemoteUrlForm"));
   assert.ok(appJs.includes('data-action="delete-class-media"'));
+  assert.ok(appJs.includes("startLiveCloudListeners") && appJs.includes("onSnapshot"), "Web PWA must use real-time onSnapshot listeners");
+  assert.ok(appJs.includes("authStateReady"), "Firebase init must await authStateReady before deciding cloudUser state");
+  assert.ok(appJs.includes("syncAllPendingLocalMediaToCloud") && appJs.includes("repairSingleBrokenMedia"), "Admin must auto-sync pending IDB blobs and be able to repair broken entries");
 });
 
 test("GitHub Pages PWA setup configures permanent manifest, auto-updating Service Worker, and CI build stamping", () => {

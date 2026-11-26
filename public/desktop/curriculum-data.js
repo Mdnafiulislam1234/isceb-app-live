@@ -502,12 +502,21 @@ export function splitBytesIntoLessonFileChunks({
   return chunks;
 }
 
+export function isCloudSyncedMedia(media) {
+  if (!media || typeof media !== "object") return false;
+  const rawUrl = String(media.url || "").trim();
+  const hasHttpUrl = /^https?:\/\//i.test(rawUrl);
+  const hasCloudChunks = Boolean(String(media.cloudFileId || "").trim()) && Number(media.cloudChunkCount || 0) > 0;
+  return hasHttpUrl || hasCloudChunks;
+}
+
 function sanitizeMediaForFirestore(media) {
   if (!media || typeof media !== "object") return media;
   const rawUrl = String(media.url || "").trim();
+  const cleanUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : "";
   return {
     ...media,
-    url: rawUrl.startsWith("blob:") ? "" : rawUrl
+    url: cleanUrl
   };
 }
 
@@ -560,11 +569,14 @@ export function buildFirestoreCatalogPayload({
         isPublished: c.isPublished !== false,
         learningObjectives: Array.isArray(c.learningObjectives) ? c.learningObjectives : []
       };
-      if (c.pdfMedia) clsObj.pdfMedia = sanitizeMediaForFirestore(c.pdfMedia);
-      if (c.audioMedia) clsObj.audioMedia = sanitizeMediaForFirestore(c.audioMedia);
-      if (c.videoMedia) clsObj.videoMedia = sanitizeMediaForFirestore(c.videoMedia);
+      if (isCloudSyncedMedia(c.pdfMedia)) clsObj.pdfMedia = sanitizeMediaForFirestore(c.pdfMedia);
+      if (isCloudSyncedMedia(c.audioMedia)) clsObj.audioMedia = sanitizeMediaForFirestore(c.audioMedia);
+      if (isCloudSyncedMedia(c.videoMedia)) clsObj.videoMedia = sanitizeMediaForFirestore(c.videoMedia);
       if (Array.isArray(c.attachments) && c.attachments.length > 0) {
-        clsObj.attachments = c.attachments.map(sanitizeMediaForFirestore);
+        const syncedAttachments = c.attachments.filter(isCloudSyncedMedia).map(sanitizeMediaForFirestore);
+        if (syncedAttachments.length > 0) {
+          clsObj.attachments = syncedAttachments;
+        }
       }
       return clsObj;
     }),

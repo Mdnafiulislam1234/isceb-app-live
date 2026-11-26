@@ -2448,11 +2448,41 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private suspend fun backfillPendingLocalMediaBeforePublish(cloudRepo: CloudSyncRepository) {
+        val currentClasses = classes.value
+        for (cls in currentClasses) {
+            val unsynced = cls.allAttachments.filter { media ->
+                val rawUrl = media.url.trim()
+                val isHttp = rawUrl.startsWith("http://", ignoreCase = true) || rawUrl.startsWith("https://", ignoreCase = true)
+                !isHttp && (media.cloudFileId.isBlank() || media.cloudChunkCount <= 0)
+            }
+            if (unsynced.isEmpty()) continue
+            val upgraded = mutableListOf<LessonMedia>()
+            unsynced.forEachIndexed { idx, media ->
+                val localFile = MediaFileManager.findExistingLocalFile(getApplication(), media)
+                if (localFile != null && localFile.exists() && localFile.length() in 1L..CloudSyncRepository.MAX_CLOUD_FILE_BYTES) {
+                    val candidateId = "file_${cls.id}_sync_${idx}_${System.currentTimeMillis()}".replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                    val uploadRes = cloudRepo.uploadLessonFileChunks(candidateId, localFile.readBytes())
+                    if (uploadRes.isSuccess) {
+                        val chunks = uploadRes.getOrDefault(0)
+                        if (chunks > 0) {
+                            upgraded.add(media.copy(cloudFileId = candidateId, cloudChunkCount = chunks))
+                        }
+                    }
+                }
+            }
+            if (upgraded.isNotEmpty()) {
+                repository.attachFilesToClass(cls.id, upgraded)
+            }
+        }
+    }
+
     private suspend fun autoPublishCatalogNow(changeSummary: String): Result<Unit> {
         val cloudRepo = cloudSyncRepository ?: return Result.failure(IllegalStateException("Cloud repository unavailable"))
         if (!isAdminLoggedIn.value || cloudAuthUser.value == null) {
             return Result.failure(IllegalStateException("Admin Google Cloud Sync not connected"))
         }
+        backfillPendingLocalMediaBeforePublish(cloudRepo)
         val nextNum = (publishManifest.value.versionCode - 100).coerceAtLeast(1) + 1
         val manifest = repository.adminPublishCurriculumUpdate(
             newVersionTag = "v1.$nextNum.0",

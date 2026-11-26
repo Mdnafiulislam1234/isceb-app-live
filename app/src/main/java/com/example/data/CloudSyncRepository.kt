@@ -1012,11 +1012,12 @@ class CloudSyncRepository(
                 put("learningObjectives", cls.learningObjectives)
                 cls.minStudySecondsOverride?.let { put("minStudySecondsOverride", it) }
                 put("allowMediaDownload", cls.allowMediaDownload)
-                cls.pdfMedia?.let { put("pdfMedia", mediaToMap(it)) }
-                cls.audioMedia?.let { put("audioMedia", mediaToMap(it)) }
-                cls.videoMedia?.let { put("videoMedia", mediaToMap(it)) }
-                if (cls.attachments.isNotEmpty()) {
-                    put("attachments", cls.attachments.map { mediaToMap(it) })
+                cls.pdfMedia?.takeIf { isCloudSyncedMedia(it) }?.let { put("pdfMedia", mediaToMap(it)) }
+                cls.audioMedia?.takeIf { isCloudSyncedMedia(it) }?.let { put("audioMedia", mediaToMap(it)) }
+                cls.videoMedia?.takeIf { isCloudSyncedMedia(it) }?.let { put("videoMedia", mediaToMap(it)) }
+                val syncedAttachments = cls.attachments.filter { isCloudSyncedMedia(it) }
+                if (syncedAttachments.isNotEmpty()) {
+                    put("attachments", syncedAttachments.map { mediaToMap(it) })
                 }
             }
         }
@@ -1060,14 +1061,26 @@ class CloudSyncRepository(
         )
     }
 
+    private fun isCloudSyncedMedia(media: LessonMedia): Boolean {
+        val trimmedUrl = media.url.trim()
+        val hasHttp = trimmedUrl.startsWith("http://", ignoreCase = true) || trimmedUrl.startsWith("https://", ignoreCase = true)
+        return hasHttp || (media.cloudFileId.isNotBlank() && media.cloudChunkCount > 0)
+    }
+
     private fun mediaToMap(media: LessonMedia): Map<String, Any> {
+        val trimmedUrl = media.url.trim()
+        val safeCloudUrl = if (trimmedUrl.startsWith("http://", ignoreCase = true) || trimmedUrl.startsWith("https://", ignoreCase = true)) {
+            trimmedUrl
+        } else {
+            ""
+        }
         return buildMap {
             put("id", media.id)
             put("type", media.type.name)
             put("fileName", media.fileName)
             put("fileSizeFormatted", media.fileSizeFormatted)
             put("fileSizeBytes", media.fileSizeBytes)
-            put("url", media.url)
+            put("url", safeCloudUrl)
             put("title", media.title)
             put("description", media.description)
             put("mimeType", media.mimeType)

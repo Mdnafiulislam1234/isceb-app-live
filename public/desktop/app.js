@@ -13,6 +13,7 @@ import {
   buildFirestoreCatalogPayload,
   buildFirestoreManifestPayload,
   buildFirestoreUserAccountPayload,
+  isCloudSyncedMedia,
   splitBytesIntoLessonFileChunks
 } from "./curriculum-data.js";
 import {
@@ -268,6 +269,10 @@ let cloudUsersLoadedAt = 0;
 let cloudUsersAccessNote = "";
 let adminStudentSearch = "";
 let firebaseModules = null;
+let firebaseInitPromise = null;
+let liveCloudUnsubscribers = [];
+let lastAutoResumeSyncMs = 0;
+let isSyncingPendingMedia = false;
 let deferredInstallPrompt = null;
 let activeTimerInterval = null;
 let examCountdownInterval = null;
@@ -284,6 +289,7 @@ let pendingEditStudentPhotoDataUrl = "";
 let pendingEditStudentPhotoCleared = false;
 const localAttachmentUrls = new Map();
 const localAttachmentBlobs = new Map();
+const cachedMediaIdbKeys = new Set();
 
 const MEDIA_IDB_NAME = "isceb_media_blobs";
 const MEDIA_IDB_STORE = "blobs";
@@ -309,6 +315,7 @@ function openMediaIdb() {
 async function saveMediaBlobToIdb(key, blob, meta = {}) {
   if (!key || !blob) return;
   localAttachmentBlobs.set(key, blob);
+  cachedMediaIdbKeys.add(key);
   try {
     const db = await openMediaIdb();
     await new Promise((resolve, reject) => {
@@ -343,6 +350,52 @@ async function loadMediaBlobFromIdb(key) {
     }
   } catch (_) {}
   return null;
+}
+
+async function findMediaBlobForAttachmentInIdb(media) {
+  if (!media) return null;
+  const byId = await loadMediaBlobFromIdb(media.id);
+  if (byId) return byId;
+  if (media.cloudFileId) {
+    const byCloudId = await loadMediaBlobFromIdb(media.cloudFileId);
+    if (byCloudId) return byCloudId;
+  }
+  const targetName = String(media.fileName || "").trim();
+  const targetSize = Number(media.fileSizeBytes || 0);
+  if (!targetName) return null;
+  try {
+    const db = await openMediaIdb();
+    const allRecords = await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_IDB_STORE, "readonly");
+      const req = tx.objectStore(MEDIA_IDB_STORE).getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => reject(req.error);
+    });
+    const matched = allRecords.find(
+      (rec) =>
+        rec?.blob &&
+        String(rec.fileName || "").trim() === targetName &&
+        (!targetSize || Math.abs(Number(rec.blob.size || 0) - targetSize) <= 64)
+    );
+    if (matched?.blob) {
+      if (media.id) localAttachmentBlobs.set(media.id, matched.blob);
+      return matched.blob;
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function warmMediaIdbKeysCache() {
+  try {
+    const db = await openMediaIdb();
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_IDB_STORE, "readonly");
+      const req = tx.objectStore(MEDIA_IDB_STORE).getAllKeys();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => reject(req.error);
+    });
+    keys.forEach((k) => cachedMediaIdbKeys.add(String(k)));
+  } catch (_) {}
 }
 
 function saveState() {
@@ -774,6 +827,75 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   }
 }
 
+async function uploadChunksWithRetry(fb, fileId, rawBytes, label = "file") {
+  const { doc, setDoc, serverTimestamp } = fb.fsMod;
+  const chunks = splitBytesIntoLessonFileChunks({
+    fileId,
+    bytes: rawBytes,
+    authorUid: cloudUser.uid,
+    serverTimestampToken: serverTimestamp()
+  });
+  for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+    const chunk = chunks[cIdx];
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (chunks.length > 1 && (cIdx === 0 || (cIdx + 1) % 3 === 0 || cIdx === chunks.length - 1)) {
+          showToast(`Syncing ${label} (${cIdx + 1}/${chunks.length} parts)...`);
+        }
+        await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const msg = String(err?.code || err?.message || "").toLowerCase();
+        if (msg.includes("permission")) break;
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+    if (lastErr) throw lastErr;
+  }
+  return chunks.length;
+}
+
+async function downloadChunksInParallelWithRetry(fb, cloudFileId, chunkCount) {
+  const { doc, getDoc } = fb.fsMod;
+  const total = Number(chunkCount || 0);
+  const results = new Array(total);
+  const batchSize = 4;
+  for (let start = 0; start < total; start += batchSize) {
+    const end = Math.min(total, start + batchSize);
+    const batchPromises = [];
+    for (let i = start; i < end; i++) {
+      batchPromises.push(
+        (async (idx) => {
+          let lastErr = null;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const snap = await getDoc(doc(fb.db, "lesson_files", `${cloudFileId}_${idx}`));
+              if (!snap.exists()) {
+                throw new Error(`Missing cloud chunk ${idx + 1}`);
+              }
+              const b64 = snap.data().dataBase64 || "";
+              const bin = atob(b64);
+              const arr = new Uint8Array(bin.length);
+              for (let j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
+              results[idx] = arr;
+              return;
+            } catch (err) {
+              lastErr = err;
+              await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+            }
+          }
+          throw lastErr || new Error(`Failed loading chunk ${idx + 1}`);
+        })(i)
+      );
+    }
+    await Promise.all(batchPromises);
+  }
+  return results;
+}
+
 async function openSyncedCloudMedia(media) {
   if (!media) return;
   const rawUrl = String(media.url || "").trim();
@@ -782,9 +904,7 @@ async function openSyncedCloudMedia(media) {
     return;
   }
 
-  const cachedBlob =
-    (await loadMediaBlobFromIdb(media.id)) ||
-    (media.cloudFileId ? await loadMediaBlobFromIdb(media.cloudFileId) : null);
+  const cachedBlob = await findMediaBlobForAttachmentInIdb(media);
   if (cachedBlob) {
     let cachedUrl = localAttachmentUrls.get(media.id);
     if (!cachedUrl) {
@@ -802,16 +922,28 @@ async function openSyncedCloudMedia(media) {
   }
 
   if (!media.cloudFileId || !media.cloudChunkCount) {
+    const adminRepairHtml = isAdminUser()
+      ? `<div style="display: grid; gap: 8px; padding-top: 6px; border-top: 1px solid var(--border);">
+          <label class="btn btn-gold btn-sm" style="cursor: pointer; text-align: center;">
+            Select File &amp; Sync to Cloud Now
+            <input type="file" id="repairBrokenMediaInput" data-media-id="${escapeHtml(media.id || "")}" data-media-title="${escapeHtml(media.title || media.fileName || "")}" style="display: none;" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*" />
+          </label>
+          <button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-modal-action="remove-unsynced-media" data-media-id="${escapeHtml(media.id || "")}">
+            Remove Broken Entry from Catalog
+          </button>
+        </div>`
+      : "";
     openModal(
       media.title || media.fileName || "File Not Synced Yet",
       `<div style="display: grid; gap: 12px; font-size: 13.5px;">
         <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px; color: #92400E;">
           <strong>This file has not been synced to Firebase Cloud yet.</strong><br/>
-          It was uploaded on the Admin's original device without signing into <strong>Google Cloud Sync</strong> first.
+          It was uploaded on the Admin's original device before Google Cloud Sync finished uploading its chunks.
         </div>
         <p style="margin: 0; color: var(--muted);">
-          Ask the Admin to sign into <strong>Google Cloud Sync</strong> on the device where they uploaded it and tap <strong>Sync Local Uploads to Cloud</strong> (or re-upload under 18 MB / attach an HTTPS link).
+          Ask the Admin to open <strong>Google Cloud Sync</strong> on the device where they uploaded it (or re-upload this file under 18 MB / attach an HTTPS link) so it syncs automatically to all student phones.
         </p>
+        ${adminRepairHtml}
       </div>`
     );
     return;
@@ -836,24 +968,12 @@ async function openSyncedCloudMedia(media) {
 
   try {
     showToast(`Downloading ${media.fileName || "attachment"}...`);
-    const { doc, getDoc } = fb.fsMod;
-    const chunks = [];
-    for (let i = 0; i < Number(media.cloudChunkCount); i++) {
-      const snap = await getDoc(doc(fb.db, "lesson_files", `${media.cloudFileId}_${i}`));
-      if (!snap.exists()) {
-        throw new Error(`Missing cloud chunk ${i + 1}`);
-      }
-      const b64 = snap.data().dataBase64 || "";
-      const bin = atob(b64);
-      const arr = new Uint8Array(bin.length);
-      for (let j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
-      chunks.push(arr);
-    }
+    const chunks = await downloadChunksInParallelWithRetry(fb, media.cloudFileId, media.cloudChunkCount);
     const blob = new Blob(chunks, { type: inferMediaMimeType(media) });
-    await saveMediaBlobToIdb(media.id, blob, { fileName: media.fileName, mimeType: blob.type });
+    if (media.id) await saveMediaBlobToIdb(media.id, blob, { fileName: media.fileName, mimeType: blob.type });
     await saveMediaBlobToIdb(media.cloudFileId, blob, { fileName: media.fileName, mimeType: blob.type });
     const objUrl = URL.createObjectURL(blob);
-    localAttachmentUrls.set(media.id, objUrl);
+    localAttachmentUrls.set(media.id || media.cloudFileId, objUrl);
     presentMediaPreviewModal(media, objUrl, blob);
   } catch (err) {
     showToast(`Unable to open cloud file: ${err.message || err}`, true);
@@ -962,45 +1082,112 @@ function closeModal() {
   document.getElementById("modalBackdrop").classList.remove("open");
 }
 
-async function initFirebaseSdk() {
-  if (firebaseModules) return firebaseModules;
+function stopLiveCloudListeners() {
+  while (liveCloudUnsubscribers.length) {
+    const unsub = liveCloudUnsubscribers.pop();
+    try {
+      if (typeof unsub === "function") unsub();
+    } catch (_) {}
+  }
+}
+
+function startLiveCloudListeners(fb) {
+  stopLiveCloudListeners();
+  if (!fb || !fb.fsMod?.onSnapshot || !cloudUser) return;
   try {
-    const [appMod, authMod, fsMod] = await Promise.all([
-      import("https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js"),
-      import("https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js"),
-      import("https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js")
-    ]);
-    const app = appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(FIREBASE_WEB_OPTIONS);
-    const auth = authMod.getAuth(app);
-    const db = fsMod.getFirestore(app, FIREBASE_CONFIG.databaseId);
-    firebaseModules = { app, auth, db, authMod, fsMod };
+    const { doc, onSnapshot } = fb.fsMod;
+    const unsubManifest = onSnapshot(
+      doc(fb.db, "curriculum_manifests", "live"),
+      (snap) => {
+        if (!snap.exists()) return;
+        const m = snap.data();
+        if (Number(m.versionCode || 0) >= Number(state.manifest.versionCode || 0)) {
+          state.manifest = { ...state.manifest, ...m };
+          saveState();
+          updateChromeBadges();
+        }
+      },
+      () => {}
+    );
+    const unsubCatalog = onSnapshot(
+      doc(fb.db, "curriculum_catalogs", "live"),
+      (snap) => {
+        if (!snap.exists()) return;
+        applyRemoteCatalogData(snap.data());
+        saveState();
+        updateChromeBadges();
+        render();
+      },
+      () => {}
+    );
+    liveCloudUnsubscribers.push(unsubManifest, unsubCatalog);
+  } catch (_) {}
+}
 
-    authMod.getRedirectResult(auth).catch(() => {});
+async function initFirebaseSdk() {
+  if (firebaseModules) {
+    if (firebaseModules.auth?.authStateReady) {
+      try {
+        await firebaseModules.auth.authStateReady();
+        cloudUser = firebaseModules.auth.currentUser || cloudUser;
+      } catch (_) {}
+    }
+    return firebaseModules;
+  }
+  if (firebaseInitPromise) return firebaseInitPromise;
 
-    authMod.onAuthStateChanged(auth, (user) => {
-      cloudUser = user || null;
-      if (!user) {
-        cloudRegisteredUsers = [];
-        cloudUsersLoadedAt = 0;
-        cloudUsersAccessNote = "";
-      }
-      updateChromeBadges();
-      if (user) {
-        syncStudentAccountToFirestore(getActiveUser()).catch(() => {});
-        syncFromCloudFirestore(true).then(() => {
+  firebaseInitPromise = (async () => {
+    try {
+      const [appMod, authMod, fsMod] = await Promise.all([
+        import("https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js"),
+        import("https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js"),
+        import("https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js")
+      ]);
+      const app = appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(FIREBASE_WEB_OPTIONS);
+      const auth = authMod.getAuth(app);
+      const db = fsMod.getFirestore(app, FIREBASE_CONFIG.databaseId);
+      firebaseModules = { app, auth, db, authMod, fsMod };
+
+      authMod.getRedirectResult(auth).catch(() => {});
+
+      authMod.onAuthStateChanged(auth, async (user) => {
+        cloudUser = user || null;
+        if (!user) {
+          stopLiveCloudListeners();
+          cloudRegisteredUsers = [];
+          cloudUsersLoadedAt = 0;
+          cloudUsersAccessNote = "";
+        }
+        updateChromeBadges();
+        if (user) {
+          syncStudentAccountToFirestore(getActiveUser()).catch(() => {});
+          if (isAdminUser()) {
+            await syncAllPendingLocalMediaToCloud({ silentNoOp: true }).catch(() => {});
+          }
+          await syncFromCloudFirestore(true);
+          startLiveCloudListeners(firebaseModules);
           if (pendingMediaAfterSignIn) {
             const mediaToOpen = pendingMediaAfterSignIn;
             pendingMediaAfterSignIn = null;
             openSyncedCloudMedia(mediaToOpen);
           }
-        });
+        }
+      });
+
+      if (typeof auth.authStateReady === "function") {
+        await auth.authStateReady();
+        cloudUser = auth.currentUser || cloudUser;
+        updateChromeBadges();
       }
-    });
-    return firebaseModules;
-  } catch (err) {
-    console.warn("Firebase JS SDK unavailable offline:", err);
-    return null;
-  }
+      return firebaseModules;
+    } catch (err) {
+      console.warn("Firebase JS SDK unavailable offline:", err);
+      firebaseInitPromise = null;
+      return null;
+    }
+  })();
+
+  return firebaseInitPromise;
 }
 
 async function syncStudentAccountToFirestore(studentProfile, options = {}) {
@@ -1167,6 +1354,76 @@ async function fetchVersionJson() {
   }
 }
 
+function mergeRemoteClassesSafely(remoteClasses) {
+  if (!Array.isArray(remoteClasses) || !remoteClasses.length) return;
+  const localById = new Map((state.classes || []).map((cls) => [cls.id, cls]));
+  state.classes = remoteClasses.map((remoteCls) => {
+    const localCls = localById.get(remoteCls.id);
+    if (!localCls) return remoteCls;
+    const remoteList = Array.isArray(remoteCls.attachments) ? remoteCls.attachments : [];
+    const localPendingUnsynced = isAdminUser()
+      ? (localCls.attachments || []).filter((lm) => {
+          if (isCloudSyncedMedia(lm)) return false;
+          if (!localAttachmentBlobs.has(lm.id) && !cachedMediaIdbKeys.has(lm.id)) return false;
+          return !remoteList.some((rm) => rm.id === lm.id && isCloudSyncedMedia(rm));
+        })
+      : [];
+    if (!localPendingUnsynced.length) return remoteCls;
+    const mergedAttachments = [...remoteList, ...localPendingUnsynced];
+    return {
+      ...remoteCls,
+      attachments: mergedAttachments,
+      pdfMedia: remoteCls.pdfMedia && isCloudSyncedMedia(remoteCls.pdfMedia) ? remoteCls.pdfMedia : localCls.pdfMedia || remoteCls.pdfMedia,
+      audioMedia: remoteCls.audioMedia && isCloudSyncedMedia(remoteCls.audioMedia) ? remoteCls.audioMedia : localCls.audioMedia || remoteCls.audioMedia,
+      videoMedia: remoteCls.videoMedia && isCloudSyncedMedia(remoteCls.videoMedia) ? remoteCls.videoMedia : localCls.videoMedia || remoteCls.videoMedia
+    };
+  });
+}
+
+function applyRemoteCatalogData(c) {
+  if (!c || typeof c !== "object") return;
+  if (Array.isArray(c.modules) && c.modules.length) state.modules = c.modules;
+  if (Array.isArray(c.classes) && c.classes.length) mergeRemoteClassesSafely(c.classes);
+  if (c.settings) {
+    state.settings = normalizeSettings({ ...state.settings, ...c.settings });
+    try {
+      if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
+      if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
+      if (c.settings.examsJson) {
+        const remoteExams = JSON.parse(c.settings.examsJson);
+        if (Array.isArray(remoteExams) && remoteExams.length) {
+          state.exams = remoteExams;
+        }
+      }
+      if (c.settings.assignmentsJson) {
+        const remoteAssignments = JSON.parse(c.settings.assignmentsJson);
+        if (Array.isArray(remoteAssignments) && remoteAssignments.length) {
+          state.assignments = remoteAssignments;
+        }
+      }
+      if (c.settings.membersJson) {
+        const remoteMembers = JSON.parse(c.settings.membersJson);
+        if (Array.isArray(remoteMembers) && remoteMembers.length) {
+          const amirul = remoteMembers.find((m) => m.id === "member-founder-amirul");
+          const hasina = remoteMembers.find((m) => m.id === "member-hasina-khan");
+          if (
+            Number(c.versionCode || 0) <= 106 &&
+            amirul &&
+            hasina &&
+            Number(amirul.displayOrder) === 1 &&
+            Number(hasina.displayOrder) === 2
+          ) {
+            hasina.displayOrder = 1;
+            amirul.displayOrder = 2;
+          }
+          remoteMembers.sort((a, b) => Number(a.displayOrder || 99) - Number(b.displayOrder || 99));
+          state.members = remoteMembers;
+        }
+      }
+    } catch (_) {}
+  }
+}
+
 async function syncFromCloudFirestore(silent = false) {
   await fetchVersionJson();
   const fb = await initFirebaseSdk();
@@ -1177,6 +1434,10 @@ async function syncFromCloudFirestore(silent = false) {
     return;
   }
   try {
+    await warmMediaIdbKeysCache();
+    if (isAdminUser()) {
+      await syncAllPendingLocalMediaToCloud({ silentNoOp: true }).catch(() => {});
+    }
     const { doc, getDoc } = fb.fsMod;
     const manifestSnap = await getDoc(doc(fb.db, "curriculum_manifests", "live"));
     const catalogSnap = await getDoc(doc(fb.db, "curriculum_catalogs", "live"));
@@ -1188,47 +1449,7 @@ async function syncFromCloudFirestore(silent = false) {
       }
     }
     if (catalogSnap.exists()) {
-      const c = catalogSnap.data();
-      if (Array.isArray(c.modules) && c.modules.length) state.modules = c.modules;
-      if (Array.isArray(c.classes) && c.classes.length) state.classes = c.classes;
-      if (c.settings) {
-        state.settings = normalizeSettings({ ...state.settings, ...c.settings });
-        try {
-          if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
-          if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
-          if (c.settings.examsJson) {
-            const remoteExams = JSON.parse(c.settings.examsJson);
-            if (Array.isArray(remoteExams) && remoteExams.length) {
-              state.exams = remoteExams;
-            }
-          }
-          if (c.settings.assignmentsJson) {
-            const remoteAssignments = JSON.parse(c.settings.assignmentsJson);
-            if (Array.isArray(remoteAssignments) && remoteAssignments.length) {
-              state.assignments = remoteAssignments;
-            }
-          }
-          if (c.settings.membersJson) {
-            const remoteMembers = JSON.parse(c.settings.membersJson);
-            if (Array.isArray(remoteMembers) && remoteMembers.length) {
-              const amirul = remoteMembers.find((m) => m.id === "member-founder-amirul");
-              const hasina = remoteMembers.find((m) => m.id === "member-hasina-khan");
-              if (
-                Number(c.versionCode || 0) <= 106 &&
-                amirul &&
-                hasina &&
-                Number(amirul.displayOrder) === 1 &&
-                Number(hasina.displayOrder) === 2
-              ) {
-                hasina.displayOrder = 1;
-                amirul.displayOrder = 2;
-              }
-              remoteMembers.sort((a, b) => Number(a.displayOrder || 99) - Number(b.displayOrder || 99));
-              state.members = remoteMembers;
-            }
-          }
-        } catch (_) {}
-      }
+      applyRemoteCatalogData(catalogSnap.data());
     }
     saveState();
     if (isAdminUser() || ["www.mdnafiulislam@gmail.com", "amirul.islam@isceb.org"].includes(String(cloudUser.email || "").toLowerCase())) {
@@ -1261,10 +1482,13 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
   if (!fb || !cloudUser) {
     showToast("Saved locally. Sign in via 'Google Cloud Sync' as www.mdnafiulislam@gmail.com to push to Firestore.");
     render();
-    return;
+    return false;
   }
 
   try {
+    if (isAdminUser()) {
+      await syncAllPendingLocalMediaToCloud({ skipPublish: true, silentNoOp: true }).catch(() => {});
+    }
     const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = fb.fsMod;
     const manifestRef = doc(fb.db, "curriculum_manifests", "live");
     const catalogRef = doc(fb.db, "curriculum_catalogs", "live");
@@ -1310,12 +1534,16 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
     } else {
       await setDoc(catalogRef, catalogPayload);
     }
-    showToast(`Published ${versionTag} live to Firebase Firestore! Android phones will auto-sync.`);
+    showToast(`Published ${versionTag} live to Firebase Firestore! All devices will auto-sync.`);
+    updateChromeBadges();
+    render();
+    return true;
   } catch (err) {
     showToast(`Firestore publish failed: ${err.message}`, true);
+    updateChromeBadges();
+    render();
+    return false;
   }
-  updateChromeBadges();
-  render();
 }
 
 function updateChromeBadges() {
@@ -1614,9 +1842,9 @@ function renderCourses() {
               : `<div style="display: grid; gap: 8px; margin-bottom: 12px;">
                   ${uniqueMaterials
                     .map((m) => {
-                      const hasCloud = Boolean((m.cloudFileId && m.cloudChunkCount > 0) || /^https?:\/\//i.test(String(m.url || "")));
+                      const hasCloud = isCloudSyncedMedia(m);
                       const hasLocal = localAttachmentUrls.has(m.id) || localAttachmentBlobs.has(m.id);
-                      const statusText = hasCloud ? "Cloud Synced" : hasLocal ? "Saved on Device" : "Local Device Only";
+                      const statusText = hasCloud ? "Cloud Synced" : hasLocal ? "Pending Cloud Sync" : "Needs Re-upload & Sync";
                       const typeUpper = String(m.type || "FILE").toUpperCase();
                       const actionLabel =
                         typeUpper === "PDF"
@@ -1629,12 +1857,20 @@ function renderCourses() {
                       return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #fff; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); flex-wrap: wrap;">
                         <div style="min-width: 0; flex: 1;">
                           <div style="font-size: 13.5px; font-weight: 700; color: var(--navy);">${escapeHtml(m.title || m.fileName || "Study Material")}</div>
-                          <div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(typeUpper)} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${statusText}</div>
+                          <div style="font-size: 11.5px; color: ${hasCloud ? "var(--muted)" : "#B45309"}; font-weight: ${hasCloud ? "400" : "700"};">${escapeHtml(typeUpper)} • ${escapeHtml(m.fileSizeFormatted || formatBytes(m.fileSizeBytes))} • ${statusText}</div>
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                           <button type="button" class="btn btn-gold btn-sm" data-action="open-cloud-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">
                             ${actionLabel}
                           </button>
+                          ${
+                            isAdminUser() && !hasCloud
+                              ? `<label class="btn btn-primary btn-sm" style="cursor: pointer;">
+                                  Re-upload &amp; Sync
+                                  <input type="file" class="repairInlineMediaInput" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}" style="display: none;" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*" />
+                                </label>`
+                              : ""
+                          }
                           ${
                             isAdminUser()
                               ? `<button type="button" class="btn btn-outline btn-sm" style="color: var(--err); border-color: rgba(185,28,28,0.35);" data-action="delete-class-media" data-class-id="${escapeHtml(selectedClass.id)}" data-media-id="${escapeHtml(m.id || "")}">Delete</button>`
@@ -3847,6 +4083,19 @@ function setupListeners() {
   document.getElementById("syncNowBtn").addEventListener("click", () => syncFromCloudFirestore(false));
   document.getElementById("googleSignInBtn").addEventListener("click", signInWithGoogleCloud);
 
+  const triggerResumeSync = () => {
+    const now = Date.now();
+    if (now - lastAutoResumeSyncMs < 8000) return;
+    lastAutoResumeSyncMs = now;
+    if (cloudUser) {
+      syncFromCloudFirestore(true);
+    }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") triggerResumeSync();
+  });
+  window.addEventListener("online", triggerResumeSync);
+
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     deferredInstallPrompt = e;
@@ -4413,6 +4662,13 @@ function setupListeners() {
       e.target.value = "";
       if (!files.length) return;
       handleAdminMediaFilesSelected(cid, forcedType, files);
+    } else if (e.target.classList.contains("repairInlineMediaInput")) {
+      const cid = e.target.dataset.classId;
+      const mid = e.target.dataset.mediaId;
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      repairSingleBrokenMedia(mid, file, cid);
     }
   });
 
@@ -4612,11 +4868,48 @@ function setupListeners() {
         wrap.innerHTML = `<span>${escapeHtml(initials)}</span>`;
       }
       showToast("Photo cleared — tap Save Student Profile to apply.");
+    } else if (modalAction === "connect-google-and-sync-pending") {
+      closeModal();
+      signInWithGoogleCloud();
+    } else if (modalAction === "remove-unsynced-media") {
+      if (!isAdminUser()) return;
+      const mid = mAct.dataset.mediaId;
+      state.classes.forEach((c) => {
+        if (c.pdfMedia?.id === mid) c.pdfMedia = null;
+        if (c.audioMedia?.id === mid) c.audioMedia = null;
+        if (c.videoMedia?.id === mid) c.videoMedia = null;
+        if (Array.isArray(c.attachments)) {
+          c.attachments = c.attachments.filter((m) => (m.id || "") !== mid);
+        }
+      });
+      saveState();
+      closeModal();
+      if (cloudUser) {
+        pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 106) + 1,
+          releaseNotes: "Removed unsynced attachment from catalog",
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+        });
+      } else {
+        showToast("Removed locally.");
+        render();
+      }
     }
   });
 
   document.getElementById("modalBody").addEventListener("change", (e) => {
-    if (e.target.id === "editStuPhotoInput") {
+    if (e.target.id === "repairBrokenMediaInput") {
+      const file = e.target.files?.[0];
+      const mid = e.target.dataset.mediaId || "";
+      e.target.value = "";
+      if (!file) return;
+      closeModal();
+      repairSingleBrokenMedia(mid, file);
+    } else if (e.target.id === "editStuPhotoInput") {
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
@@ -4866,21 +5159,11 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
 
     if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
       try {
-        showToast(`Uploading ${file.name} (${i + 1}/${files.length}) to Firebase Firestore...`);
+        showToast(`Uploading ${file.name} (${i + 1}/${files.length}) to Firebase Cloud...`);
         const rawBytes = new Uint8Array(await file.arrayBuffer());
         const candidateId = `pc_${cid}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const { doc, setDoc, serverTimestamp } = fb.fsMod;
-        const chunks = splitBytesIntoLessonFileChunks({
-          fileId: candidateId,
-          bytes: rawBytes,
-          authorUid: cloudUser.uid,
-          serverTimestampToken: serverTimestamp()
-        });
-        for (const chunk of chunks) {
-          await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
-        }
+        cloudChunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
         cloudFileId = candidateId;
-        cloudChunkCount = chunks.length;
         await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
         cloudSyncedCount += 1;
       } catch (err) {
@@ -4914,21 +5197,49 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
   saveState();
 
   if (canCloudSync && cloudSyncedCount > 0) {
-    await pushCurriculumToFirestore({
+    const published = await pushCurriculumToFirestore({
       versionTag: state.manifest.versionTag || "v1.6.0",
-      versionCode: Number(state.manifest.versionCode || 105) + 1,
+      versionCode: Number(state.manifest.versionCode || 106) + 1,
       releaseNotes: `Uploaded ${cloudSyncedCount} cloud study file(s) to Lecture ${cls.lectureCode}`,
       announcement: state.manifest.announcement || "",
       apkVersionName: state.manifest.latestApkVersionName || "1.6",
       apkVersionCode: state.manifest.latestApkVersionCode || 7,
       apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
     });
+    if (published) {
+      showToast(`Uploaded & synced ${cloudSyncedCount} file(s)! All student phones can open them now.`);
+    }
   } else if (cloudErrorMsg) {
-    showToast(`Saved on this device — Firestore sync failed: ${cloudErrorMsg}. Sign in with Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
     render();
+    openModal(
+      "Google Admin Sync Required",
+      `<div style="display: grid; gap: 12px; font-size: 13.5px;">
+        <div style="background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 10px; padding: 12px; color: #991B1B;">
+          <strong>Cloud upload permission denied (${escapeHtml(cloudErrorMsg)}).</strong><br/>
+          Connected Google account: <strong>${escapeHtml(cloudUser?.email || "None")}</strong>
+        </div>
+        <p style="margin: 0; color: var(--muted);">
+          Your file is saved safely on this device. Connect <strong>Google Cloud Sync</strong> with your Admin email (<strong>www.mdnafiulislam@gmail.com</strong> or <strong>amirul.islam@isceb.org</strong>) so it uploads to every student's phone automatically.
+        </p>
+        <button type="button" class="btn btn-gold" data-modal-action="connect-google-and-sync-pending">
+          Connect Admin Google Account &amp; Sync Now
+        </button>
+      </div>`
+    );
   } else if (!canCloudSync) {
-    showToast(`Saved ${files.length} file(s) on this device. Connect 'Google Cloud Sync' to push to all students.`);
     render();
+    openModal(
+      "Connect Google Cloud to Push to Students",
+      `<div style="display: grid; gap: 12px; font-size: 13.5px;">
+        <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px; color: #92400E;">
+          <strong>Saved on this device only.</strong><br/>
+          Because Google Cloud Sync is not connected yet, student phones cannot open this file until you sign in with Admin Gmail.
+        </div>
+        <button type="button" class="btn btn-gold" data-modal-action="connect-google-and-sync-pending">
+          Sign in with Google &amp; Upload to Students Now
+        </button>
+      </div>`
+    );
   } else if (largeLocalOnlyCount > 0) {
     showToast(`File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach HTTPS Link' for student phones.`, true);
     render();
@@ -4937,58 +5248,144 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
   }
 }
 
-async function syncPendingLocalClassMediaToCloud(cid) {
-  if (!isAdminUser()) return;
+async function syncAllPendingLocalMediaToCloud(options = {}) {
+  const { targetClassId = "", skipPublish = false, silentNoOp = false } = options || {};
+  if (!isAdminUser() || isSyncingPendingMedia) return 0;
   const fb = await initFirebaseSdk();
   if (!fb || !cloudUser) {
-    await signInWithGoogleCloud();
+    if (!silentNoOp) await signInWithGoogleCloud();
+    return 0;
+  }
+
+  isSyncingPendingMedia = true;
+  let synced = 0;
+  let lastSyncedClassCode = "";
+  try {
+    const classesToScan = targetClassId
+      ? state.classes.filter((c) => c.id === targetClassId)
+      : state.classes;
+
+    for (const cls of classesToScan) {
+      const targets = getUniqueClassMaterials(cls).filter((m) => !isCloudSyncedMedia(m));
+      for (let i = 0; i < targets.length; i++) {
+        const m = targets[i];
+        const blob = await findMediaBlobForAttachmentInIdb(m);
+        if (!blob || blob.size === 0 || blob.size > MAX_CLOUD_FILE_BYTES) continue;
+        try {
+          const rawBytes = new Uint8Array(await blob.arrayBuffer());
+          const candidateId = `pc_${cls.id}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, m.fileName || m.title || "file");
+          const patchMedia = (item) => {
+            if (!item || item.id !== m.id) return;
+            item.cloudFileId = candidateId;
+            item.cloudChunkCount = chunkCount;
+            item.fileSizeBytes = blob.size;
+            item.fileSizeFormatted = formatBytes(blob.size);
+          };
+          patchMedia(cls.pdfMedia);
+          patchMedia(cls.audioMedia);
+          patchMedia(cls.videoMedia);
+          (cls.attachments || []).forEach(patchMedia);
+          if (m.id) await saveMediaBlobToIdb(m.id, blob, { fileName: m.fileName, mimeType: blob.type });
+          await saveMediaBlobToIdb(candidateId, blob, { fileName: m.fileName, mimeType: blob.type });
+          synced += 1;
+          lastSyncedClassCode = cls.lectureCode || cls.id;
+        } catch (err) {
+          if (!silentNoOp) showToast(`Cloud upload error: ${err?.message || err}`, true);
+        }
+      }
+    }
+    if (synced > 0) {
+      saveState();
+      if (!skipPublish) {
+        await pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 106) + 1,
+          releaseNotes: `Auto-synced ${synced} pending study file(s)${lastSyncedClassCode ? ` (Lecture ${lastSyncedClassCode})` : ""}`,
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+        });
+      }
+    } else if (!silentNoOp) {
+      showToast("No cached local files <= 18 MB found on this device. Tap 'Re-upload & Sync' on any missing item.", true);
+      render();
+    }
+  } finally {
+    isSyncingPendingMedia = false;
+  }
+  return synced;
+}
+
+async function syncPendingLocalClassMediaToCloud(cid) {
+  return syncAllPendingLocalMediaToCloud({ targetClassId: cid, skipPublish: false, silentNoOp: false });
+}
+
+async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
+  if (!isAdminUser() || !file) return;
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) {
+    showToast("Sign in with Admin Google Cloud Sync first before repairing a cloud file.", true);
     return;
   }
-  const cls = state.classes.find((c) => c.id === cid);
-  if (!cls) return;
-  const targets = getUniqueClassMaterials(cls).filter(
-    (m) => !/^https?:\/\//i.test(String(m.url || "")) && (!m.cloudFileId || !m.cloudChunkCount)
-  );
-  let synced = 0;
-  for (let i = 0; i < targets.length; i++) {
-    const m = targets[i];
-    const blob = await loadMediaBlobFromIdb(m.id);
-    if (!blob || blob.size === 0 || blob.size > MAX_CLOUD_FILE_BYTES) continue;
-    try {
-      const rawBytes = new Uint8Array(await blob.arrayBuffer());
-      const candidateId = `pc_${cid}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-      const { doc, setDoc, serverTimestamp } = fb.fsMod;
-      const chunks = splitBytesIntoLessonFileChunks({
-        fileId: candidateId,
-        bytes: rawBytes,
-        authorUid: cloudUser.uid,
-        serverTimestampToken: serverTimestamp()
-      });
-      for (const chunk of chunks) {
-        await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
-      }
-      m.cloudFileId = candidateId;
-      m.cloudChunkCount = chunks.length;
-      await saveMediaBlobToIdb(candidateId, blob, { fileName: m.fileName, mimeType: blob.type });
-      synced += 1;
-    } catch (err) {
-      showToast(`Cloud upload error: ${err?.message || err}`, true);
-    }
+  if (file.size === 0 || file.size > MAX_CLOUD_FILE_BYTES) {
+    showToast("File must be non-empty and <= 18 MB for direct Firestore sync (or use HTTPS link).", true);
+    return;
   }
-  saveState();
-  if (synced > 0) {
+
+  let targetCls = explicitClassId ? state.classes.find((c) => c.id === explicitClassId) : null;
+  if (!targetCls) {
+    targetCls = state.classes.find((c) =>
+      getUniqueClassMaterials(c).some((m) => (m.id || "") === mediaId)
+    );
+  }
+  if (!targetCls) {
+    showToast("Could not locate target lecture for this file.", true);
+    return;
+  }
+
+  try {
+    showToast(`Uploading & repairing ${file.name} in Firebase Cloud...`);
+    const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const candidateId = `pc_${targetCls.id}_rep_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
+    const localBlobUrl = URL.createObjectURL(file);
+    const applyPatch = (item) => {
+      if (!item || (mediaId && item.id !== mediaId)) return;
+      item.fileName = file.name;
+      item.fileSizeBytes = file.size;
+      item.fileSizeFormatted = formatBytes(file.size);
+      item.mimeType = file.type || inferMediaMimeType({ type: item.type, fileName: file.name });
+      item.url = "";
+      item.uploadTimestamp = Date.now();
+      item.cloudFileId = candidateId;
+      item.cloudChunkCount = chunkCount;
+    };
+    applyPatch(targetCls.pdfMedia);
+    applyPatch(targetCls.audioMedia);
+    applyPatch(targetCls.videoMedia);
+    (targetCls.attachments || []).forEach(applyPatch);
+
+    if (mediaId) {
+      localAttachmentUrls.set(mediaId, localBlobUrl);
+      await saveMediaBlobToIdb(mediaId, file, { fileName: file.name, mimeType: file.type });
+    }
+    await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
+    saveState();
+
     await pushCurriculumToFirestore({
       versionTag: state.manifest.versionTag || "v1.6.0",
       versionCode: Number(state.manifest.versionCode || 106) + 1,
-      releaseNotes: `Synced ${synced} study file(s) for Lecture ${cls.lectureCode}`,
+      releaseNotes: `Synced ${file.name} to Lecture ${targetCls.lectureCode}`,
       announcement: state.manifest.announcement || "",
       apkVersionName: state.manifest.latestApkVersionName || "1.6",
       apkVersionCode: state.manifest.latestApkVersionCode || 7,
       apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
     });
-  } else {
-    showToast("No cached local files <= 18 MB found to sync.", true);
-    render();
+    showToast(`${file.name} is now synced to Cloud and ready on all student phones!`);
+  } catch (err) {
+    showToast(`Repair upload failed: ${err?.message || err}. Sign in as Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
   }
 }
 

@@ -391,7 +391,7 @@ data class CourseClass(
     val attachments: List<LessonMedia> = emptyList(),
     val lectureCode: String = "",
     val minStudySecondsOverride: Long? = null,
-    val allowMediaDownload: Boolean = true
+    val allowMediaDownload: Boolean = false
 ) {
     val allAttachments: List<LessonMedia>
         get() {

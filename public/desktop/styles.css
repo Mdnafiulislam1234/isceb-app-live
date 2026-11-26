@@ -1501,6 +1501,16 @@ button, input, select, textarea {
   border-color: var(--gold);
 }
 
+.no-download-media-surface,
+.no-download-media-surface canvas,
+.no-download-media-surface img,
+.no-download-media-surface video,
+.no-download-media-surface audio {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 @page {
   size: A4 landscape;
   margin: 0;

@@ -409,7 +409,7 @@ fun PdfViewerCard(
 
                     OutlinedButton(
                         onClick = {
-                            if (totalPages > 0) onOpenFullscreen(pdfMedia) else onOpenExternal(pdfMedia)
+                            if (totalPages > 0 || !canDownload) onOpenFullscreen(pdfMedia) else onOpenExternal(pdfMedia)
                         },
                         modifier = Modifier.height(34.dp).testTag("btn_open_pdf_reader"),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary)
@@ -544,9 +544,9 @@ fun PdfPreviewDialog(
                             IconButton(onClick = { onDownload(media) }) {
                                 Icon(imageVector = Icons.Default.Download, contentDescription = "Download PDF", tint = GoldMetallic)
                             }
-                        }
-                        IconButton(onClick = { onOpenExternal(media) }) {
-                            Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open in External Viewer", tint = Color.White)
+                            IconButton(onClick = { onOpenExternal(media) }) {
+                                Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open in External Viewer", tint = Color.White)
+                            }
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.testTag("btn_close_pdf_preview")) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close Reader", tint = Color.White)
@@ -675,7 +675,8 @@ fun ImagePreviewDialog(
     media: LessonMedia,
     onResolveImageFile: suspend (LessonMedia) -> File?,
     onDownload: (LessonMedia) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    canDownload: Boolean = false
 ) {
     val context = LocalContext.current
     var resolvedFile by remember(media.id, media.url, media.cloudFileId) { mutableStateOf<File?>(null) }
@@ -715,8 +716,10 @@ fun ImagePreviewDialog(
                         Text("Image • ${media.fileSizeFormatted}", color = GoldSoft, fontSize = 11.sp)
                     }
                     Row {
-                        IconButton(onClick = { onDownload(media) }) {
-                            Icon(imageVector = Icons.Default.Download, contentDescription = "Download Image", tint = GoldMetallic)
+                        if (canDownload) {
+                            IconButton(onClick = { onDownload(media) }) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = "Download Image", tint = GoldMetallic)
+                            }
                         }
                         IconButton(onClick = onDismiss) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
@@ -1399,17 +1402,17 @@ fun VideoPlayerCard(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Save", fontSize = 11.sp)
                             }
-                        }
-                        IconButton(
-                            onClick = { onOpenExternal(videoMedia) },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.OpenInNew,
-                                contentDescription = "Open Video Externally",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            IconButton(
+                                onClick = { onOpenExternal(videoMedia) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = "Open Video Externally",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1514,9 +1517,9 @@ fun VideoPreviewDialog(
                             IconButton(onClick = { onDownload(media) }) {
                                 Icon(imageVector = Icons.Default.Download, contentDescription = "Download Video", tint = GoldMetallic)
                             }
-                        }
-                        IconButton(onClick = { onOpenExternal(media) }) {
-                            Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open External Player", tint = Color.White)
+                            IconButton(onClick = { onOpenExternal(media) }) {
+                                Icon(imageVector = Icons.Default.OpenInNew, contentDescription = "Open External Player", tint = Color.White)
+                            }
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.testTag("btn_close_video_preview")) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close Video", tint = Color.White)
@@ -1833,16 +1836,16 @@ fun DocumentPreviewDialog(
                         .padding(14.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { onOpenExternal(media) },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Open External App", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-                    }
                     if (canDownload) {
+                        OutlinedButton(
+                            onClick = { onOpenExternal(media) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Open External App", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                        }
                         Button(
                             onClick = { onDownload(media) },
                             modifier = Modifier.weight(1f),
@@ -1853,6 +1856,14 @@ fun DocumentPreviewDialog(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Download Copy", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
+                    } else {
+                        Text(
+                            text = "In-app view-only mode (download disabled for students)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = NavyPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }

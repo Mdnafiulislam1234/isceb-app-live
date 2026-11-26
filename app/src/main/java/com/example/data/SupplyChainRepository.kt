@@ -1352,7 +1352,7 @@ class SupplyChainRepository(
             if (settings.isQuizRequired) prog?.quizPassed == true else true
         }
 
-        val reqExamIds = settings.requiredExamIds.ifEmpty {
+        val reqExamIds = (settings.requiredExamIds + _moduleExams.value.map { it.id }).ifEmpty {
             setOf("exam-mod-1", "exam-mod-2", "exam-mod-3", "exam-mod-6", "exam-final")
         }
         val missingExams = reqExamIds.filter { examId ->
@@ -1360,9 +1360,10 @@ class SupplyChainRepository(
         }
         val mandatoryExamsPassed = missingExams.isEmpty()
 
-        val reqAssignmentIds = settings.requiredAssignmentIds.ifEmpty {
-            _moduleAssignments.value.filter { it.isFinalProject || it.isRequiredForCertification }.map { it.id }.toSet()
-        }
+        val reqAssignmentIds = (settings.requiredAssignmentIds + _moduleAssignments.value.map { it.id })
+            .ifEmpty {
+                _moduleAssignments.value.filter { it.isFinalProject || it.isRequiredForCertification }.map { it.id }.toSet()
+            }
         val missingAssignments = reqAssignmentIds.filter { asgId ->
             val sub = getStudentAssignmentSubmission(asgId, studentId)
             val needsGrade = settings.requireGradedFinalProject &&
@@ -2714,7 +2715,7 @@ class SupplyChainRepository(
                     attachments = attachments,
                     lectureCode = obj.optString("lectureCode", ""),
                     minStudySecondsOverride = if (obj.has("minStudySecondsOverride")) obj.getLong("minStudySecondsOverride") else null,
-                    allowMediaDownload = obj.optBoolean("allowMediaDownload", true)
+                    allowMediaDownload = obj.optBoolean("allowMediaDownload", false)
                 )
             )
         }

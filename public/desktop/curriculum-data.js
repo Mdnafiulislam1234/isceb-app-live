@@ -1358,4 +1358,72 @@ export function parseMcqQuestionsFromText(rawText, options = {}) {
   };
 }
 
+export function evaluateCertificateEligibility({
+  classes = INITIAL_CLASSES,
+  completedMap = {},
+  exams = INITIAL_EXAMS,
+  examAttempts = [],
+  assignments = INITIAL_ASSIGNMENTS,
+  assignmentSubmissionsMap = {},
+  isGuest = false
+} = {}) {
+  const safeClasses = Array.isArray(classes) && classes.length ? classes : INITIAL_CLASSES;
+  const safeExams = Array.isArray(exams) ? exams : [];
+  const safeAssignments = Array.isArray(assignments) ? assignments : [];
+  const safeAttempts = Array.isArray(examAttempts) ? examAttempts : [];
+  const safeProgress = completedMap && typeof completedMap === "object" ? completedMap : {};
+  const safeSubMap = assignmentSubmissionsMap && typeof assignmentSubmissionsMap === "object" ? assignmentSubmissionsMap : {};
+
+  const totalClasses = safeClasses.length || 48;
+  const completedClasses = safeClasses.filter((cls) => Boolean(safeProgress[cls.id]?.completed)).length;
+  const allClassesCompleted = totalClasses > 0 && completedClasses >= totalClasses;
+
+  const totalExams = safeExams.length;
+  const passedExamIds = new Set(
+    safeAttempts
+      .filter((a) => a && (a.passed === true || a.isPassed === true))
+      .map((a) => a.examId)
+  );
+  const passedExamsCount = safeExams.filter((ex) => passedExamIds.has(ex.id)).length;
+  const allExamsPassed = totalExams === 0 || passedExamsCount >= totalExams;
+
+  const totalAssignments = safeAssignments.length;
+  const submittedAssignmentsCount = safeAssignments.filter((asg) => {
+    const sub = safeSubMap[asg.id];
+    return Boolean(sub && (String(sub.text || "").trim().length > 0 || Number(sub.submittedAt || 0) > 0));
+  }).length;
+  const allAssignmentsSubmitted = totalAssignments === 0 || submittedAssignmentsCount >= totalAssignments;
+
+  const eligible = !isGuest && allClassesCompleted && allExamsPassed && allAssignmentsSubmitted;
+
+  const missingRequirements = [];
+  if (isGuest) {
+    missingRequirements.push("Register & sign in with your Student account");
+  }
+  if (!allClassesCompleted) {
+    missingRequirements.push(`Complete all ${totalClasses} classes (${completedClasses}/${totalClasses} completed)`);
+  }
+  if (!allExamsPassed) {
+    missingRequirements.push(`Pass all ${totalExams} timed exams (${passedExamsCount}/${totalExams} passed)`);
+  }
+  if (!allAssignmentsSubmitted) {
+    missingRequirements.push(`Submit all ${totalAssignments} assignments (${submittedAssignmentsCount}/${totalAssignments} submitted)`);
+  }
+
+  return {
+    eligible,
+    totalClasses,
+    completedClasses,
+    allClassesCompleted,
+    totalExams,
+    passedExamsCount,
+    allExamsPassed,
+    totalAssignments,
+    submittedAssignmentsCount,
+    allAssignmentsSubmitted,
+    missingRequirements
+  };
+}
+
+
 

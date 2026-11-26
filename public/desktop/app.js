@@ -17,6 +17,7 @@ import {
   buildFirestoreManifestPayload,
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
+  evaluateCertificateEligibility,
   isCloudSyncedMedia,
   normalizeAboutIsceb,
   parseMcqQuestionsFromText,
@@ -757,7 +758,7 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
     hostEl.innerHTML = `<div style="font-size: 12px; font-weight: 700; color: var(--navy); padding: 2px 4px 8px;">PDF Document • ${pdf.numPages} Page(s) • Pinch or tap + to zoom</div>`;
     hostEl.appendChild(stage);
 
-    const maxPages = Math.min(pdf.numPages, 40);
+    const maxPages = Math.min(pdf.numPages, 250);
     if (tracking && typeof tracking.onTotalPages === "function") {
       tracking.onTotalPages(pdf.numPages, maxPages);
     }
@@ -794,6 +795,9 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
       if (pageNum === 1 && tracking && typeof tracking.onPageViewed === "function") {
         tracking.onPageViewed(1, pdf.numPages, maxPages);
       }
+      if (pageNum % 6 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
 
     if (zoomControls) {
@@ -817,24 +821,26 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
     if (pdf.numPages > maxPages) {
       const note = document.createElement("div");
       note.style.cssText = "font-size: 12px; color: var(--muted); text-align: center; padding: 6px;";
-      note.textContent = `Showing first ${maxPages} of ${pdf.numPages} pages. Tap 'Download File' below for full document.`;
+      note.textContent = `Showing ${maxPages} of ${pdf.numPages} pages in in-app reader.`;
       hostEl.appendChild(note);
     }
   } catch (_) {
     if (tracking && typeof tracking.onFallbackOpened === "function") {
       tracking.onFallbackOpened();
     }
+    const iframeUrl = `${resolvedUrl}${String(resolvedUrl).includes("#") ? "&" : "#"}toolbar=0&navpanes=0&scrollbar=1`;
     hostEl.innerHTML = `
-      <iframe src="${escapeHtml(resolvedUrl)}" title="PDF Preview" style="width: 100%; height: 52vh; border: 1px solid var(--border); border-radius: 8px; background: #fff;"></iframe>
+      <iframe src="${escapeHtml(iframeUrl)}" title="PDF Preview" style="width: 100%; height: 62vh; border: 1px solid var(--border); border-radius: 8px; background: #fff;"></iframe>
       <div style="font-size: 12px; color: var(--muted); text-align: center; padding: 6px 4px;">
-        If your mobile browser shows a blank frame, tap <strong>Download File</strong> or <strong>Open in New Tab</strong> below to view in your PDF reader.
+        Viewing inside in-app reader (downloads disabled for class materials).
       </div>
     `;
   }
 }
 
 function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {}) {
-  const { classId = "" } = options || {};
+  const { classId = "", allowDownload = false } = options || {};
+  const canDownload = Boolean(allowDownload) || isAdminUser();
   const title = media.title || media.fileName || "Study Material";
   const fileName = media.fileName || "study-material";
   const upperType = String(media.type || "").toUpperCase();
@@ -869,29 +875,40 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
     `
     : "";
 
+  const videoAttrs = canDownload
+    ? `controls autoplay playsinline`
+    : `controls controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false;" autoplay playsinline`;
+  const audioAttrs = canDownload
+    ? `controls autoplay`
+    : `controls controlsList="nodownload" oncontextmenu="return false;" autoplay`;
+  const noDownloadSurfaceAttr = canDownload
+    ? ""
+    : ` oncontextmenu="return false;"`;
+  const noDownloadClass = canDownload ? "" : " no-download-media-surface";
+
   let previewBody = "";
   if (isVideo) {
-    previewBody = `<video id="activeModalMediaPlayer" controls autoplay playsinline src="${safeUrl}" style="width: 100%; max-height: 62vh; border-radius: 10px; background: #000;"></video>`;
+    previewBody = `<div class="${noDownloadClass.trim()}"${noDownloadSurfaceAttr}><video id="activeModalMediaPlayer" ${videoAttrs} src="${safeUrl}" style="width: 100%; max-height: 62vh; border-radius: 10px; background: #000;"></video></div>`;
   } else if (isAudio) {
     previewBody = `
-      <div style="background: var(--navy); color: #fff; border-radius: 12px; padding: 18px; margin-bottom: 12px;">
+      <div class="${noDownloadClass.trim()}"${noDownloadSurfaceAttr} style="background: var(--navy); color: #fff; border-radius: 12px; padding: 18px; margin-bottom: 12px;">
         <div style="font-weight: 800; color: var(--gold-soft); margin-bottom: 10px;">Audio Lecture: ${escapeHtml(title)}</div>
-        <audio id="activeModalMediaPlayer" controls autoplay src="${safeUrl}" style="width: 100%;"></audio>
+        <audio id="activeModalMediaPlayer" ${audioAttrs} src="${safeUrl}" style="width: 100%;"></audio>
       </div>
     `;
   } else if (isImage) {
     previewBody = `
       ${zoomToolbarHtml}
-      <div class="pdf-canvas-pages">
+      <div class="pdf-canvas-pages${noDownloadClass}"${noDownloadSurfaceAttr}>
         <div id="imageZoomStage" class="pdf-canvas-stage">
-          <img src="${safeUrl}" alt="${escapeHtml(title)}" style="width: 100%; height: auto; display: block; border-radius: 8px;" />
+          <img src="${safeUrl}" alt="${escapeHtml(title)}" draggable="false" style="width: 100%; height: auto; display: block; border-radius: 8px;" />
         </div>
       </div>
     `;
   } else if (isPdf) {
     previewBody = `
       ${zoomToolbarHtml}
-      <div id="pdfCanvasHost" class="pdf-canvas-pages">
+      <div id="pdfCanvasHost" class="pdf-canvas-pages${noDownloadClass}"${noDownloadSurfaceAttr}>
         <div style="text-align: center; padding: 24px 12px; font-size: 13px; font-weight: 700; color: var(--navy);">
           Rendering Crisp Vector PDF...
         </div>
@@ -899,24 +916,34 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
     `;
   } else {
     previewBody = `
-      <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 18px; text-align: center;">
+      <div class="${noDownloadClass.trim()}"${noDownloadSurfaceAttr} style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 18px; text-align: center;">
         <div style="font-weight: 800; color: var(--navy); font-size: 15px; margin-bottom: 6px;">${escapeHtml(title)}</div>
         <div style="font-size: 12.5px; color: var(--muted); margin-bottom: 10px;">${safeName} • ${escapeHtml(media.fileSizeFormatted || formatBytes(media.fileSizeBytes))}</div>
-        <p style="font-size: 12.5px; color: #334155; margin: 0;">Download this document to open it with your installed Word, Excel, or PowerPoint app, or open it in a new tab.</p>
+        <p style="font-size: 12.5px; color: #334155; margin: 0;">${
+          canDownload
+            ? "Download this document to open it with your installed Word, Excel, or PowerPoint app, or open it in a new tab."
+            : "In-app view-only mode: downloading class materials is disabled for students."
+        }</p>
       </div>
     `;
   }
+
+  const footerActionsHtml = canDownload
+    ? `
+        <a id="mediaOpenNewTabBtn" class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener">Open in New Tab</a>
+        <a class="btn btn-gold btn-sm" href="${safeUrl}" download="${safeName}">Download File</a>
+      `
+    : `<span class="badge badge-navy" id="mediaInAppOnlyBadge">In-App View &amp; Study Only • Download Disabled</span>`;
 
   openModal(
     title,
     `
       ${engagementBarHtml}
       ${previewBody}
-      <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 8px; flex-shrink: 0;">
-        <a id="mediaOpenNewTabBtn" class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener">Open in New Tab</a>
-        <a class="btn btn-gold btn-sm" href="${safeUrl}" download="${safeName}">Download File</a>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; margin-top: 8px; flex-shrink: 0;">
+        ${footerActionsHtml}
       </div>
-      <div id="textPreviewContainer"></div>
+      <div id="textPreviewContainer"${noDownloadSurfaceAttr}></div>
     `,
     { fullscreenReader: isPdf || isImage }
   );
@@ -1468,12 +1495,11 @@ function stopActiveMediaEngagementSession(shouldSync = true) {
 }
 
 function getOverallStats() {
+  const user = getActiveUser();
   const map = getUserProgressMap();
-  const totalClasses = state.classes.length || 48;
-  const completedCount = state.classes.filter((c) => map[c.id]?.completed).length;
   const totalSeconds = Object.values(map).reduce((sum, item) => sum + Number(item.activeSeconds || 0), 0);
-  const attempts = state.examAttemptsByUser[getActiveUser().id] || [];
-  const passedExams = new Set(attempts.filter((a) => a.passed).map((a) => a.examId));
+  const attempts = state.examAttemptsByUser[user.id] || [];
+  const assignmentSubmissions = state.assignmentSubmissionsByUser[user.id] || {};
   const avgExam = attempts.length
     ? Math.round(attempts.reduce((s, a) => s + Number(a.percentage || 0), 0) / attempts.length)
     : 0;
@@ -1487,21 +1513,38 @@ function getOverallStats() {
   });
   const part1Done = part1Classes.filter((c) => map[c.id]?.completed).length;
   const part2Done = part2Classes.filter((c) => map[c.id]?.completed).length;
+  const eligibility = evaluateCertificateEligibility({
+    classes: state.classes,
+    completedMap: map,
+    exams: state.exams,
+    examAttempts: attempts,
+    assignments: state.assignments,
+    assignmentSubmissionsMap: assignmentSubmissions,
+    isGuest: isGuestUser()
+  });
+  const totalClasses = eligibility.totalClasses;
+  const completedCount = eligibility.completedClasses;
   const percent = totalClasses > 0 ? Math.round((completedCount / totalClasses) * 100) : 0;
-  const certEligible = completedCount >= totalClasses || isAdminUser();
   return {
     totalClasses,
     completedCount,
     percent,
     totalSeconds,
     attempts,
-    passedExamsCount: passedExams.size,
+    passedExamsCount: eligibility.passedExamsCount,
+    totalExams: eligibility.totalExams,
+    submittedAssignmentsCount: eligibility.submittedAssignmentsCount,
+    totalAssignments: eligibility.totalAssignments,
+    allClassesCompleted: eligibility.allClassesCompleted,
+    allExamsPassed: eligibility.allExamsPassed,
+    allAssignmentsSubmitted: eligibility.allAssignmentsSubmitted,
+    certMissingReasons: eligibility.missingRequirements,
     avgExam,
     part1Total: part1Classes.length,
     part1Done,
     part2Total: part2Classes.length,
     part2Done,
-    certEligible
+    certEligible: eligibility.eligible
   };
 }
 
@@ -2196,7 +2239,8 @@ function updateChromeBadges() {
   const apkPortalUrl = resolveHostingUrl("apk.html");
 
   document.getElementById("navDashProgress").textContent = `${stats.percent}%`;
-  document.getElementById("navCertStatus").textContent = state.certificatesByUser[user.id] ? "Issued" : stats.certEligible ? "Ready" : "PGD";
+  const hasEarnedCert = stats.certEligible && Boolean(state.certificatesByUser[user.id]);
+  document.getElementById("navCertStatus").textContent = hasEarnedCert ? "Issued" : stats.certEligible ? "Ready" : "Locked";
   document.getElementById("navMembersCount").textContent = String(state.members.length);
   document.getElementById("navAdminRoleBadge").textContent = user.role === "ADMIN" ? "Admin" : "Student";
   const navProfileBadge = document.getElementById("navProfileBadge");
@@ -2321,7 +2365,7 @@ function renderDashboard() {
       <div class="stat-card">
         <div class="stat-label">Active Study Time</div>
         <div class="stat-value">${formatSeconds(stats.totalSeconds)}</div>
-        <div class="stat-sub">PGD Certificate: <span style="white-space: nowrap; font-weight: 700;">${stats.certEligible ? "Eligible" : "In Progress"}</span></div>
+        <div class="stat-sub">PGD Certificate: <span style="white-space: nowrap; font-weight: 700;">${stats.certEligible ? "Eligible" : "Locked"}</span></div>
       </div>
     </div>
 
@@ -3745,7 +3789,8 @@ async function exportLandscapeCertificatePdf(certRecord, signerConfig, { preview
       fileSizeFormatted: formatBytes(pdfBlob.size)
     },
     pdfUrl,
-    pdfBlob
+    pdfBlob,
+    { allowDownload: true }
   );
   showToast(previewOnly ? "Zoom in up to 500% — crisp Vector PDF ready." : "Crisp Vector Landscape Certificate PDF ready.");
 }
@@ -3753,16 +3798,22 @@ async function exportLandscapeCertificatePdf(certRecord, signerConfig, { preview
 function renderLearning() {
   const user = getActiveUser();
   const stats = getOverallStats();
-  const cert = state.certificatesByUser[user.id];
+  const rawCert = state.certificatesByUser[user.id];
+  const cert = stats.certEligible && rawCert ? rawCert : null;
   const certificatesEnabled = state.settings.certificatesEnabled !== false;
   const demoCertEnabled = state.settings.demoCertificateEnabled !== false || isAdminUser();
   const demoRecord = {
-    recipientName: user.fullName || "ISCEB Executive Candidate",
+    recipientName: "ISCEB Sample Candidate",
     serial: "ISCEB-DEMO-PGD-2026",
     issuedDate: new Date().toISOString().slice(0, 10),
     isDemo: true
   };
-  const displayedCert = demoCertificateActive && demoCertEnabled ? demoRecord : cert;
+  const showingDemo = Boolean(demoCertificateActive && demoCertEnabled);
+  const displayedCert = showingDemo ? demoRecord : cert;
+  const canExportDisplayedPdf = Boolean(
+    displayedCert &&
+      ((!displayedCert.isDemo && stats.certEligible) || (displayedCert.isDemo && isAdminUser()))
+  );
   const leftSignerName = state.settings.leftSignerName || "Hasina Akter Khan";
   const leftSignerTitle = state.settings.leftSignerTitle || "Chairman & CEO";
   const rightSignerName = state.settings.authorizedSignerName || "Md. Amirul Islam";
@@ -3773,35 +3824,57 @@ function renderLearning() {
       <div class="card">
         <div class="flex-header-between" style="margin-bottom: 10px;">
           <h3 style="margin: 0; color: var(--navy);">Certificate Eligibility Dashboard</h3>
-          <span class="badge ${cert ? "badge-ok" : stats.certEligible ? "badge-gold" : "badge-warn"}" id="learningCertStatusBadge">${cert ? "Issued" : stats.certEligible ? "Eligible" : "In Progress"}</span>
+          <span class="badge ${cert ? "badge-ok" : stats.certEligible ? "badge-gold" : "badge-warn"}" id="learningCertStatusBadge">${cert ? "Issued" : stats.certEligible ? "Eligible" : "Locked"}</span>
         </div>
         <div style="display: grid; gap: 8px; font-size: 13.5px; margin-bottom: 14px;">
-          <div>1. Lectures Completed: <strong>${stats.completedCount} / ${stats.totalClasses}</strong></div>
-          <div>2. Timed Exams Passed: <strong>${stats.passedExamsCount} / ${state.exams.length}</strong></div>
-          <div>3. Active Study Hours Logged: <strong>${formatSeconds(stats.totalSeconds)}</strong></div>
-          <div>4. Account Role: <strong>${escapeHtml(user.designation)}</strong></div>
+          <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <span>1. All Lectures Completed: <strong>${stats.completedCount} / ${stats.totalClasses}</strong></span>
+            <span class="badge ${stats.allClassesCompleted ? "badge-ok" : "badge-warn"}">${stats.allClassesCompleted ? "Completed" : "Locked"}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <span>2. All Timed Exams Passed: <strong>${stats.passedExamsCount} / ${stats.totalExams}</strong></span>
+            <span class="badge ${stats.allExamsPassed ? "badge-ok" : "badge-warn"}">${stats.allExamsPassed ? "Passed" : "Pending"}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <span>3. All Assignments Submitted: <strong>${stats.submittedAssignmentsCount} / ${stats.totalAssignments}</strong></span>
+            <span class="badge ${stats.allAssignmentsSubmitted ? "badge-ok" : "badge-warn"}">${stats.allAssignmentsSubmitted ? "Submitted" : "Pending"}</span>
+          </div>
+          <div>4. Active Study Hours: <strong>${formatSeconds(stats.totalSeconds)}</strong> • Student ID: <strong>${escapeHtml(user.studentId || "Guest")}</strong></div>
         </div>
+        ${
+          !stats.certEligible
+            ? `<div id="certLockedNotice" style="margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); border: 1px solid #FCD34D; color: #92400E; font-size: 12.5px;">
+                <strong>Official Certificate &amp; PDF Locked</strong><br/>
+                Complete all requirements to unlock generation &amp; PDF download:
+                <ul style="margin: 6px 0 0; padding-left: 18px;">
+                  ${stats.certMissingReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+                </ul>
+              </div>`
+            : ""
+        }
         ${
           !certificatesEnabled
             ? `<div style="margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12.5px; font-weight: 700;">Official certificate generation is currently paused by the ISCEB Administrator.</div>`
             : ""
         }
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button type="button" class="btn btn-gold" data-action="issue-certificate" ${!certificatesEnabled ? "disabled" : ""}>
-            ${cert ? "Regenerate Official PGD Certificate" : "Generate Official PGD Certificate"}
+          <button type="button" class="btn btn-gold" data-action="issue-certificate" ${!certificatesEnabled || !stats.certEligible ? "disabled" : ""}>
+            ${!stats.certEligible ? "Certificate Locked (Complete Course)" : cert ? "Regenerate Official PGD Certificate" : "Generate Official PGD Certificate"}
           </button>
           ${
             demoCertEnabled
               ? `<button type="button" class="btn btn-outline" data-action="preview-demo-certificate">
-                  ${demoCertificateActive ? "Hide Demo Preview" : "Preview Demo Certificate"}
+                  ${demoCertificateActive ? "Hide Demo Preview" : "Preview Sample Certificate"}
                 </button>`
               : ""
           }
           ${
-            displayedCert
+            canExportDisplayedPdf
               ? `<button type="button" class="btn btn-primary" data-action="download-certificate-pdf">Save Landscape PDF</button>
                  <button type="button" class="btn btn-outline" data-action="zoom-certificate-pdf">Zoom / View HD</button>
                  <button type="button" class="btn btn-outline" onclick="window.print()">Print</button>`
+              : showingDemo
+              ? `<span class="badge badge-navy">Sample View Only • PDF Locked Until Eligible</span>`
               : ""
           }
         </div>
@@ -4851,8 +4924,8 @@ function renderProfile() {
         </div>
         <div class="stat-card">
           <div class="stat-label">Certificates</div>
-          <div class="stat-value">${hasCert ? "Issued" : stats.certEligible ? "Eligible" : "Pending"}</div>
-          <div class="stat-sub">${hasCert ? escapeHtml(state.certificatesByUser[user.id].serial) : "PGD in SCM"}</div>
+          <div class="stat-value">${hasCert && stats.certEligible ? "Issued" : stats.certEligible ? "Eligible" : "Locked"}</div>
+          <div class="stat-sub">${hasCert && stats.certEligible ? escapeHtml(state.certificatesByUser[user.id].serial) : "PGD in SCM"}</div>
         </div>
       </div>
     `;
@@ -5696,11 +5769,17 @@ function setupListeners() {
         showToast("Official certificate generation is currently disabled by Administrator.", true);
         return;
       }
+      const stats = getOverallStats();
+      if (!stats.certEligible) {
+        showToast(`Certificate locked: ${stats.certMissingReasons.join(" • ")}`, true);
+        return;
+      }
       demoCertificateActive = false;
       const user = getActiveUser();
       const serial = `ISCEB-PGD-2026-${String(1000 + Math.floor(Math.random() * 8999))}`;
       state.certificatesByUser[user.id] = {
         recipientName: user.fullName,
+        studentId: user.studentId || "",
         serial,
         issuedDate: new Date().toISOString().slice(0, 10)
       };
@@ -5709,7 +5788,7 @@ function setupListeners() {
       render();
     } else if (action === "preview-demo-certificate") {
       demoCertificateActive = !demoCertificateActive;
-      showToast(demoCertificateActive ? "Demo Certificate preview opened (Hasina Akter Khan & Md. Amirul Islam)." : "Demo Certificate preview closed.");
+      showToast(demoCertificateActive ? "Sample Certificate preview opened (for visual layout only)." : "Sample Certificate preview closed.");
       render();
     } else if (action === "toggle-certificates-enabled") {
       state.settings.certificatesEnabled = state.settings.certificatesEnabled === false;
@@ -5729,19 +5808,22 @@ function setupListeners() {
       render();
     } else if (action === "download-certificate-pdf" || action === "zoom-certificate-pdf") {
       const activeUser = getActiveUser();
-      const issuedCert = state.certificatesByUser[activeUser.id];
-      const demoCertAllowed = state.settings.demoCertificateEnabled !== false || isAdminUser();
-      const certToExport =
-        demoCertificateActive && demoCertAllowed
-          ? {
-              recipientName: activeUser.fullName || "ISCEB Executive Candidate",
-              serial: "ISCEB-DEMO-PGD-2026",
-              issuedDate: new Date().toISOString().slice(0, 10),
-              isDemo: true
-            }
-          : issuedCert;
+      const stats = getOverallStats();
+      const issuedCert = stats.certEligible ? state.certificatesByUser[activeUser.id] : null;
+      const adminDemoAllowed = Boolean(demoCertificateActive && isAdminUser());
+      const certToExport = adminDemoAllowed
+        ? {
+            recipientName: "ISCEB Sample Candidate",
+            serial: "ISCEB-DEMO-PGD-2026",
+            issuedDate: new Date().toISOString().slice(0, 10),
+            isDemo: true
+          }
+        : issuedCert;
       if (!certToExport) {
-        showToast("Generate your PGD Certificate or open Demo Preview first.", true);
+        const lockReason = !stats.certEligible
+          ? `Certificate PDF is locked: ${stats.certMissingReasons.join(" • ")}`
+          : "Generate your Official PGD Certificate first.";
+        showToast(lockReason, true);
         return;
       }
       exportLandscapeCertificatePdf(
@@ -5759,7 +5841,7 @@ function setupListeners() {
       const out = document.getElementById("verifyCertResult");
       const found = Object.values(state.certificatesByUser).find((c) => c.serial === serial);
       out.innerHTML = found
-        ? `<span class="badge badge-ok">Verified Valid</span> Issued to <strong>${escapeHtml(found.recipientName)}</strong> on ${escapeHtml(found.issuedDate)}.`
+        ? `<span class="badge badge-ok">Verified Valid</span> Issued to <strong>${escapeHtml(found.recipientName)}</strong>${found.studentId ? ` (${escapeHtml(found.studentId)})` : ""} on ${escapeHtml(found.issuedDate)}.`
         : `<span class="badge badge-err">Not Found</span> No certificate matching <code>${escapeHtml(serial)}</code> in this workspace.`;
     } else if (action === "open-cloud-media") {
       const cid = actBtn.dataset.classId;

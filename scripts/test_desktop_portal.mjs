@@ -18,6 +18,7 @@ import {
   buildFirestoreManifestPayload,
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
+  evaluateCertificateEligibility,
   isCloudSyncedMedia,
   normalizeAboutIsceb,
   parseMcqQuestionsFromText,
@@ -871,6 +872,84 @@ test("PDF Reader opens full-screen edge-to-edge and Open in New Tab credits genu
   assert.ok(appJs.includes("isExternalPdfTabReadingActive") && appJs.includes("activeNewTabMediaSession"));
   assert.ok(appJs.includes("activeMediaEngagementFlushFn"));
   assert.ok(appJs.includes('host.addEventListener("scroll", noteStudentInteraction'));
+});
+
+test("Strict certificate eligibility locks generation & PDF until 48/48 classes, all exams passed, and all assignments submitted; class media blocks student downloads", () => {
+  // 1. 0/48 classes -> Locked
+  const emptyRes = evaluateCertificateEligibility({
+    classes: INITIAL_CLASSES,
+    completedMap: {},
+    exams: INITIAL_EXAMS,
+    examAttempts: [],
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissionsMap: {},
+    isGuest: false
+  });
+  assert.equal(emptyRes.eligible, false);
+  assert.equal(emptyRes.missingRequirements.length, 3);
+
+  // 2. All 48/48 classes completed, but exams or assignments incomplete -> Locked
+  const allCompletedMap = Object.fromEntries(INITIAL_CLASSES.map((c) => [c.id, { completed: true }]));
+  const missingExamsRes = evaluateCertificateEligibility({
+    classes: INITIAL_CLASSES,
+    completedMap: allCompletedMap,
+    exams: INITIAL_EXAMS,
+    examAttempts: INITIAL_EXAMS.slice(0, INITIAL_EXAMS.length - 1).map((ex) => ({ examId: ex.id, passed: true })),
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissionsMap: Object.fromEntries(INITIAL_ASSIGNMENTS.map((a) => [a.id, { text: "Done", submittedAt: 1000 }])),
+    isGuest: false
+  });
+  assert.equal(missingExamsRes.eligible, false);
+  assert.equal(missingExamsRes.allClassesCompleted, true);
+  assert.equal(missingExamsRes.allExamsPassed, false);
+  assert.equal(missingExamsRes.allAssignmentsSubmitted, true);
+
+  // 3. 48/48 classes + all exams passed, missing 1 assignment -> Locked
+  const missingAssignRes = evaluateCertificateEligibility({
+    classes: INITIAL_CLASSES,
+    completedMap: allCompletedMap,
+    exams: INITIAL_EXAMS,
+    examAttempts: INITIAL_EXAMS.map((ex) => ({ examId: ex.id, passed: true })),
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissionsMap: Object.fromEntries(INITIAL_ASSIGNMENTS.slice(0, INITIAL_ASSIGNMENTS.length - 1).map((a) => [a.id, { text: "Done", submittedAt: 1000 }])),
+    isGuest: false
+  });
+  assert.equal(missingAssignRes.eligible, false);
+  assert.equal(missingAssignRes.allAssignmentsSubmitted, false);
+
+  // 4. All 48 classes + all exams passed + all assignments submitted -> Eligible
+  const fullEligibleRes = evaluateCertificateEligibility({
+    classes: INITIAL_CLASSES,
+    completedMap: allCompletedMap,
+    exams: INITIAL_EXAMS,
+    examAttempts: INITIAL_EXAMS.map((ex) => ({ examId: ex.id, passed: true })),
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissionsMap: Object.fromEntries(INITIAL_ASSIGNMENTS.map((a) => [a.id, { text: "Done", submittedAt: 1000 }])),
+    isGuest: false
+  });
+  assert.equal(fullEligibleRes.eligible, true);
+  assert.equal(fullEligibleRes.missingRequirements.length, 0);
+
+  // 5. Guest account stays locked even if progress map exists
+  const guestRes = evaluateCertificateEligibility({
+    classes: INITIAL_CLASSES,
+    completedMap: allCompletedMap,
+    exams: INITIAL_EXAMS,
+    examAttempts: INITIAL_EXAMS.map((ex) => ({ examId: ex.id, passed: true })),
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissionsMap: Object.fromEntries(INITIAL_ASSIGNMENTS.map((a) => [a.id, { text: "Done", submittedAt: 1000 }])),
+    isGuest: true
+  });
+  assert.equal(guestRes.eligible, false);
+
+  // 6. UI & media anti-download enforcement checks
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  const stylesCss = fs.readFileSync("./public/desktop/styles.css", "utf8");
+  assert.ok(appJs.includes('id="certLockedNotice"'));
+  assert.ok(appJs.includes('recipientName: "ISCEB Sample Candidate"'));
+  assert.ok(appJs.includes('controlsList="nodownload noplaybackrate"') && appJs.includes('controlsList="nodownload"'));
+  assert.ok(appJs.includes('id="mediaInAppOnlyBadge"') && appJs.includes("no-download-media-surface"));
+  assert.ok(stylesCss.includes(".no-download-media-surface"));
 });
 
 

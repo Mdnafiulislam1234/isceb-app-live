@@ -1160,7 +1160,7 @@ class CloudSyncRepository(
                 attachments = attachmentsList,
                 lectureCode = c["lectureCode"] as? String ?: "",
                 minStudySecondsOverride = (c["minStudySecondsOverride"] as? Number)?.toLong(),
-                allowMediaDownload = c["allowMediaDownload"] as? Boolean ?: true
+                allowMediaDownload = c["allowMediaDownload"] as? Boolean ?: false
             )
         }
 

@@ -848,7 +848,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                 viewModel.navigateTo(Screen.ClassDetail(nextCls.id))
                             },
                             canManageClass = canManageCls,
-                            canDownloadMedia = targetClass.allowMediaDownload || canManageCls,
+                            canDownloadMedia = canManageCls,
                             onPdfPageStudyTick = { curPage, totPages, activeDelta, idleDelta ->
                                 viewModel.recordPdfPageStudy(
                                     classId = targetClass.id,
@@ -1261,7 +1261,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
         val activePdfClassId = (currentScreen as? Screen.ClassDetail)?.classId
         val activePdfClass = activePdfClassId?.let { id -> classes.find { it.id == id } }
         val activePdfProg = activePdfClassId?.let { id -> studentProgressMap[id] }
-        val canDownloadPdf = activePdfClass == null || activePdfClass.allowMediaDownload || viewModel.canManageModule(activePdfClass.moduleId)
+        val canDownloadPdf = activePdfClass == null || viewModel.canManageModule(activePdfClass.moduleId)
         PdfPreviewDialog(
             media = pdfItem,
             onResolvePdfFile = { media -> viewModel.resolveLocalMediaFile(media) },
@@ -1290,6 +1290,9 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
 
     // In-App Fullscreen Image Viewer Dialog
     previewImageMedia?.let { imgItem ->
+        val activeImgClassId = (currentScreen as? Screen.ClassDetail)?.classId
+        val activeImgClass = activeImgClassId?.let { id -> classes.find { it.id == id } }
+        val canDownloadImg = activeImgClass == null || viewModel.canManageModule(activeImgClass.moduleId)
         ImagePreviewDialog(
             media = imgItem,
             onResolveImageFile = { media -> viewModel.resolveLocalMediaFile(media) },
@@ -1297,7 +1300,8 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                 pendingDownloadMedia = media
                 exportDocumentLauncher.launch(media.fileName)
             },
-            onDismiss = { viewModel.previewImageMedia.value = null }
+            onDismiss = { viewModel.previewImageMedia.value = null },
+            canDownload = canDownloadImg
         )
     }
 
@@ -1305,7 +1309,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     previewVideoMedia?.let { videoItem ->
         val activeVideoClassId = (currentScreen as? Screen.ClassDetail)?.classId
         val activeVideoClass = activeVideoClassId?.let { id -> classes.find { it.id == id } }
-        val canDownloadVideo = activeVideoClass == null || activeVideoClass.allowMediaDownload || viewModel.canManageModule(activeVideoClass.moduleId)
+        val canDownloadVideo = activeVideoClass == null || viewModel.canManageModule(activeVideoClass.moduleId)
         VideoPreviewDialog(
             media = videoItem,
             onResolveVideoFile = { media -> viewModel.resolveLocalMediaFile(media) },
@@ -1333,7 +1337,7 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
     previewDocumentMedia?.let { docItem ->
         val activeDocClassId = (currentScreen as? Screen.ClassDetail)?.classId
         val activeDocClass = activeDocClassId?.let { id -> classes.find { it.id == id } }
-        val canDownloadDoc = activeDocClass == null || activeDocClass.allowMediaDownload || viewModel.canManageModule(activeDocClass.moduleId)
+        val canDownloadDoc = activeDocClass == null || viewModel.canManageModule(activeDocClass.moduleId)
         DocumentPreviewDialog(
             media = docItem,
             onResolveDocumentFile = { media -> viewModel.resolveLocalMediaFile(media) },

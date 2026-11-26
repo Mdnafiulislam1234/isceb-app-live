@@ -430,15 +430,17 @@ fun MyLearningScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Demo Preview", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
-                            Button(
-                                onClick = onDownloadDemoCertificatePdf,
-                                modifier = Modifier.weight(0.9f).heightIn(min = 48.dp).testTag("btn_download_demo_certificate"),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic)
-                            ) {
-                                Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Demo PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            if (isAdmin) {
+                                Button(
+                                    onClick = onDownloadDemoCertificatePdf,
+                                    modifier = Modifier.weight(0.9f).heightIn(min = 48.dp).testTag("btn_download_demo_certificate"),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Demo PDF", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                                }
                             }
                         }
                     }

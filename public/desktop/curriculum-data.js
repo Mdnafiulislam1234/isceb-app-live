@@ -63,25 +63,141 @@ export const DEFAULT_DEVELOPER = {
   location: "Dhaka, Bangladesh"
 };
 
+export const DEFAULT_ABOUT_ISCEB_VERSION = 2;
+
 export const DEFAULT_ABOUT_ISCEB = {
+  aboutVersion: DEFAULT_ABOUT_ISCEB_VERSION,
   organizationName: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
   shortName: "ISCEB",
   tagline: "Connect. Learn. Achieve.",
   establishedLabel: "Official PGD & Executive SCM Education Platform",
   overview:
-    "Institute of Supply Chain Excellence Bangladesh (ISCEB) is dedicated to building globally competitive supply chain, procurement, commercial, logistics, and operations leaders through practical, industry-driven Post Graduate Diploma (PGD) education, executive mentorship, and real-world case workshops.",
+    "The Institute of Supply Chain Excellence Bangladesh (ISCEB) is a professional institution dedicated to developing skilled, knowledgeable, and future-ready supply chain professionals. Our mission is to bridge the gap between academic concepts and real-world industry practices — empowering individuals to thrive in a globally competitive business environment.\n\nThrough innovative teaching methods, expert mentors, and practical training modules, ISCEB provides a platform where learners connect with knowledge, learn with purpose, and achieve professional excellence in the field of supply chain management.",
   mission:
-    "To equip professionals and aspiring leaders with end-to-end supply chain competence—bridging demand planning, strategic sourcing, import-export commercial compliance (LC & UCP 600), inventory optimization, warehouse operations, and leadership excellence.",
+    "To deliver accessible, industry-relevant, and globally recognized supply chain education and training programs that empower learners to excel in their careers and contribute to organizational growth and national development.",
   vision:
-    "To establish Bangladesh's premier benchmark ecosystem for supply chain education, corporate capability transformation, and lifelong executive networking.",
+    "To be recognized as the leading center of supply chain excellence in Bangladesh, shaping professionals who drive innovation, efficiency, and sustainability across industries.",
+  coreValues: [
+    {
+      title: "Integrity",
+      description: "Fostering honesty, transparency, and accountability."
+    },
+    {
+      title: "Excellence",
+      description: "Striving for quality and continuous improvement in all we do."
+    },
+    {
+      title: "Innovation",
+      description: "Embracing creative, forward-thinking solutions."
+    },
+    {
+      title: "Collaboration",
+      description: "Building partnerships with academia and industry leaders."
+    },
+    {
+      title: "Empowerment",
+      description: "Inspiring learners to take ownership of their professional growth."
+    }
+  ],
+  focusAreasIntro:
+    "ISCEB offers a comprehensive range of programs and workshops tailored to the evolving needs of modern organizations:",
+  focusAreas: [
+    {
+      title: "Supply Chain & Logistics Management",
+      description: "Master the entire value chain from procurement to delivery."
+    },
+    {
+      title: "Procurement & Contract Management",
+      description: "Learn best practices in sourcing, negotiation, and vendor relations."
+    },
+    {
+      title: "Warehouse & Inventory Management",
+      description: "Enhance operational efficiency and inventory control."
+    },
+    {
+      title: "Transportation & Distribution Strategy",
+      description: "Optimize logistics networks and delivery systems."
+    },
+    {
+      title: "Leadership & Strategic Management",
+      description: "Develop critical thinking and managerial effectiveness."
+    },
+    {
+      title: "Sustainable & Green Supply Chain",
+      description: "Promote environmentally responsible supply chain practices."
+    }
+  ],
+  teamSummary:
+    "ISCEB is led by experienced professionals and educators with proven expertise in supply chain management and organizational leadership. Together, we aim to create a culture of learning excellence and industry relevance.",
   programsSummary:
     "12 Structured Modules • 48 Live/Recorded Lectures (Part 1 Basic & Part 2 Advance) • Timed Examinations • Capstone Project • QR-Verified Official PGD Diploma.",
   headquarters: "Dhaka, Bangladesh",
-  officialWebsite: "www.isceb.org",
+  officialWebsite: "isceb.com",
   registryWebsite: "www.scmglobal.org",
-  contactEmail: "info@isceb.org",
-  contactPhone: "+880 1715-282905"
+  contactEmails: ["admin@isceb.com", "isceb25@gmail.com"],
+  contactPhones: ["+8801627202044", "+8801715282905", "01740-415693"],
+  contactEmail: "admin@isceb.com",
+  contactPhone: "+8801627202044"
 };
+
+function sanitizeAboutItems(list, fallback) {
+  if (!Array.isArray(list) || !list.length) {
+    return structuredClone(fallback);
+  }
+  const normalized = list
+    .map((item) => {
+      if (item && typeof item === "object") {
+        const title = String(item.title || "").trim();
+        const description = String(item.description || "").trim();
+        return title || description ? { title, description } : null;
+      }
+      const rawLine = String(item || "").trim();
+      if (!rawLine) return null;
+      const splitIdx = rawLine.search(/\s*(?::|—|–|-)\s+/);
+      if (splitIdx > 0) {
+        const title = rawLine.slice(0, splitIdx).trim();
+        const description = rawLine.slice(splitIdx).replace(/^\s*(?::|—|–|-)\s+/, "").trim();
+        return { title, description };
+      }
+      return { title: rawLine, description: "" };
+    })
+    .filter(Boolean);
+  return normalized.length ? normalized : structuredClone(fallback);
+}
+
+function sanitizeContactList(list, legacySingle, fallback) {
+  const items = Array.isArray(list)
+    ? list.map((v) => String(v || "").trim()).filter(Boolean)
+    : [];
+  if (items.length) return items;
+  const single = String(legacySingle || "").trim();
+  if (single) return [single];
+  return [...fallback];
+}
+
+export function normalizeAboutIsceb(raw) {
+  const defaults = structuredClone(DEFAULT_ABOUT_ISCEB);
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  const version = Number(raw.aboutVersion || 0);
+  if (version < DEFAULT_ABOUT_ISCEB_VERSION) {
+    return defaults;
+  }
+  const contactEmails = sanitizeContactList(raw.contactEmails, raw.contactEmail, defaults.contactEmails);
+  const contactPhones = sanitizeContactList(raw.contactPhones, raw.contactPhone, defaults.contactPhones);
+  return {
+    ...defaults,
+    ...raw,
+    aboutVersion: DEFAULT_ABOUT_ISCEB_VERSION,
+    coreValues: sanitizeAboutItems(raw.coreValues, defaults.coreValues),
+    focusAreas: sanitizeAboutItems(raw.focusAreas, defaults.focusAreas),
+    contactEmails,
+    contactPhones,
+    contactEmail: contactEmails[0] || defaults.contactEmail,
+    contactPhone: contactPhones[0] || defaults.contactPhone
+  };
+}
 
 export const DEFAULT_MEMBERS_ROSTER_VERSION = 4;
 
@@ -562,7 +678,7 @@ export function buildFirestoreCatalogPayload({
     founderProfileJson: JSON.stringify(founderProfile || DEFAULT_FOUNDER),
     developerProfileJson: JSON.stringify(developerProfile || DEFAULT_DEVELOPER),
     membersJson: JSON.stringify(members || DEFAULT_MEMBERS),
-    aboutIscebJson: JSON.stringify(aboutIsceb || DEFAULT_ABOUT_ISCEB),
+    aboutIscebJson: JSON.stringify(normalizeAboutIsceb(aboutIsceb)),
     examsJson: JSON.stringify(Array.isArray(exams) && exams.length ? exams : INITIAL_EXAMS),
     assignmentsJson: JSON.stringify(Array.isArray(assignments) && assignments.length ? assignments : INITIAL_ASSIGNMENTS)
   };

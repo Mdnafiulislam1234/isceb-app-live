@@ -19,6 +19,7 @@ import {
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
+  normalizeAboutIsceb,
   parseMcqQuestionsFromText,
   splitBytesIntoLessonFileChunks
 } from "../public/desktop/curriculum-data.js";
@@ -677,13 +678,45 @@ test("Genuine anti-idle study verification, material engagement tracking, and Fi
   assert.ok(appJs.includes("openAdminStudentProgressModal") && appJs.includes('data-action="admin-view-student-progress"'));
 });
 
-test("About ISCEB section in hamburger menu syncs via Firestore settings and incremental chunked upload protects startup rehydration", () => {
+test("About ISCEB section in hamburger menu syncs via Firestore settings, organizes all 7 official sections in order, and includes 01740-415693", () => {
   assert.ok(DEFAULT_ABOUT_ISCEB.organizationName.includes("Institute of Supply Chain Excellence Bangladesh"));
-  assert.ok(DEFAULT_ABOUT_ISCEB.overview && DEFAULT_ABOUT_ISCEB.mission && DEFAULT_ABOUT_ISCEB.vision);
-  assert.ok(DEFAULT_ABOUT_ISCEB.programsSummary && DEFAULT_ABOUT_ISCEB.contactEmail);
+  assert.ok(DEFAULT_ABOUT_ISCEB.overview.includes("bridge the gap between academic concepts"));
+  assert.ok(DEFAULT_ABOUT_ISCEB.overview.includes("connect with knowledge, learn with purpose"));
+  assert.ok(DEFAULT_ABOUT_ISCEB.mission.includes("industry-relevant, and globally recognized"));
+  assert.ok(DEFAULT_ABOUT_ISCEB.vision.includes("leading center of supply chain excellence in Bangladesh"));
+  assert.equal(DEFAULT_ABOUT_ISCEB.coreValues.length, 5);
+  assert.deepEqual(
+    DEFAULT_ABOUT_ISCEB.coreValues.map((v) => v.title),
+    ["Integrity", "Excellence", "Innovation", "Collaboration", "Empowerment"]
+  );
+  assert.equal(DEFAULT_ABOUT_ISCEB.focusAreas.length, 6);
+  assert.deepEqual(
+    DEFAULT_ABOUT_ISCEB.focusAreas.map((a) => a.title),
+    [
+      "Supply Chain & Logistics Management",
+      "Procurement & Contract Management",
+      "Warehouse & Inventory Management",
+      "Transportation & Distribution Strategy",
+      "Leadership & Strategic Management",
+      "Sustainable & Green Supply Chain"
+    ]
+  );
+  assert.ok(DEFAULT_ABOUT_ISCEB.teamSummary.includes("experienced professionals and educators"));
+  assert.deepEqual(DEFAULT_ABOUT_ISCEB.contactEmails, ["admin@isceb.com", "isceb25@gmail.com"]);
+  assert.deepEqual(DEFAULT_ABOUT_ISCEB.contactPhones, ["+8801627202044", "+8801715282905", "01740-415693"]);
+
+  // Legacy v1 cached object without aboutVersion >= 2 upgrades automatically to v2 defaults
+  const upgradedLegacy = normalizeAboutIsceb({
+    organizationName: "Old Cached Name",
+    contactEmail: "info@isceb.org"
+  });
+  assert.equal(upgradedLegacy.aboutVersion, 2);
+  assert.ok(upgradedLegacy.contactPhones.includes("01740-415693"));
+  assert.equal(upgradedLegacy.coreValues.length, 5);
 
   const customAbout = {
     ...DEFAULT_ABOUT_ISCEB,
+    aboutVersion: 2,
     headline: "Supply Chain Excellence in Bangladesh",
     mission: "Empowering supply chain leaders nationwide."
   };
@@ -700,12 +733,16 @@ test("About ISCEB section in hamburger menu syncs via Firestore settings and inc
   const parsedAbout = JSON.parse(catalogWithAbout.settings.aboutIscebJson);
   assert.equal(parsedAbout.headline, "Supply Chain Excellence in Bangladesh");
   assert.equal(parsedAbout.mission, "Empowering supply chain leaders nationwide.");
+  assert.equal(parsedAbout.coreValues.length, 5);
+  assert.equal(parsedAbout.focusAreas.length, 6);
 
   const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
   assert.ok(desktopHtml.includes('data-view="about"') && desktopHtml.includes("About ISCEB"));
 
   const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
   assert.ok(appJs.includes("function renderAboutIsceb()") && appJs.includes("function openEditAboutIscebModal()"));
+  assert.ok(appJs.includes("Who We Are") && appJs.includes("Our Mission") && appJs.includes("Our Vision"));
+  assert.ok(appJs.includes("Our Core Values") && appJs.includes("Focus Areas") && appJs.includes("Our Team") && appJs.includes("Get In Touch"));
   assert.ok(appJs.includes("aboutIscebEditForm") && appJs.includes("c.settings.aboutIscebJson"));
   assert.ok(appJs.includes("writeChunkWithTimeout") && appJs.includes("isUploadingAdminMedia"));
   assert.ok(appJs.includes("skipPendingSync") && appJs.includes("await rehydrateVerifiedAdminSession()"));

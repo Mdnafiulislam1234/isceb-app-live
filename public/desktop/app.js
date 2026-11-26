@@ -1,6 +1,7 @@
 import {
   AVAILABLE_USERS,
   DEFAULT_ABOUT_ISCEB,
+  DEFAULT_ABOUT_ISCEB_VERSION,
   DEFAULT_DEVELOPER,
   DEFAULT_FOUNDER,
   DEFAULT_MEMBERS,
@@ -17,6 +18,7 @@ import {
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
+  normalizeAboutIsceb,
   parseMcqQuestionsFromText,
   splitBytesIntoLessonFileChunks
 } from "./curriculum-data.js";
@@ -118,13 +120,6 @@ function normalizeSettings(raw) {
     s.authorizedSignerTitle = "Founder of ISCEB";
   }
   return s;
-}
-
-function normalizeAboutIsceb(raw) {
-  return {
-    ...structuredClone(DEFAULT_ABOUT_ISCEB),
-    ...(raw && typeof raw === "object" ? raw : {})
-  };
 }
 
 function sanitizeDeveloperProfile(raw, forceUpgrade = false) {
@@ -4028,13 +4023,56 @@ function renderDirectory() {
   `;
 }
 
+function formatAboutItemsForTextarea(list, separator = ": ") {
+  return (Array.isArray(list) ? list : [])
+    .map((item) => {
+      const title = String(item?.title || "").trim();
+      const desc = String(item?.description || "").trim();
+      return desc ? `${title}${separator}${desc}` : title;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseAboutItemsFromTextarea(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const idx = line.search(/\s*(?::|—|–|-)\s+/);
+      if (idx > 0) {
+        const title = line.slice(0, idx).trim();
+        const description = line.slice(idx).replace(/^\s*(?::|—|–|-)\s+/, "").trim();
+        return { title, description };
+      }
+      return { title: line, description: "" };
+    });
+}
+
+function parseAboutContactLines(text) {
+  return String(text || "")
+    .split(/[\r\n,]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
 function renderAboutIsceb() {
   const about = normalizeAboutIsceb(state.aboutIsceb);
+  const overviewParagraphs = String(about.overview || "")
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const websiteDisplay = about.officialWebsite || "isceb.com";
+  const websiteHref = /^https?:\/\//i.test(websiteDisplay)
+    ? websiteDisplay
+    : `https://${websiteDisplay}`;
+
   return `
     <div class="card card-navy" style="margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
         <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1 1 240px;">
-          <img src="./isceb-logo.webp" alt="ISCEB Logo" style="width: 56px; height: 56px; border-radius: 14px; background: #fff; padding: 4px; object-fit: contain; flex-shrink: 0; border: 2px solid var(--gold);" />
+          <img src="./isceb-logo.webp" alt="ISCEB Logo" style="width: 58px; height: 58px; border-radius: 14px; background: #fff; padding: 4px; object-fit: contain; flex-shrink: 0; border: 2px solid var(--gold);" />
           <div style="min-width: 0;">
             <span class="badge badge-gold">${escapeHtml(about.tagline || "Connect. Learn. Achieve.")}</span>
             <h2 style="margin: 6px 0 4px; color: #fff; font-size: 20px; line-height: 1.25;">${escapeHtml(about.organizationName)}</h2>
@@ -4049,36 +4087,178 @@ function renderAboutIsceb() {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px;">
-      <span class="badge badge-navy">Institutional Overview</span>
-      <h3 style="margin: 8px 0 8px; color: var(--navy);">Who We Are</h3>
-      <p style="margin: 0; font-size: 14px; line-height: 1.65; color: #334155; white-space: pre-line;">${escapeHtml(about.overview)}</p>
+    <div class="card" style="margin-bottom: 16px; border-top: 4px solid var(--navy);">
+      <div class="about-section-header">
+        <span class="about-section-icon" aria-hidden="true">01</span>
+        <div>
+          <span class="badge badge-navy">WHO WE ARE</span>
+          <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 18px;">Who We Are</h3>
+        </div>
+      </div>
+      <div style="display: grid; gap: 10px;">
+        ${overviewParagraphs
+          .map(
+            (para) =>
+              `<p style="margin: 0; font-size: 14px; line-height: 1.65; color: #334155;">${escapeHtml(para)}</p>`
+          )
+          .join("")}
+      </div>
     </div>
 
     <div class="two-col-grid" style="margin-bottom: 16px;">
       <div class="card" style="margin-bottom: 0; border-top: 4px solid var(--navy);">
-        <span class="badge badge-navy">Our Mission</span>
-        <p style="margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.mission)}</p>
+        <div class="about-section-header">
+          <span class="about-section-icon" aria-hidden="true">02</span>
+          <div>
+            <span class="badge badge-navy">OUR MISSION</span>
+            <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 17px;">Our Mission</h3>
+          </div>
+        </div>
+        <p style="margin: 0; font-size: 13.8px; line-height: 1.65; color: #334155; white-space: pre-line;">${escapeHtml(about.mission)}</p>
       </div>
       <div class="card" style="margin-bottom: 0; border-top: 4px solid var(--gold);">
-        <span class="badge badge-gold">Our Vision</span>
-        <p style="margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.vision)}</p>
+        <div class="about-section-header">
+          <span class="about-section-icon gold" aria-hidden="true">03</span>
+          <div>
+            <span class="badge badge-gold">OUR VISION</span>
+            <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 17px;">Our Vision</h3>
+          </div>
+        </div>
+        <p style="margin: 0; font-size: 13.8px; line-height: 1.65; color: #334155; white-space: pre-line;">${escapeHtml(about.vision)}</p>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px;">
-      <span class="badge badge-navy">Academic &amp; Executive Focus</span>
-      <h3 style="margin: 8px 0 8px; color: var(--navy);">Programs &amp; Credentialing</h3>
-      <p style="margin: 0 0 12px; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.programsSummary)}</p>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; padding: 12px; background: var(--surface-muted); border-radius: 12px; border: 1px solid var(--border); font-size: 13px;">
-        <div><strong>Headquarters:</strong><br/><span style="color: #334155;">${escapeHtml(about.headquarters || "Dhaka, Bangladesh")}</span></div>
-        <div><strong>Official Website:</strong><br/><span style="color: var(--navy); font-weight: 700;">${escapeHtml(about.officialWebsite || "www.isceb.org")}</span></div>
-        <div><strong>Registry Portal:</strong><br/><span style="color: var(--navy); font-weight: 700;">${escapeHtml(about.registryWebsite || "www.scmglobal.org")}</span></div>
-        <div><strong>Contact Email &amp; Phone:</strong><br/><span style="color: #334155;">${escapeHtml(about.contactEmail || "info@isceb.org")}${about.contactPhone ? ` • ${escapeHtml(about.contactPhone)}` : ""}</span></div>
+    <div class="card" style="margin-bottom: 16px; border-top: 4px solid var(--navy);">
+      <div class="about-section-header">
+        <span class="about-section-icon" aria-hidden="true">04</span>
+        <div>
+          <span class="badge badge-navy">OUR CORE VALUES</span>
+          <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 18px;">Our Core Values</h3>
+        </div>
+      </div>
+      <div class="about-option-grid">
+        ${about.coreValues
+          .map(
+            (val, idx) => `
+              <div class="about-option-tile gold-accent">
+                <div class="about-option-title">
+                  <span class="about-option-num">${idx + 1}</span>
+                  <span>${escapeHtml(val.title)}</span>
+                </div>
+                ${
+                  val.description
+                    ? `<p class="about-option-desc">${escapeHtml(val.description)}</p>`
+                    : ""
+                }
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 16px; border-top: 4px solid var(--gold);">
+      <div class="about-section-header">
+        <span class="about-section-icon gold" aria-hidden="true">05</span>
+        <div>
+          <span class="badge badge-gold">FOCUS AREAS</span>
+          <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 18px;">Focus Areas</h3>
+        </div>
+      </div>
+      ${
+        about.focusAreasIntro
+          ? `<p style="margin: 0 0 12px; font-size: 13.8px; line-height: 1.6; color: #334155;">${escapeHtml(about.focusAreasIntro)}</p>`
+          : ""
+      }
+      <div class="about-option-grid">
+        ${about.focusAreas
+          .map(
+            (area, idx) => `
+              <div class="about-option-tile">
+                <div class="about-option-title">
+                  <span class="about-option-num">${String(idx + 1).padStart(2, "0")}</span>
+                  <span>${escapeHtml(area.title)}</span>
+                </div>
+                ${
+                  area.description
+                    ? `<p class="about-option-desc">${escapeHtml(area.description)}</p>`
+                    : ""
+                }
+              </div>
+            `
+          )
+          .join("")}
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px;">
         <button type="button" class="btn btn-primary btn-sm" data-nav="courses">Explore 12 Modules &amp; 48 Lectures</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 16px; border-top: 4px solid var(--navy);">
+      <div class="about-section-header">
+        <span class="about-section-icon" aria-hidden="true">06</span>
+        <div>
+          <span class="badge badge-navy">OUR TEAM</span>
+          <h3 style="margin: 4px 0 0; color: var(--navy); font-size: 18px;">Our Team</h3>
+        </div>
+      </div>
+      <p style="margin: 0 0 14px; font-size: 14px; line-height: 1.65; color: #334155; white-space: pre-line;">${escapeHtml(about.teamSummary)}</p>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <button type="button" class="btn btn-outline btn-sm" data-nav="directory">View ISCEB Leadership &amp; Members (${state.members.length})</button>
+      </div>
+    </div>
+
+    <div class="card about-touch-card" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+        <div>
+          <span class="badge badge-gold">GET IN TOUCH</span>
+          <h3 style="margin: 8px 0 2px; color: #FFFFFF; font-size: 19px;">Get In Touch</h3>
+          <p style="margin: 0; font-size: 12.5px; color: #CBD5E1;">Connect directly with ISCEB admissions, administration &amp; student support.</p>
+        </div>
+        <span class="badge badge-navy" style="background: rgba(255,255,255,0.12); color: #F8FAFC; border: 1px solid rgba(255,255,255,0.2);">${escapeHtml(about.headquarters || "Dhaka, Bangladesh")}</span>
+      </div>
+
+      <div class="about-touch-grid">
+        <div class="about-touch-group">
+          <div class="about-touch-label">Email Us</div>
+          ${about.contactEmails
+            .map(
+              (email) => `
+                <a class="about-touch-link" href="mailto:${escapeHtml(email)}">
+                  <span>${escapeHtml(email)}</span>
+                  <span style="font-size: 11px; color: var(--gold);">EMAIL ↗</span>
+                </a>
+              `
+            )
+            .join("")}
+        </div>
+
+        <div class="about-touch-group">
+          <div class="about-touch-label">Call Us Via</div>
+          ${about.contactPhones
+            .map((phone) => {
+              const dialHref = phone.replace(/[^\d+]/g, "");
+              return `
+                <a class="about-touch-link" href="tel:${escapeHtml(dialHref)}">
+                  <span>${escapeHtml(phone)}</span>
+                  <span style="font-size: 11px; color: var(--gold);">CALL ↗</span>
+                </a>
+              `;
+            })
+            .join("")}
+        </div>
+
+        <div class="about-touch-group">
+          <div class="about-touch-label">Official Portals</div>
+          <a class="about-touch-link" href="${escapeHtml(websiteHref)}" target="_blank" rel="noopener noreferrer">
+            <span>${escapeHtml(websiteDisplay)}</span>
+            <span style="font-size: 11px; color: var(--gold);">WEB ↗</span>
+          </a>
+          <div class="about-touch-link" style="cursor: default;">
+            <span>${escapeHtml(about.registryWebsite || "www.scmglobal.org")}</span>
+            <span style="font-size: 11px; color: #CBD5E1;">PORTAL</span>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -4104,17 +4284,26 @@ function openEditAboutIscebModal() {
           <input type="text" id="aboutEstLabel" class="input" value="${escapeHtml(about.establishedLabel)}" />
         </label>
       </div>
-      <label style="font-size: 12px; font-weight: 700;">Institutional Overview (Who We Are)
+      <label style="font-size: 12px; font-weight: 700;">Who We Are (Separate paragraphs with a blank line)
         <textarea id="aboutOverview" class="textarea" rows="4" required>${escapeHtml(about.overview)}</textarea>
       </label>
-      <label style="font-size: 12px; font-weight: 700;">Mission
+      <label style="font-size: 12px; font-weight: 700;">Our Mission
         <textarea id="aboutMission" class="textarea" rows="3" required>${escapeHtml(about.mission)}</textarea>
       </label>
-      <label style="font-size: 12px; font-weight: 700;">Vision
+      <label style="font-size: 12px; font-weight: 700;">Our Vision
         <textarea id="aboutVision" class="textarea" rows="3" required>${escapeHtml(about.vision)}</textarea>
       </label>
-      <label style="font-size: 12px; font-weight: 700;">Programs &amp; Credentialing Summary
-        <textarea id="aboutPrograms" class="textarea" rows="2">${escapeHtml(about.programsSummary)}</textarea>
+      <label style="font-size: 12px; font-weight: 700;">Our Core Values (one per line: Title: Description)
+        <textarea id="aboutCoreValues" class="textarea" rows="5">${escapeHtml(formatAboutItemsForTextarea(about.coreValues, ": "))}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Focus Areas Intro
+        <input type="text" id="aboutFocusIntro" class="input" value="${escapeHtml(about.focusAreasIntro || "")}" />
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Focus Areas (one per line: Title – Description)
+        <textarea id="aboutFocusAreas" class="textarea" rows="6">${escapeHtml(formatAboutItemsForTextarea(about.focusAreas, " – "))}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Our Team
+        <textarea id="aboutTeamSummary" class="textarea" rows="3">${escapeHtml(about.teamSummary || "")}</textarea>
       </label>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <label style="font-size: 12px; font-weight: 700;">Headquarters / Location
@@ -4125,11 +4314,11 @@ function openEditAboutIscebModal() {
         </label>
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-        <label style="font-size: 12px; font-weight: 700;">Contact Email
-          <input type="text" id="aboutEmail" class="input" value="${escapeHtml(about.contactEmail)}" />
+        <label style="font-size: 12px; font-weight: 700;">Contact Emails (one per line)
+          <textarea id="aboutEmail" class="textarea" rows="3">${escapeHtml((about.contactEmails || []).join("\n"))}</textarea>
         </label>
-        <label style="font-size: 12px; font-weight: 700;">Contact Phone
-          <input type="text" id="aboutPhone" class="input" value="${escapeHtml(about.contactPhone)}" />
+        <label style="font-size: 12px; font-weight: 700;">Contact Phones (one per line)
+          <textarea id="aboutPhone" class="textarea" rows="3">${escapeHtml((about.contactPhones || []).join("\n"))}</textarea>
         </label>
       </div>
       <button type="submit" class="btn btn-gold" style="margin-top: 6px; width: 100%;">Save &amp; Publish About ISCEB to Cloud</button>
@@ -4800,7 +4989,7 @@ function render() {
     exams: ["Timed Examinations & Assignments", "Official Module Assessments, 100-Mark Final Exam & Capstone Study"],
     learning: ["My Learning & Official PGD Certificate", "Academic Readiness, Printable Executive Diploma & Serial Verification"],
     directory: ["ISCEB Leadership & Directory", "Founder, App Developer & Verified Faculty Members"],
-    about: ["About ISCEB", "Institute of Supply Chain Excellence Bangladesh — Overview, Mission & Programs"],
+    about: ["About ISCEB", "Who We Are, Mission, Vision, Core Values, Focus Areas & Contact"],
     profile: ["Student Profile & Credentialing", "Direct Registration, Google Cloud Sync & Online APK Updates"],
     admin: ["Admin Governance & Cloud Publishing", "Live Curriculum OTA Sync & APK Release Metadata"]
   };
@@ -6394,19 +6583,29 @@ function setupListeners() {
       }
     } else if (e.target.id === "aboutIscebEditForm") {
       if (!isAdminUser()) return;
+      const parsedEmails = parseAboutContactLines(document.getElementById("aboutEmail")?.value);
+      const parsedPhones = parseAboutContactLines(document.getElementById("aboutPhone")?.value);
+      const parsedCoreValues = parseAboutItemsFromTextarea(document.getElementById("aboutCoreValues")?.value);
+      const parsedFocusAreas = parseAboutItemsFromTextarea(document.getElementById("aboutFocusAreas")?.value);
       state.aboutIsceb = normalizeAboutIsceb({
         ...state.aboutIsceb,
+        aboutVersion: DEFAULT_ABOUT_ISCEB_VERSION,
         organizationName: document.getElementById("aboutOrgName")?.value.trim() || DEFAULT_ABOUT_ISCEB.organizationName,
         tagline: document.getElementById("aboutTagline")?.value.trim() || DEFAULT_ABOUT_ISCEB.tagline,
         establishedLabel: document.getElementById("aboutEstLabel")?.value.trim() || DEFAULT_ABOUT_ISCEB.establishedLabel,
         overview: document.getElementById("aboutOverview")?.value.trim() || DEFAULT_ABOUT_ISCEB.overview,
         mission: document.getElementById("aboutMission")?.value.trim() || DEFAULT_ABOUT_ISCEB.mission,
         vision: document.getElementById("aboutVision")?.value.trim() || DEFAULT_ABOUT_ISCEB.vision,
-        programsSummary: document.getElementById("aboutPrograms")?.value.trim() || DEFAULT_ABOUT_ISCEB.programsSummary,
+        coreValues: parsedCoreValues.length ? parsedCoreValues : DEFAULT_ABOUT_ISCEB.coreValues,
+        focusAreasIntro: document.getElementById("aboutFocusIntro")?.value.trim() || DEFAULT_ABOUT_ISCEB.focusAreasIntro,
+        focusAreas: parsedFocusAreas.length ? parsedFocusAreas : DEFAULT_ABOUT_ISCEB.focusAreas,
+        teamSummary: document.getElementById("aboutTeamSummary")?.value.trim() || DEFAULT_ABOUT_ISCEB.teamSummary,
         headquarters: document.getElementById("aboutHQ")?.value.trim() || DEFAULT_ABOUT_ISCEB.headquarters,
         officialWebsite: document.getElementById("aboutWeb")?.value.trim() || DEFAULT_ABOUT_ISCEB.officialWebsite,
-        contactEmail: document.getElementById("aboutEmail")?.value.trim() || DEFAULT_ABOUT_ISCEB.contactEmail,
-        contactPhone: document.getElementById("aboutPhone")?.value.trim() || ""
+        contactEmails: parsedEmails.length ? parsedEmails : DEFAULT_ABOUT_ISCEB.contactEmails,
+        contactPhones: parsedPhones.length ? parsedPhones : DEFAULT_ABOUT_ISCEB.contactPhones,
+        contactEmail: parsedEmails[0] || DEFAULT_ABOUT_ISCEB.contactEmail,
+        contactPhone: parsedPhones[0] || DEFAULT_ABOUT_ISCEB.contactPhone
       });
       saveState();
       closeModal();

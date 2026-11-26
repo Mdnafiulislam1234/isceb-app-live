@@ -1365,6 +1365,142 @@ button, input, select, textarea {
   }
 }
 
+/* About ISCEB Structured Sections */
+.about-section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.about-section-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 800;
+  flex-shrink: 0;
+  background: #EEF2FF;
+  color: var(--navy);
+  border: 2px solid rgba(27, 59, 102, 0.18);
+}
+
+.about-section-icon.gold {
+  background: #FEF9E7;
+  color: var(--gold-dark);
+  border-color: rgba(212, 175, 55, 0.45);
+}
+
+.about-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.about-option-tile {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--navy);
+  border-radius: 12px;
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.about-option-tile.gold-accent {
+  border-left-color: var(--gold-dark);
+}
+
+.about-option-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--navy);
+  line-height: 1.35;
+}
+
+.about-option-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.about-option-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #334155;
+}
+
+.about-touch-card {
+  background: linear-gradient(135deg, #071A33 0%, #102B4C 55%, #1B3B66 100%);
+  color: #FFFFFF;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+}
+
+.about-touch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.about-touch-group {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.about-touch-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--gold-soft);
+}
+
+.about-touch-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(4, 16, 34, 0.55);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  word-break: break-word;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.about-touch-link:hover {
+  background: rgba(212, 175, 55, 0.22);
+  border-color: var(--gold);
+}
+
 @page {
   size: A4 landscape;
   margin: 0;

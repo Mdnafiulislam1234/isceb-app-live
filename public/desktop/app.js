@@ -11,7 +11,9 @@ import {
   INITIAL_MODULES,
   MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
+  buildFirestoreExamAttemptPayload,
   buildFirestoreManifestPayload,
+  buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
   splitBytesIntoLessonFileChunks
@@ -293,6 +295,14 @@ const cachedMediaIdbKeys = new Set();
 const recentlyUploadedMediaIds = new Map();
 const recentlyDeletedMediaIds = new Map();
 let adminUploadStatusBanner = null;
+const IDLE_THRESHOLD_MS = 45_000;
+let lastUserInteractionMs = Date.now();
+let activeMediaEngagementTimer = null;
+let activeMediaEngagementClassId = "";
+let activeMediaIsPlaying = false;
+let lastProgressCloudSyncMap = new Map();
+let cloudProgressByStudentUid = new Map();
+let cloudExamAttemptsByStudentUid = new Map();
 
 const MEDIA_IDB_NAME = "isceb_media_blobs";
 const MEDIA_IDB_STORE = "blobs";
@@ -656,7 +666,7 @@ function renderPdfPageToCanvasCrisp(page, canvas, targetWidthCssPx, zoomRatio = 
   return page.render({ canvasContext: ctx, viewport }).promise;
 }
 
-async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls = null) {
+async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls = null, tracking = null) {
   if (!hostEl) return;
   try {
     const pdfjsLib = await getPdfJsLib();
@@ -670,16 +680,39 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
     hostEl.appendChild(stage);
 
     const maxPages = Math.min(pdf.numPages, 40);
+    if (tracking && typeof tracking.onTotalPages === "function") {
+      tracking.onTotalPages(pdf.numPages, maxPages);
+    }
     const baseCssWidth = Math.max(hostEl.clientWidth - 24, 320);
     const pageRecords = [];
     let renderChain = Promise.resolve();
 
+    let pageObserver = null;
+    if (tracking && typeof tracking.onPageViewed === "function" && typeof IntersectionObserver !== "undefined") {
+      pageObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const pNum = Number(entry.target.dataset.pageNum || 0);
+              if (pNum > 0) tracking.onPageViewed(pNum, pdf.numPages, maxPages);
+            }
+          }
+        },
+        { root: hostEl, threshold: 0.35 }
+      );
+    }
+
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const canvas = document.createElement("canvas");
+      canvas.dataset.pageNum = String(pageNum);
       stage.appendChild(canvas);
       pageRecords.push({ page, canvas });
       await renderPdfPageToCanvasCrisp(page, canvas, baseCssWidth, 1.35);
+      if (pageObserver) pageObserver.observe(canvas);
+      if (pageNum === 1 && tracking && typeof tracking.onPageViewed === "function") {
+        tracking.onPageViewed(1, pdf.numPages, maxPages);
+      }
     }
 
     if (zoomControls) {
@@ -707,6 +740,9 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
       hostEl.appendChild(note);
     }
   } catch (_) {
+    if (tracking && typeof tracking.onFallbackOpened === "function") {
+      tracking.onFallbackOpened();
+    }
     hostEl.innerHTML = `
       <iframe src="${escapeHtml(resolvedUrl)}" title="PDF Preview" style="width: 100%; height: 52vh; border: 1px solid var(--border); border-radius: 8px; background: #fff;"></iframe>
       <div style="font-size: 12px; color: var(--muted); text-align: center; padding: 6px 4px;">
@@ -716,7 +752,8 @@ async function renderPdfInlineIntoHost(hostEl, resolvedUrl, blob, zoomControls =
   }
 }
 
-function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
+function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {}) {
+  const { classId = "" } = options || {};
   const title = media.title || media.fileName || "Study Material";
   const fileName = media.fileName || "study-material";
   const upperType = String(media.type || "").toUpperCase();
@@ -724,7 +761,17 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   const safeName = escapeHtml(fileName);
   const lowerName = fileName.toLowerCase();
   const isPdf = upperType === "PDF" || lowerName.endsWith(".pdf");
+  const isVideo = upperType === "VIDEO" || /\.(mp4|webm|mov|mkv|3gp)$/i.test(lowerName);
+  const isAudio = upperType === "AUDIO" || /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(lowerName);
   const isImage = upperType === "IMAGE" || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lowerName);
+
+  const trackEngagement = Boolean(classId && !isAdminUser());
+  const engagementBarHtml = trackEngagement
+    ? `<div id="mediaEngagementTrackerBar" style="background: #F4F7FC; border: 1px solid #C7D7EE; border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; font-weight: 700; color: var(--navy);">
+         <span id="mediaEngagementProgressLabel">Active Study Verification: Tracking...</span>
+         <span id="mediaEngagementStateBadge" class="badge badge-ok">Active</span>
+       </div>`
+    : "";
 
   const zoomToolbarHtml = (isPdf || isImage)
     ? `
@@ -741,13 +788,13 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     : "";
 
   let previewBody = "";
-  if (upperType === "VIDEO" || /\.(mp4|webm|mov|mkv|3gp)$/i.test(lowerName)) {
-    previewBody = `<video controls autoplay playsinline src="${safeUrl}" style="width: 100%; max-height: 62vh; border-radius: 10px; background: #000;"></video>`;
-  } else if (upperType === "AUDIO" || /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(lowerName)) {
+  if (isVideo) {
+    previewBody = `<video id="activeModalMediaPlayer" controls autoplay playsinline src="${safeUrl}" style="width: 100%; max-height: 62vh; border-radius: 10px; background: #000;"></video>`;
+  } else if (isAudio) {
     previewBody = `
       <div style="background: var(--navy); color: #fff; border-radius: 12px; padding: 18px; margin-bottom: 12px;">
         <div style="font-weight: 800; color: var(--gold-soft); margin-bottom: 10px;">Audio Lecture: ${escapeHtml(title)}</div>
-        <audio controls autoplay src="${safeUrl}" style="width: 100%;"></audio>
+        <audio id="activeModalMediaPlayer" controls autoplay src="${safeUrl}" style="width: 100%;"></audio>
       </div>
     `;
   } else if (isImage) {
@@ -781,6 +828,7 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
   openModal(
     title,
     `
+      ${engagementBarHtml}
       ${previewBody}
       <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 14px;">
         <a class="btn btn-outline btn-sm" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open in New Tab</a>
@@ -789,6 +837,10 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
       <div id="textPreviewContainer"></div>
     `
   );
+
+  if (trackEngagement) {
+    startActiveMediaEngagementSession(classId, { isPdf, isVideo, isAudio, isDocument: !isPdf && !isVideo && !isAudio });
+  }
 
   const zoomOutBtn = document.getElementById("mediaZoomOutBtn");
   const zoomInBtn = document.getElementById("mediaZoomInBtn");
@@ -806,7 +858,40 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     if (zoomInBtn) zoomInBtn.addEventListener("click", () => setPdfZoom(currentZoom + 75));
     if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => setPdfZoom(currentZoom - 75));
     if (zoomResetBtn) zoomResetBtn.addEventListener("click", () => setPdfZoom(100));
-    renderPdfInlineIntoHost(host, resolvedUrl, blob, zoomController);
+
+    const pdfTracking = trackEngagement
+      ? {
+          onTotalPages: (total, renderedLimit) => {
+            const cur = getClassProgress(classId);
+            updateClassProgress(classId, { totalPdfPages: Math.max(Number(cur.totalPdfPages || 0), total) });
+            refreshModalEngagementLabel(classId, { isPdf: true, renderedLimit });
+          },
+          onPageViewed: (pageNum, total, renderedLimit) => {
+            noteStudentInteraction();
+            const cur = getClassProgress(classId);
+            const prevVisited = Array.isArray(cur.visitedPdfPages) ? cur.visitedPdfPages : [];
+            const nextSet = new Set(prevVisited);
+            nextSet.add(pageNum);
+            const visited = Array.from(nextSet).sort((a, b) => a - b);
+            const requiredPages = Math.min(total || renderedLimit || 1, 40);
+            const allViewed = visited.length >= requiredPages;
+            updateClassProgress(classId, {
+              totalPdfPages: Math.max(Number(cur.totalPdfPages || 0), total || 0),
+              visitedPdfPages: visited,
+              isPdfConfirmed: Boolean(cur.isPdfConfirmed || allViewed)
+            });
+            refreshModalEngagementLabel(classId, { isPdf: true, renderedLimit });
+          },
+          onFallbackOpened: () => {
+            const cur = getClassProgress(classId);
+            if (!cur.isPdfConfirmed) {
+              updateClassProgress(classId, { isPdfConfirmed: true });
+            }
+          }
+        }
+      : null;
+
+    renderPdfInlineIntoHost(host, resolvedUrl, blob, zoomController, pdfTracking);
   } else if (isImage) {
     const imgStage = document.getElementById("imageZoomStage");
     let currentZoom = 100;
@@ -818,6 +903,55 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null) {
     if (zoomInBtn) zoomInBtn.addEventListener("click", () => setImgZoom(currentZoom + 75));
     if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => setImgZoom(currentZoom - 75));
     if (zoomResetBtn) zoomResetBtn.addEventListener("click", () => setImgZoom(100));
+    if (trackEngagement) {
+      updateClassProgress(classId, { isPdfConfirmed: true });
+      refreshModalEngagementLabel(classId, { isDocument: true });
+    }
+  } else if (isVideo || isAudio) {
+    const player = document.getElementById("activeModalMediaPlayer");
+    if (player && trackEngagement) {
+      let maxSequentialSec = 0;
+      let lastTime = 0;
+      const syncPlaybackProgress = (forceComplete = false) => {
+        const dur = Number(player.duration || 0);
+        const nowPos = Number(player.currentTime || 0);
+        if (nowPos - lastTime <= 12 && nowPos > maxSequentialSec) {
+          maxSequentialSec = nowPos;
+        }
+        lastTime = nowPos;
+        if (dur > 0 && Number.isFinite(dur)) {
+          const pct = forceComplete
+            ? Math.max(100, Math.round((maxSequentialSec / dur) * 100))
+            : Math.min(100, Math.round((maxSequentialSec / dur) * 100));
+          const cur = getClassProgress(classId);
+          const nextMax = Math.max(Number(cur.maxPlaybackPercent || 0), pct);
+          if (nextMax > Number(cur.maxPlaybackPercent || 0)) {
+            updateClassProgress(classId, {
+              maxPlaybackPercent: nextMax,
+              lastPlaybackPositionMs: Math.round(nowPos * 1000)
+            });
+          }
+          refreshModalEngagementLabel(classId, { isVideo, isAudio });
+        }
+      };
+      player.addEventListener("play", () => {
+        activeMediaIsPlaying = true;
+        noteStudentInteraction();
+        refreshModalEngagementLabel(classId, { isVideo, isAudio });
+      });
+      player.addEventListener("pause", () => {
+        activeMediaIsPlaying = false;
+        refreshModalEngagementLabel(classId, { isVideo, isAudio });
+      });
+      player.addEventListener("timeupdate", () => syncPlaybackProgress(false));
+      player.addEventListener("ended", () => {
+        activeMediaIsPlaying = false;
+        syncPlaybackProgress(true);
+      });
+    }
+  } else if (trackEngagement) {
+    updateClassProgress(classId, { isPdfConfirmed: true });
+    refreshModalEngagementLabel(classId, { isDocument: true });
   }
 
   if (blob && /\.(txt|csv|md|json|log)$/i.test(lowerName)) {
@@ -899,11 +1033,11 @@ async function downloadChunksInParallelWithRetry(fb, cloudFileId, chunkCount) {
   return results;
 }
 
-async function openSyncedCloudMedia(media) {
+async function openSyncedCloudMedia(media, options = {}) {
   if (!media) return;
   const rawUrl = String(media.url || "").trim();
   if (/^https?:\/\//i.test(rawUrl)) {
-    presentMediaPreviewModal(media, rawUrl, null);
+    presentMediaPreviewModal(media, rawUrl, null, options);
     return;
   }
 
@@ -914,13 +1048,13 @@ async function openSyncedCloudMedia(media) {
       cachedUrl = URL.createObjectURL(cachedBlob);
       localAttachmentUrls.set(media.id, cachedUrl);
     }
-    presentMediaPreviewModal(media, cachedUrl, cachedBlob);
+    presentMediaPreviewModal(media, cachedUrl, cachedBlob, options);
     return;
   }
 
   const cachedUrl = localAttachmentUrls.get(media.id);
   if (cachedUrl) {
-    presentMediaPreviewModal(media, cachedUrl, null);
+    presentMediaPreviewModal(media, cachedUrl, null, options);
     return;
   }
 
@@ -954,7 +1088,7 @@ async function openSyncedCloudMedia(media) {
 
   const fb = await initFirebaseSdk();
   if (!fb || !cloudUser) {
-    pendingMediaAfterSignIn = media;
+    pendingMediaAfterSignIn = { media, options };
     openModal(
       `Open ${media.fileName || "Study Material"}`,
       `<div style="display: grid; gap: 12px; font-size: 13.5px;">
@@ -977,7 +1111,7 @@ async function openSyncedCloudMedia(media) {
     await saveMediaBlobToIdb(media.cloudFileId, blob, { fileName: media.fileName, mimeType: blob.type });
     const objUrl = URL.createObjectURL(blob);
     localAttachmentUrls.set(media.id || media.cloudFileId, objUrl);
-    presentMediaPreviewModal(media, objUrl, blob);
+    presentMediaPreviewModal(media, objUrl, blob, options);
   } catch (err) {
     showToast(`Unable to open cloud file: ${err.message || err}`, true);
   }
@@ -991,24 +1125,142 @@ function getUserProgressMap() {
 
 function getClassProgress(classId) {
   const map = getUserProgressMap();
-  return (
-    map[classId] || {
-      classId,
-      completed: false,
-      activeSeconds: 0,
-      quizScore: null,
-      quizPassed: false,
-      localNotes: "",
-      localAttachments: []
-    }
-  );
+  const base = map[classId] || {};
+  return {
+    classId,
+    completed: Boolean(base.completed),
+    activeSeconds: Number(base.activeSeconds || 0),
+    idleExcludedSeconds: Number(base.idleExcludedSeconds || 0),
+    pdfReadingSeconds: Number(base.pdfReadingSeconds || 0),
+    visitedPdfPages: Array.isArray(base.visitedPdfPages) ? base.visitedPdfPages : [],
+    totalPdfPages: Number(base.totalPdfPages || 0),
+    maxPlaybackPercent: Number(base.maxPlaybackPercent || 0),
+    isPdfConfirmed: Boolean(base.isPdfConfirmed),
+    lastPlaybackPositionMs: Number(base.lastPlaybackPositionMs || 0),
+    startTimeMs: Number(base.startTimeMs || 0),
+    lastActiveTimeMs: Number(base.lastActiveTimeMs || 0),
+    completionTimestamp: base.completionTimestamp || null,
+    quizScore: base.quizScore === undefined ? null : base.quizScore,
+    quizPassed: Boolean(base.quizPassed),
+    localNotes: base.localNotes || "",
+    localAttachments: Array.isArray(base.localAttachments) ? base.localAttachments : []
+  };
 }
 
 function updateClassProgress(classId, updater) {
   const map = getUserProgressMap();
   const prev = getClassProgress(classId);
-  map[classId] = { ...prev, ...updater };
+  map[classId] = { ...prev, ...updater, lastActiveTimeMs: Date.now() };
   saveState();
+}
+
+function noteStudentInteraction() {
+  lastUserInteractionMs = Date.now();
+}
+
+function isUserActivelyStudyingNow(requireMediaPlaying = false) {
+  if (typeof document !== "undefined" && document.hidden) return false;
+  if (requireMediaPlaying) return activeMediaIsPlaying;
+  return Date.now() - lastUserInteractionMs < IDLE_THRESHOLD_MS;
+}
+
+function getLectureVerificationStatus(cls, prog) {
+  const materials = getUniqueClassMaterials(cls);
+  const hasPdf = materials.some((m) => String(m.type || "").toUpperCase() === "PDF" || String(m.fileName || "").toLowerCase().endsWith(".pdf"));
+  const hasVideoOrAudio = materials.some((m) => {
+    const t = String(m.type || "").toUpperCase();
+    return t === "VIDEO" || t === "AUDIO";
+  });
+  const hasAnyMaterial = materials.length > 0;
+  const totalPages = Number(prog.totalPdfPages || 0);
+  const requiredPages = totalPages > 0 ? Math.min(totalPages, 40) : 0;
+  const visitedCount = Array.isArray(prog.visitedPdfPages) ? prog.visitedPdfPages.length : 0;
+  const pdfOk = !hasPdf || prog.isPdfConfirmed || (requiredPages > 0 && visitedCount >= requiredPages);
+  const avOk = !hasVideoOrAudio || Number(prog.maxPlaybackPercent || 0) >= 80;
+  const docOk = !hasAnyMaterial || hasPdf || hasVideoOrAudio || prog.isPdfConfirmed || Number(prog.pdfReadingSeconds || 0) >= 10;
+  const materialOk = pdfOk && avOk && docOk;
+  const quizOk = Boolean(prog.quizPassed);
+  const readyToComplete = materialOk && quizOk;
+  let materialLabel = "No attached files";
+  if (hasPdf) {
+    materialLabel = totalPages > 0
+      ? `PDF ${Math.min(visitedCount, requiredPages)}/${requiredPages} pages`
+      : (prog.isPdfConfirmed ? "PDF Read ✓" : "Open & read PDF");
+  } else if (hasVideoOrAudio) {
+    materialLabel = `Media ${Math.round(Number(prog.maxPlaybackPercent || 0))}% (80% req)`;
+  } else if (hasAnyMaterial) {
+    materialLabel = prog.isPdfConfirmed ? "Document Reviewed ✓" : "Open study file";
+  }
+  return { hasPdf, hasVideoOrAudio, hasAnyMaterial, materialOk, quizOk, readyToComplete, materialLabel };
+}
+
+function refreshModalEngagementLabel(classId, flags = {}) {
+  const lbl = document.getElementById("mediaEngagementProgressLabel");
+  const badge = document.getElementById("mediaEngagementStateBadge");
+  if (!lbl || !badge) return;
+  const prog = getClassProgress(classId);
+  const activeNow = isUserActivelyStudyingNow(Boolean(flags.isVideo || flags.isAudio));
+  if (flags.isVideo || flags.isAudio) {
+    const pct = Math.round(Number(prog.maxPlaybackPercent || 0));
+    lbl.textContent = `Watched: ${pct}% (80% required) • Active Time: ${formatSeconds(prog.activeSeconds)}`;
+    badge.textContent = pct >= 80 ? "Verified ✓" : activeNow ? "Playing" : "Paused";
+    badge.className = `badge ${pct >= 80 ? "badge-ok" : activeNow ? "badge-ok" : "badge-warn"}`;
+  } else if (flags.isPdf) {
+    const total = Number(prog.totalPdfPages || 0);
+    const req = total > 0 ? Math.min(total, 40) : 0;
+    const seen = (prog.visitedPdfPages || []).length;
+    const done = prog.isPdfConfirmed || (req > 0 && seen >= req);
+    lbl.textContent = req > 0
+      ? `PDF Pages Read: ${Math.min(seen, req)}/${req} • Active: ${formatSeconds(prog.activeSeconds)}${prog.idleExcludedSeconds ? ` (Idle ignored: ${formatSeconds(prog.idleExcludedSeconds)})` : ""}`
+      : `Active Reading: ${formatSeconds(prog.activeSeconds)}`;
+    badge.textContent = done ? "All Pages Read ✓" : activeNow ? "Active Reading" : "Paused (Idle)";
+    badge.className = `badge ${done ? "badge-ok" : activeNow ? "badge-ok" : "badge-warn"}`;
+  } else {
+    lbl.textContent = `Document Reviewed • Active Time: ${formatSeconds(prog.activeSeconds)}`;
+    badge.textContent = activeNow ? "Active" : "Paused (Idle)";
+    badge.className = `badge ${activeNow ? "badge-ok" : "badge-warn"}`;
+  }
+}
+
+function startActiveMediaEngagementSession(classId, flags = {}) {
+  stopActiveMediaEngagementSession(false);
+  activeMediaEngagementClassId = classId;
+  activeMediaIsPlaying = Boolean(flags.isVideo || flags.isAudio);
+  noteStudentInteraction();
+  let ticksSinceSync = 0;
+  activeMediaEngagementTimer = setInterval(() => {
+    const cur = getClassProgress(classId);
+    const activeNow = isUserActivelyStudyingNow(Boolean(flags.isVideo || flags.isAudio));
+    if (activeNow) {
+      updateClassProgress(classId, {
+        activeSeconds: Number(cur.activeSeconds || 0) + 1,
+        pdfReadingSeconds: flags.isPdf || flags.isDocument ? Number(cur.pdfReadingSeconds || 0) + 1 : cur.pdfReadingSeconds
+      });
+    } else {
+      updateClassProgress(classId, {
+        idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + 1
+      });
+    }
+    ticksSinceSync += 1;
+    refreshModalEngagementLabel(classId, flags);
+    if (ticksSinceSync >= 15) {
+      ticksSinceSync = 0;
+      syncStudentClassProgressToFirestore(classId);
+    }
+  }, 1000);
+}
+
+function stopActiveMediaEngagementSession(shouldSync = true) {
+  const prevCid = activeMediaEngagementClassId;
+  if (activeMediaEngagementTimer) {
+    clearInterval(activeMediaEngagementTimer);
+    activeMediaEngagementTimer = null;
+  }
+  activeMediaEngagementClassId = "";
+  activeMediaIsPlaying = false;
+  if (shouldSync && prevCid) {
+    syncStudentClassProgressToFirestore(prevCid);
+  }
 }
 
 function getOverallStats() {
@@ -1070,6 +1322,8 @@ function openModal(title, htmlContent) {
 }
 
 function closeModal() {
+  const closedMediaCid = activeMediaEngagementClassId;
+  stopActiveMediaEngagementSession(true);
   if (examCountdownInterval) {
     clearInterval(examCountdownInterval);
     examCountdownInterval = null;
@@ -1083,6 +1337,19 @@ function closeModal() {
   }
   examModalSession = null;
   document.getElementById("modalBackdrop").classList.remove("open");
+  if (closedMediaCid) {
+    const cls = state.classes.find((c) => c.id === closedMediaCid);
+    const cur = getClassProgress(closedMediaCid);
+    if (cls && !isAdminUser() && !cur.completed) {
+      const ver = getLectureVerificationStatus(cls, cur);
+      if (ver.readyToComplete) {
+        updateClassProgress(closedMediaCid, { completed: true, completionTimestamp: Date.now() });
+        syncStudentClassProgressToFirestore(closedMediaCid);
+        showToast("Material & Mastery Check verified — Lecture marked complete!");
+      }
+    }
+    if (state.currentView === "courses") render();
+  }
 }
 
 function stopLiveCloudListeners() {
@@ -1166,13 +1433,19 @@ async function initFirebaseSdk() {
           syncStudentAccountToFirestore(getActiveUser()).catch(() => {});
           if (isAdminUser()) {
             await syncAllPendingLocalMediaToCloud({ silentNoOp: true }).catch(() => {});
+          } else if (!isGuestUser()) {
+            await pullOwnStudentProgressFromFirestore().catch(() => {});
           }
           await syncFromCloudFirestore(true);
           startLiveCloudListeners(firebaseModules);
           if (pendingMediaAfterSignIn) {
-            const mediaToOpen = pendingMediaAfterSignIn;
+            const pendingPayload = pendingMediaAfterSignIn;
             pendingMediaAfterSignIn = null;
-            openSyncedCloudMedia(mediaToOpen);
+            if (pendingPayload?.media) {
+              openSyncedCloudMedia(pendingPayload.media, pendingPayload.options || {});
+            } else {
+              openSyncedCloudMedia(pendingPayload);
+            }
           }
         }
       });
@@ -1191,6 +1464,108 @@ async function initFirebaseSdk() {
   })();
 
   return firebaseInitPromise;
+}
+
+async function syncStudentClassProgressToFirestore(classId) {
+  if (!classId || isAdminUser() || isGuestUser()) return false;
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) return false;
+  const authEmail = String(cloudUser.email || "").trim().toLowerCase();
+  if (authEmail === "www.mdnafiulislam@gmail.com" || authEmail === "amirul.islam@isceb.org") {
+    return false;
+  }
+  const prog = getClassProgress(classId);
+  try {
+    const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = fb.fsMod;
+    const ref = doc(fb.db, "users", cloudUser.uid, "progress", classId);
+    const snap = await getDoc(ref);
+    const isCreate = !snap.exists();
+    const payload = buildFirestoreStudentProgressPayload({
+      userId: cloudUser.uid,
+      classId,
+      progress: prog,
+      isCreate,
+      serverTimestampToken: serverTimestamp()
+    });
+    if (isCreate) {
+      await setDoc(ref, payload);
+    } else {
+      await updateDoc(ref, payload);
+    }
+    lastProgressCloudSyncMap.set(classId, Date.now());
+    return true;
+  } catch (err) {
+    console.warn("Student progress sync skipped:", err?.message || err);
+    return false;
+  }
+}
+
+async function syncExamAttemptToFirestore(attemptRecord) {
+  if (!attemptRecord || isAdminUser() || isGuestUser()) return false;
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = fb.fsMod;
+    const attemptId = `web_${cloudUser.uid.slice(0, 10)}_${attemptRecord.examId}_${attemptRecord.timestamp || Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const payload = buildFirestoreExamAttemptPayload({
+      attemptId,
+      examId: attemptRecord.examId,
+      moduleId: attemptRecord.moduleId || "mod-1",
+      studentId: cloudUser.uid,
+      studentAnswers: attemptRecord.studentAnswers || {},
+      scoreMarks: attemptRecord.scoredMarks,
+      totalMarks: attemptRecord.totalMarks,
+      percentage: attemptRecord.percentage,
+      isPassed: attemptRecord.passed,
+      startTimeMs: attemptRecord.startTimeMs || attemptRecord.timestamp,
+      submittedTimeMs: attemptRecord.timestamp,
+      isAutoSubmittedOnTimeout: attemptRecord.isAutoSubmittedOnTimeout,
+      serverTimestampToken: serverTimestamp()
+    });
+    await setDoc(doc(fb.db, "exam_attempts", attemptId), payload);
+    return true;
+  } catch (err) {
+    console.warn("Exam attempt cloud sync skipped:", err?.message || err);
+    return false;
+  }
+}
+
+async function pullOwnStudentProgressFromFirestore() {
+  if (isAdminUser() || isGuestUser()) return;
+  const fb = await initFirebaseSdk();
+  if (!fb || !cloudUser) return;
+  const activeId = getActiveUser().id;
+  try {
+    const { collection, getDocs } = fb.fsMod;
+    const snap = await getDocs(collection(fb.db, "users", cloudUser.uid, "progress"));
+    if (!state.progressByUser[activeId]) state.progressByUser[activeId] = {};
+    snap.docs.forEach((d) => {
+      const data = d.data() || {};
+      const cid = data.classId || d.id;
+      const local = state.progressByUser[activeId][cid] || {};
+      const mergedPages = Array.from(
+        new Set([...(Array.isArray(local.visitedPdfPages) ? local.visitedPdfPages : []), ...(Array.isArray(data.visitedPdfPages) ? data.visitedPdfPages : [])])
+      ).sort((a, b) => a - b);
+      state.progressByUser[activeId][cid] = {
+        ...local,
+        classId: cid,
+        completed: Boolean(local.completed || data.status === "COMPLETED"),
+        activeSeconds: Math.max(Number(local.activeSeconds || 0), Number(data.activeLearningSeconds || 0)),
+        idleExcludedSeconds: Math.max(Number(local.idleExcludedSeconds || 0), Number(data.idleExcludedSeconds || 0)),
+        pdfReadingSeconds: Math.max(Number(local.pdfReadingSeconds || 0), Number(data.pdfReadingSeconds || 0)),
+        visitedPdfPages: mergedPages,
+        totalPdfPages: Math.max(Number(local.totalPdfPages || 0), Number(data.totalPdfPages || 0)),
+        maxPlaybackPercent: Math.max(Number(local.maxPlaybackPercent || 0), Number(data.maxPlaybackPercent || 0)),
+        isPdfConfirmed: Boolean(local.isPdfConfirmed || data.isPdfConfirmed),
+        quizScore: local.quizScore !== null && local.quizScore !== undefined
+          ? Math.max(Number(local.quizScore), Number(data.quizScore ?? local.quizScore))
+          : (data.quizScore ?? null),
+        quizPassed: Boolean(local.quizPassed || data.quizPassed)
+      };
+    });
+    saveState();
+    render();
+  } catch (_) {}
 }
 
 async function syncStudentAccountToFirestore(studentProfile, options = {}) {
@@ -1275,12 +1650,39 @@ async function fetchCloudRegisteredUsers(showResultToast = false) {
       };
     });
     rows.sort((a, b) => String(a.fullName || "").localeCompare(String(b.fullName || "")));
+
+    const nextProgressByUid = new Map();
+    const nextExamsByUid = new Map();
+    try {
+      const attSnap = await getDocs(collection(fb.db, "exam_attempts"));
+      attSnap.docs.forEach((ad) => {
+        const a = ad.data() || {};
+        if (!a.studentId) return;
+        if (!nextExamsByUid.has(a.studentId)) nextExamsByUid.set(a.studentId, []);
+        nextExamsByUid.get(a.studentId).push(a);
+      });
+    } catch (_) {}
+
+    await Promise.all(
+      rows
+        .filter((r) => (r.role || "STUDENT") === "STUDENT" && r.uid)
+        .map(async (r) => {
+          try {
+            const pSnap = await getDocs(collection(fb.db, "users", r.uid, "progress"));
+            const pList = pSnap.docs.map((pd) => ({ classId: pd.id, ...(pd.data() || {}) }));
+            nextProgressByUid.set(r.uid, pList);
+          } catch (_) {}
+        })
+    );
+
+    cloudProgressByStudentUid = nextProgressByUid;
+    cloudExamAttemptsByStudentUid = nextExamsByUid;
     cloudRegisteredUsers = rows;
     cloudUsersLoadedAt = Date.now();
     cloudUsersAccessNote = "";
     if (showResultToast) {
       const studentCount = rows.filter((r) => r.role === "STUDENT").length;
-      showToast(`Loaded ${studentCount} registered student(s) from Firestore.`);
+      showToast(`Loaded ${studentCount} registered student(s) & live learning reports from Firestore.`);
     }
     render();
     return rows;
@@ -1312,13 +1714,18 @@ async function signInWithGoogleCloud() {
       });
     } else if (!isGuestUser() && !isAdminUser()) {
       await syncStudentAccountToFirestore(getActiveUser());
+      await pullOwnStudentProgressFromFirestore();
     }
     showToast(`Cloud connected as ${cred.user.email}`);
     await syncFromCloudFirestore(false);
     if (pendingMediaAfterSignIn) {
-      const mediaToOpen = pendingMediaAfterSignIn;
+      const pendingPayload = pendingMediaAfterSignIn;
       pendingMediaAfterSignIn = null;
-      openSyncedCloudMedia(mediaToOpen);
+      if (pendingPayload?.media) {
+        openSyncedCloudMedia(pendingPayload.media, pendingPayload.options || {});
+      } else {
+        openSyncedCloudMedia(pendingPayload);
+      }
     }
     render();
   } catch (err) {
@@ -1821,6 +2228,9 @@ function renderCourses() {
     const unsyncedAdminLocalCount = uniqueMaterials.filter(
       (m) => !/^https?:\/\//i.test(String(m.url || "")) && (!m.cloudFileId || !m.cloudChunkCount)
     ).length;
+    const ver = getLectureVerificationStatus(selectedClass, prog);
+    const activeNow = timerRunning ? isUserActivelyStudyingNow(false) : false;
+    const idleNote = prog.idleExcludedSeconds > 0 ? ` • Idle Ignored: ${formatSeconds(prog.idleExcludedSeconds)}` : "";
 
     return `
       <div class="lecture-detail-topbar">
@@ -1846,7 +2256,7 @@ function renderCourses() {
           <div class="lecture-hero-meta">
             <span class="badge badge-navy lecture-hero-badge">${escapeHtml(selectedModule?.part === "PART_1_BASIC" ? "Part 1 • Basic Level" : "Part 2 • Advance Level")} • Module ${escapeHtml(selectedModule?.number || "")}</span>
             <h2 class="lecture-hero-title">Lecture ${escapeHtml(selectedClass.lectureCode)}: ${escapeHtml(selectedClass.title)}</h2>
-            <p style="margin: 0; font-size: 13px; color: var(--muted);">Duration: ${escapeHtml(selectedClass.durationMinutes)} mins • Study Logged: ${formatSeconds(prog.activeSeconds)}</p>
+            <p id="lectureStudyLoggedLabel" style="margin: 0; font-size: 13px; color: var(--muted);">Duration: ${escapeHtml(selectedClass.durationMinutes)} mins • Study Logged: ${formatSeconds(prog.activeSeconds)}${timerRunning && !activeNow ? " (Paused — Idle)" : ""}${idleNote}</p>
           </div>
           <div class="lecture-hero-actions">
             <button type="button" class="btn ${timerRunning ? "btn-danger" : "btn-outline"} btn-sm" data-action="toggle-study-timer" data-class-id="${escapeHtml(selectedClass.id)}">
@@ -1857,6 +2267,25 @@ function renderCourses() {
             </button>
           </div>
         </div>
+
+        ${
+          !isAdminUser()
+            ? `<div style="margin-top: 12px; background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 10px; padding: 10px 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+                  <strong style="font-size: 12.5px; color: var(--navy);">Genuine Learning Verification</strong>
+                  <span class="badge ${ver.readyToComplete || prog.completed ? "badge-ok" : "badge-warn"}">${ver.readyToComplete || prog.completed ? "Verified Ready ✓" : "Requirements Pending"}</span>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                  <span id="lectureVerStudyPill" class="badge badge-navy">Active Study: ${formatSeconds(prog.activeSeconds)}${prog.idleExcludedSeconds ? ` (${formatSeconds(prog.idleExcludedSeconds)} idle ignored)` : ""}</span>
+                  ${ver.hasAnyMaterial ? `<span class="badge ${ver.materialOk ? "badge-ok" : "badge-warn"}">${escapeHtml(ver.materialLabel)}</span>` : ""}
+                  <span class="badge ${ver.quizOk ? "badge-ok" : "badge-warn"}">Mastery Quiz: ${ver.quizOk ? `Passed (${prog.quizScore ?? 100}%) ✓` : "Pending"}</span>
+                </div>
+                <div style="margin-top: 6px; font-size: 11.5px; color: var(--muted);">
+                  Idle screen (&gt;45s without touch/scroll) or minimized tabs automatically pause timer counting. Complete materials &amp; Mastery Quiz to verify this lecture.
+                </div>
+              </div>`
+            : ""
+        }
 
         <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;" />
 
@@ -3553,6 +3982,31 @@ function renderAdminRegisteredStudentsCard() {
                     .slice(0, 2)
                     .join("")
                     .toUpperCase();
+                  const uidKey = stu.uid || stu.id || "";
+                  const cloudProg = stu.uid ? (cloudProgressByStudentUid.get(stu.uid) || []) : [];
+                  const localProgMap = !stu.uid && stu.id ? (state.progressByUser[stu.id] || {}) : {};
+                  const progRows = cloudProg.length
+                    ? cloudProg
+                    : Object.entries(localProgMap).map(([cid, p]) => ({
+                        classId: cid,
+                        status: p.completed ? "COMPLETED" : "IN_PROGRESS",
+                        activeLearningSeconds: Number(p.activeSeconds || 0),
+                        idleExcludedSeconds: Number(p.idleExcludedSeconds || 0),
+                        quizPassed: Boolean(p.quizPassed)
+                      }));
+                  const totalClasses = state.classes.length || 48;
+                  const completedCount = progRows.filter((p) => p.status === "COMPLETED").length;
+                  const pct = totalClasses > 0 ? Math.round((completedCount / totalClasses) * 100) : 0;
+                  const totalActiveSec = progRows.reduce((s, p) => s + Number(p.activeLearningSeconds || 0), 0);
+                  const totalIdleSec = progRows.reduce((s, p) => s + Number(p.idleExcludedSeconds || 0), 0);
+                  const quizzesPassed = progRows.filter((p) => p.quizPassed).length;
+                  const stuExams = stu.uid
+                    ? (cloudExamAttemptsByStudentUid.get(stu.uid) || [])
+                    : (stu.id ? (state.examAttemptsByUser[stu.id] || []) : []);
+                  const passedExamsCount = new Set(stuExams.filter((a) => a.isPassed || a.passed).map((a) => a.examId)).size;
+                  const avgExamPct = stuExams.length
+                    ? Math.round(stuExams.reduce((s, a) => s + Number(a.percentage || 0), 0) / stuExams.length)
+                    : 0;
                   return `
                     <div class="registered-student-card">
                       <div class="flex-header-between" style="align-items: flex-start;">
@@ -3578,6 +4032,22 @@ function renderAdminRegisteredStudentsCard() {
                       <div style="font-size: 11.5px; color: var(--muted);">
                         <strong>Program:</strong> ${escapeHtml(stu.enrolledProgram || GUEST_USER.enrolledProgram)}
                       </div>
+                      ${
+                        (stu.role || "STUDENT") === "STUDENT"
+                          ? `<div style="margin-top: 8px; padding: 9px 10px; border-radius: 10px; background: #F8FAFC; border: 1px solid #E2E8F0; display: grid; gap: 6px;">
+                              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <span style="font-size: 12px; font-weight: 700; color: var(--navy);">Completed: ${completedCount}/${totalClasses} (${pct}%) • Quizzes: ${quizzesPassed}</span>
+                                <button type="button" class="btn btn-outline btn-sm" data-action="admin-view-student-progress" data-uid="${escapeHtml(uidKey)}" data-name="${escapeHtml(stu.fullName)}">Learning Report</button>
+                              </div>
+                              <div style="font-size: 11.5px; color: #334155;">
+                                <strong>Active Study:</strong> ${formatSeconds(totalActiveSec)}${totalIdleSec > 0 ? ` &nbsp;•&nbsp; <span style="color:#B45309;">Idle Ignored: ${formatSeconds(totalIdleSec)}</span>` : ""}
+                              </div>
+                              <div style="font-size: 11.5px; color: #334155;">
+                                <strong>Exams:</strong> ${passedExamsCount} Passed${stuExams.length ? ` (${stuExams.length} attempt${stuExams.length > 1 ? "s" : ""}, Avg ${avgExamPct}%)` : " • No attempts yet"}
+                              </div>
+                            </div>`
+                          : ""
+                      }
                     </div>
                   `;
                 })
@@ -3862,6 +4332,102 @@ function render() {
   else container.innerHTML = renderDashboard();
 }
 
+function openAdminStudentProgressModal(uidKey, studentName) {
+  const cloudProg = cloudProgressByStudentUid.get(uidKey) || [];
+  const localMap = !cloudProg.length ? (state.progressByUser[uidKey] || {}) : {};
+  const progRows = cloudProg.length
+    ? cloudProg
+    : Object.entries(localMap).map(([cid, p]) => ({
+        classId: cid,
+        status: p.completed ? "COMPLETED" : "IN_PROGRESS",
+        activeLearningSeconds: Number(p.activeSeconds || 0),
+        idleExcludedSeconds: Number(p.idleExcludedSeconds || 0),
+        visitedPdfPages: p.visitedPdfPages || [],
+        totalPdfPages: Number(p.totalPdfPages || 0),
+        maxPlaybackPercent: Number(p.maxPlaybackPercent || 0),
+        quizScore: p.quizScore,
+        quizPassed: Boolean(p.quizPassed),
+        lastActiveTimeMs: Number(p.lastActiveTimeMs || 0)
+      }));
+  const examRows = cloudProg.length || cloudExamAttemptsByStudentUid.has(uidKey)
+    ? (cloudExamAttemptsByStudentUid.get(uidKey) || [])
+    : (state.examAttemptsByUser[uidKey] || []);
+
+  const totalActive = progRows.reduce((s, r) => s + Number(r.activeLearningSeconds || 0), 0);
+  const totalIdle = progRows.reduce((s, r) => s + Number(r.idleExcludedSeconds || 0), 0);
+  const completedCount = progRows.filter((r) => r.status === "COMPLETED").length;
+  const quizPassedCount = progRows.filter((r) => r.quizPassed).length;
+
+  const sortedLectures = progRows
+    .filter((r) => Number(r.activeLearningSeconds || 0) > 0 || Number(r.idleExcludedSeconds || 0) > 0 || r.status === "COMPLETED" || r.quizScore !== null || (r.visitedPdfPages || []).length > 0 || Number(r.maxPlaybackPercent || 0) > 0)
+    .sort((a, b) => Number(b.lastActiveTimeMs || 0) - Number(a.lastActiveTimeMs || 0));
+
+  const lectureRowsHtml = sortedLectures.length
+    ? sortedLectures
+        .map((r) => {
+          const cls = state.classes.find((c) => c.id === r.classId);
+          const label = cls ? `Lecture ${cls.lectureCode}: ${cls.title}` : r.classId;
+          const seenPages = Array.isArray(r.visitedPdfPages) ? r.visitedPdfPages.length : 0;
+          const totalPages = Number(r.totalPdfPages || 0);
+          const mediaInfo = [];
+          if (totalPages > 0 || seenPages > 0) mediaInfo.push(`PDF ${seenPages}${totalPages ? `/${totalPages}` : ""} pages`);
+          if (Number(r.maxPlaybackPercent || 0) > 0) mediaInfo.push(`Media ${Math.round(Number(r.maxPlaybackPercent))}%`);
+          if (r.quizScore !== null && r.quizScore !== undefined) mediaInfo.push(`Quiz ${r.quizScore}%${r.quizPassed ? " ✓" : ""}`);
+          return `<div style="padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: #fff; display: grid; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <strong style="font-size: 13px; color: var(--navy);">${escapeHtml(label)}</strong>
+              <span class="badge ${r.status === "COMPLETED" ? "badge-ok" : "badge-warn"}">${escapeHtml(r.status || "IN_PROGRESS")}</span>
+            </div>
+            <div style="font-size: 12px; color: #334155;">
+              Active Study: <strong>${formatSeconds(r.activeLearningSeconds)}</strong>${Number(r.idleExcludedSeconds || 0) > 0 ? ` • <span style="color:#B45309;">Idle Ignored: ${formatSeconds(r.idleExcludedSeconds)}</span>` : ""}
+            </div>
+            ${mediaInfo.length ? `<div style="font-size: 11.5px; color: var(--muted);">${escapeHtml(mediaInfo.join(" • "))}</div>` : ""}
+          </div>`;
+        })
+        .join("")
+    : `<div style="padding: 12px; border: 1px dashed var(--border); border-radius: 10px; font-size: 12.5px; color: var(--muted);">No lecture study logs recorded yet for this student.</div>`;
+
+  const examRowsHtml = examRows.length
+    ? examRows
+        .slice()
+        .sort((a, b) => Number(b.submittedTimeMs || b.timestamp || 0) - Number(a.submittedTimeMs || a.timestamp || 0))
+        .map((a) => {
+          const ex = state.exams.find((e) => e.id === a.examId);
+          const passed = Boolean(a.isPassed || a.passed);
+          const score = a.scoreMarks ?? a.scoredMarks ?? 0;
+          const total = a.totalMarks ?? 0;
+          return `<div style="padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: #fff; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div>
+              <strong style="font-size: 13px; color: var(--navy);">${escapeHtml(ex?.title || a.examId)}</strong>
+              <div style="font-size: 11.5px; color: var(--muted);">Score: ${score}/${total} (${a.percentage || 0}%)${a.isAutoSubmittedOnTimeout ? " • Auto-submitted on Time Up" : ""}</div>
+            </div>
+            <span class="badge ${passed ? "badge-ok" : "badge-err"}">${passed ? "PASSED" : "FAILED"}</span>
+          </div>`;
+        })
+        .join("")
+    : `<div style="padding: 12px; border: 1px dashed var(--border); border-radius: 10px; font-size: 12.5px; color: var(--muted);">No exams submitted yet.</div>`;
+
+  openModal(
+    `Learning Report — ${studentName || "Student"}`,
+    `<div style="display: grid; gap: 14px;">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value">${completedCount}/${state.classes.length || 48}</div></div>
+        <div class="stat-card"><div class="stat-label">Active Study</div><div class="stat-value" style="font-size:18px;">${formatSeconds(totalActive)}</div></div>
+        <div class="stat-card"><div class="stat-label">Idle Ignored</div><div class="stat-value" style="font-size:18px; color:#B45309;">${formatSeconds(totalIdle)}</div></div>
+        <div class="stat-card"><div class="stat-label">Quizzes Passed</div><div class="stat-value">${quizPassedCount}</div></div>
+      </div>
+      <div>
+        <h4 style="margin: 0 0 8px; color: var(--navy);">Lecture Study &amp; Anti-Cheat Engagement</h4>
+        <div style="display: grid; gap: 8px; max-height: 280px; overflow-y: auto;">${lectureRowsHtml}</div>
+      </div>
+      <div>
+        <h4 style="margin: 0 0 8px; color: var(--navy);">Examination Submissions</h4>
+        <div style="display: grid; gap: 8px;">${examRowsHtml}</div>
+      </div>
+    </div>`
+  );
+}
+
 function openExamModal(examId) {
   const exam = state.exams.find((e) => e.id === examId);
   if (!exam) return;
@@ -3874,7 +4440,7 @@ function openExamModal(examId) {
     ? Math.max(10, Math.floor((Number(exam.openUntilMs) - Date.now()) / 1000))
     : durationSec;
   let remainingSec = Math.min(durationSec, cutoffSec);
-  examModalSession = { exam, remainingSec };
+  examModalSession = { exam, remainingSec, startTimeMs: Date.now() };
 
   const m0 = Math.floor(remainingSec / 60);
   const s0 = String(remainingSec % 60).padStart(2, "0");
@@ -3928,11 +4494,13 @@ function openExamModal(examId) {
 
 function submitActiveExam(isAutoTimeout = false) {
   if (!examModalSession) return;
-  const { exam } = examModalSession;
+  const { exam, startTimeMs } = examModalSession;
   const form = document.getElementById("activeExamForm");
   let scored = 0;
+  const studentAnswers = {};
   (exam.questions || []).forEach((q, idx) => {
     const selected = form?.querySelector(`input[name="eq_${idx}"]:checked`)?.value;
+    studentAnswers[String(idx)] = selected !== undefined ? Number(selected) : -1;
     if (selected !== undefined && Number(selected) === Number(q.correctOptionIndex)) {
       scored += Number(q.marks || 0);
     }
@@ -3942,16 +4510,21 @@ function submitActiveExam(isAutoTimeout = false) {
   const passed = pct >= (exam.passingPercentage || 60);
   const uid = getActiveUser().id;
   if (!state.examAttemptsByUser[uid]) state.examAttemptsByUser[uid] = [];
-  state.examAttemptsByUser[uid].push({
+  const attemptRecord = {
     examId: exam.id,
+    moduleId: exam.moduleId || "mod-1",
+    studentAnswers,
     scoredMarks: scored,
     totalMarks,
     percentage: pct,
     passed,
+    startTimeMs: startTimeMs || Date.now(),
     isAutoSubmittedOnTimeout: Boolean(isAutoTimeout),
     timestamp: Date.now()
-  });
+  };
+  state.examAttemptsByUser[uid].push(attemptRecord);
   saveState();
+  syncExamAttemptToFirestore(attemptRecord);
   closeModal();
   const prefix = isAutoTimeout ? "Time Up! Exam auto-submitted" : "Exam submitted";
   showToast(`${prefix}: ${scored}/${totalMarks} (${pct}%) — ${passed ? "PASSED" : "Try Again"}`, !passed);
@@ -4053,6 +4626,14 @@ function resizePhotoFileToDataUrl(file) {
 }
 
 function setupListeners() {
+  ["pointerdown", "touchstart", "keydown", "scroll"].forEach((evt) => {
+    window.addEventListener(evt, noteStudentInteraction, { passive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) noteStudentInteraction();
+    if (activeMediaEngagementClassId) refreshModalEngagementLabel(activeMediaEngagementClassId);
+  });
+
   const select = document.getElementById("accountSwitcher");
   syncAccountSwitcherOptions();
   select?.addEventListener("change", (e) => {
@@ -4242,14 +4823,17 @@ function setupListeners() {
       const attId = actBtn.dataset.attId;
       const att = (getClassProgress(cid).localAttachments || []).find((a) => a.id === attId);
       if (att) {
-        openSyncedCloudMedia({
-          id: att.id,
-          title: att.name,
-          fileName: att.name,
-          fileSizeBytes: att.size,
-          fileSizeFormatted: formatBytes(att.size),
-          type: String(att.name || "").toLowerCase().endsWith(".pdf") ? "PDF" : "DOCUMENT"
-        });
+        openSyncedCloudMedia(
+          {
+            id: att.id,
+            title: att.name,
+            fileName: att.name,
+            fileSizeBytes: att.size,
+            fileSizeFormatted: formatBytes(att.size),
+            type: String(att.name || "").toLowerCase().endsWith(".pdf") ? "PDF" : "DOCUMENT"
+          },
+          { classId: cid }
+        );
       }
     } else if (action === "promote-personal-attachment-to-cloud") {
       promotePersonalAttachmentToCloud(actBtn.dataset.classId, actBtn.dataset.attId);
@@ -4260,27 +4844,67 @@ function setupListeners() {
       syncPendingLocalClassMediaToCloud(actBtn.dataset.classId);
     } else if (action === "toggle-complete-class") {
       const cid = actBtn.dataset.classId;
+      const cls = state.classes.find((c) => c.id === cid);
       const cur = getClassProgress(cid);
-      updateClassProgress(cid, { completed: !cur.completed });
-      showToast(!cur.completed ? "Lecture marked complete!" : "Completion status cleared.");
+      if (!cur.completed && !isAdminUser() && cls) {
+        const ver = getLectureVerificationStatus(cls, cur);
+        if (!ver.readyToComplete) {
+          const missing = [];
+          if (!ver.materialOk) missing.push(ver.materialLabel);
+          if (!ver.quizOk) missing.push("Pass Lesson Mastery Check (2 Questions)");
+          showToast(`Complete verification first: ${missing.join(" + ")}`, true);
+          return;
+        }
+      }
+      const nextCompleted = !cur.completed;
+      updateClassProgress(cid, {
+        completed: nextCompleted,
+        completionTimestamp: nextCompleted ? Date.now() : null
+      });
+      syncStudentClassProgressToFirestore(cid);
+      showToast(nextCompleted ? "Lecture verified & marked complete!" : "Completion status cleared.");
       render();
     } else if (action === "toggle-study-timer") {
       const cid = actBtn.dataset.classId;
       if (activeTimerInterval && activeTimerInterval._classId === cid) {
         clearInterval(activeTimerInterval);
         activeTimerInterval = null;
-        showToast("Study timer paused.");
+        syncStudentClassProgressToFirestore(cid);
+        showToast("Study timer paused & synced.");
+        render();
       } else {
         if (activeTimerInterval) clearInterval(activeTimerInterval);
+        noteStudentInteraction();
+        let ticksSinceSync = 0;
         activeTimerInterval = setInterval(() => {
           const cur = getClassProgress(cid);
-          updateClassProgress(cid, { activeSeconds: Number(cur.activeSeconds || 0) + 1 });
-          if (state.currentView === "courses") render();
+          const activeNow = isUserActivelyStudyingNow(false);
+          if (activeNow) {
+            updateClassProgress(cid, { activeSeconds: Number(cur.activeSeconds || 0) + 1 });
+          } else {
+            updateClassProgress(cid, { idleExcludedSeconds: Number(cur.idleExcludedSeconds || 0) + 1 });
+          }
+          const latest = getClassProgress(cid);
+          const clsObj = state.classes.find((c) => c.id === cid);
+          const lbl = document.getElementById("lectureStudyLoggedLabel");
+          if (lbl && clsObj) {
+            const idleStr = latest.idleExcludedSeconds > 0 ? ` • Idle Ignored: ${formatSeconds(latest.idleExcludedSeconds)}` : "";
+            lbl.textContent = `Duration: ${clsObj.durationMinutes} mins • Study Logged: ${formatSeconds(latest.activeSeconds)}${!activeNow ? " (Paused — Idle)" : ""}${idleStr}`;
+          }
+          const pill = document.getElementById("lectureVerStudyPill");
+          if (pill) {
+            pill.textContent = `Active Study: ${formatSeconds(latest.activeSeconds)}${latest.idleExcludedSeconds ? ` (${formatSeconds(latest.idleExcludedSeconds)} idle ignored)` : ""}`;
+          }
+          ticksSinceSync += 1;
+          if (ticksSinceSync >= 15) {
+            ticksSinceSync = 0;
+            syncStudentClassProgressToFirestore(cid);
+          }
         }, 1000);
         activeTimerInterval._classId = cid;
-        showToast("Live study time tracking started.");
+        showToast("Anti-idle study timer started (pauses after 45s inactivity).");
+        render();
       }
-      render();
     } else if (action === "save-notes") {
       const cid = actBtn.dataset.classId;
       const notes = document.getElementById("lectureNotesBox")?.value || "";
@@ -4430,11 +5054,12 @@ function setupListeners() {
         ? `<span class="badge badge-ok">Verified Valid</span> Issued to <strong>${escapeHtml(found.recipientName)}</strong> on ${escapeHtml(found.issuedDate)}.`
         : `<span class="badge badge-err">Not Found</span> No certificate matching <code>${escapeHtml(serial)}</code> in this workspace.`;
     } else if (action === "open-cloud-media") {
-      const cls = state.classes.find((c) => c.id === actBtn.dataset.classId);
+      const cid = actBtn.dataset.classId;
+      const cls = state.classes.find((c) => c.id === cid);
       const mid = actBtn.dataset.mediaId;
       const all = cls ? [cls.pdfMedia, cls.audioMedia, cls.videoMedia, ...(cls.attachments || [])].filter(Boolean) : [];
       const media = all.find((m) => (m.id || "") === mid) || all[0];
-      openSyncedCloudMedia(media);
+      openSyncedCloudMedia(media, { classId: cid });
     } else if (action === "delete-class-media") {
       if (!isAdminUser()) {
         showToast("Admin sign-in required to remove class materials.", true);
@@ -4495,6 +5120,8 @@ function setupListeners() {
       signInWithGoogleCloud();
     } else if (action === "refresh-cloud-users") {
       fetchCloudRegisteredUsers(true);
+    } else if (action === "admin-view-student-progress") {
+      openAdminStudentProgressModal(actBtn.dataset.uid || "", actBtn.dataset.name || "Student");
     } else if (action === "profile-sync-now") {
       syncStudentAccountToFirestore(getActiveUser()).finally(() => syncFromCloudFirestore(false));
     } else if (action === "google-signout") {
@@ -4762,8 +5389,26 @@ function setupListeners() {
       });
       const score = Math.round((correctCount / quiz.length) * 100);
       const passed = score >= 50;
-      updateClassProgress(cid, { quizScore: score, quizPassed: passed, completed: passed ? true : getClassProgress(cid).completed });
-      showToast(`Lesson Mastery Check: ${score}% (${passed ? "Passed & Complete" : "Review Notes"})`, !passed);
+      const cur = getClassProgress(cid);
+      const nextQuizPassed = Boolean(cur.quizPassed || passed);
+      const verAfter = cls
+        ? getLectureVerificationStatus(cls, { ...cur, quizScore: score, quizPassed: nextQuizPassed })
+        : { materialOk: true, materialLabel: "" };
+      const shouldAutoComplete = isAdminUser()
+        ? (passed ? true : cur.completed)
+        : (cur.completed || (nextQuizPassed && verAfter.materialOk));
+      updateClassProgress(cid, {
+        quizScore: score,
+        quizPassed: nextQuizPassed,
+        completed: shouldAutoComplete,
+        completionTimestamp: shouldAutoComplete && !cur.completed ? Date.now() : cur.completionTimestamp
+      });
+      syncStudentClassProgressToFirestore(cid);
+      if (passed && !shouldAutoComplete) {
+        showToast(`Mastery Check Passed (${score}%)! Now complete ${verAfter.materialLabel} to mark lecture finished.`);
+      } else {
+        showToast(`Lesson Mastery Check: ${score}% (${passed ? "Passed & Complete" : "Review Notes"})`, !passed);
+      }
       render();
     } else if (e.target.id === "adminAttachRemoteUrlForm") {
       e.preventDefault();

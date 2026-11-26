@@ -659,3 +659,132 @@ export function buildFirestoreUserAccountPayload({
   }
   return updatePayload;
 }
+
+export function buildFirestoreStudentProgressPayload({
+  userId,
+  classId,
+  progress = {},
+  isCreate = false,
+  serverTimestampToken = null
+}) {
+  const safeUid = String(userId || "").trim().slice(0, 128);
+  const safeClassId = String(classId || "").trim().slice(0, 128);
+  const activeLearningSeconds = Math.min(10_000_000, Math.max(0, Math.round(Number(progress.activeSeconds || 0))));
+  const idleExcludedSeconds = Math.min(10_000_000, Math.max(0, Math.round(Number(progress.idleExcludedSeconds || 0))));
+  const pdfReadingSeconds = Math.min(10_000_000, Math.max(0, Math.round(Number(progress.pdfReadingSeconds || 0))));
+  const maxPlaybackPercent = Math.min(100, Math.max(0, Number(progress.maxPlaybackPercent || 0)));
+  const totalPdfPages = Math.min(10_000, Math.max(0, Math.round(Number(progress.totalPdfPages || 0))));
+  const visitedPdfPages = Array.from(
+    new Set(
+      (Array.isArray(progress.visitedPdfPages) ? progress.visitedPdfPages : [])
+        .map((p) => Math.round(Number(p)))
+        .filter((p) => Number.isFinite(p) && p >= 1 && p <= 10_000)
+    )
+  )
+    .sort((a, b) => a - b)
+    .slice(0, 500);
+  const lastPdfPage = visitedPdfPages.length ? visitedPdfPages[visitedPdfPages.length - 1] : 0;
+  const quizScore =
+    progress.quizScore === null || progress.quizScore === undefined
+      ? null
+      : Math.min(100, Math.max(0, Math.round(Number(progress.quizScore))));
+  const quizPassed = Boolean(progress.quizPassed);
+  const completed = Boolean(progress.completed);
+  const hasAnyActivity =
+    completed ||
+    activeLearningSeconds > 0 ||
+    pdfReadingSeconds > 0 ||
+    visitedPdfPages.length > 0 ||
+    maxPlaybackPercent > 0 ||
+    quizScore !== null;
+  const status = completed ? "COMPLETED" : hasAnyActivity ? "IN_PROGRESS" : "NOT_STARTED";
+  const nowMs = Date.now();
+  const lastActiveTimeMs = Math.max(0, Math.round(Number(progress.lastActiveTimeMs || nowMs)));
+  const completionTimestamp =
+    completed
+      ? Math.max(0, Math.round(Number(progress.completionTimestamp || nowMs)))
+      : null;
+
+  const baseFields = {
+    status,
+    startTimeMs: Math.max(0, Math.round(Number(progress.startTimeMs || lastActiveTimeMs || nowMs))),
+    lastActiveTimeMs,
+    activeLearningSeconds,
+    idleExcludedSeconds,
+    maxPlaybackPercent,
+    lastPlaybackPositionMs: Math.max(0, Math.round(Number(progress.lastPlaybackPositionMs || 0))),
+    isPdfConfirmed: Boolean(progress.isPdfConfirmed),
+    pdfReadingSeconds,
+    lastPdfPage,
+    totalPdfPages,
+    visitedPdfPages,
+    quizScore,
+    quizPassed,
+    completionTimestamp
+  };
+
+  if (isCreate) {
+    const createPayload = {
+      userId: safeUid,
+      classId: safeClassId,
+      ...baseFields
+    };
+    if (serverTimestampToken !== null) {
+      createPayload.createdAt = serverTimestampToken;
+      createPayload.updatedAt = serverTimestampToken;
+    }
+    return createPayload;
+  }
+
+  const updatePayload = { ...baseFields };
+  if (serverTimestampToken !== null) {
+    updatePayload.updatedAt = serverTimestampToken;
+  }
+  return updatePayload;
+}
+
+export function buildFirestoreExamAttemptPayload({
+  attemptId,
+  examId,
+  moduleId,
+  studentId,
+  studentAnswers = {},
+  scoreMarks = 0,
+  totalMarks = 1,
+  percentage = 0,
+  isPassed = false,
+  startTimeMs = 0,
+  submittedTimeMs = 0,
+  isAutoSubmittedOnTimeout = false,
+  serverTimestampToken = null
+}) {
+  const safeAttemptId = String(attemptId || `att_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128);
+  const safeTotal = Math.min(1000, Math.max(1, Math.round(Number(totalMarks || 1))));
+  const safeScore = Math.min(1000, Math.max(0, Math.round(Number(scoreMarks || 0))));
+  const safePct = Math.min(100, Math.max(0, Math.round(Number(percentage || 0))));
+  const cleanAnswers = {};
+  if (studentAnswers && typeof studentAnswers === "object") {
+    for (const [k, v] of Object.entries(studentAnswers)) {
+      cleanAnswers[String(k)] = Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0;
+    }
+  }
+  const payload = {
+    attemptId: safeAttemptId,
+    examId: String(examId || "").slice(0, 128),
+    moduleId: String(moduleId || "mod-1").slice(0, 64),
+    studentId: String(studentId || "").slice(0, 128),
+    studentAnswers: cleanAnswers,
+    scoreMarks: safeScore,
+    totalMarks: safeTotal,
+    percentage: safePct,
+    isPassed: Boolean(isPassed),
+    startTimeMs: Math.max(0, Math.round(Number(startTimeMs || submittedTimeMs || Date.now()))),
+    submittedTimeMs: Math.max(0, Math.round(Number(submittedTimeMs || Date.now()))),
+    isAutoSubmittedOnTimeout: Boolean(isAutoSubmittedOnTimeout)
+  };
+  if (serverTimestampToken !== null) {
+    payload.createdAt = serverTimestampToken;
+  }
+  return payload;
+}
+

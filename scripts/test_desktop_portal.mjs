@@ -13,7 +13,9 @@ import {
   INITIAL_MODULES,
   MAX_CLOUD_FILE_BYTES,
   buildFirestoreCatalogPayload,
+  buildFirestoreExamAttemptPayload,
   buildFirestoreManifestPayload,
+  buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
   splitBytesIntoLessonFileChunks
@@ -599,3 +601,77 @@ test("Profile hero layout avoids vertical character breaking and Admin Roster tr
   assert.ok(appJs.includes('data-modal-action="clear-edit-student-photo"'), "Edit Student Profile modal must allow removing profile photo");
   assert.ok(appJs.includes('stu.photoUrl') && appJs.includes('<img src="${escapeHtml(stu.photoUrl)}"'), "Admin Registered Students card must render student photoUrl avatar when available");
 });
+
+test("Genuine anti-idle study verification, material engagement tracking, and Firestore student progress/exam reporting", () => {
+  const createProg = buildFirestoreStudentProgressPayload({
+    userId: "stu-uid-999",
+    classId: "class-3",
+    progress: {
+      activeSeconds: 420.4,
+      idleExcludedSeconds: 65,
+      pdfReadingSeconds: 310,
+      visitedPdfPages: [3, 1, 2, 2, 0, -4],
+      totalPdfPages: 5,
+      maxPlaybackPercent: 86.5,
+      isPdfConfirmed: false,
+      quizScore: 100,
+      quizPassed: true,
+      completed: true
+    },
+    isCreate: true,
+    serverTimestampToken: "TS"
+  });
+  assert.equal(createProg.userId, "stu-uid-999");
+  assert.equal(createProg.classId, "class-3");
+  assert.equal(createProg.status, "COMPLETED");
+  assert.equal(createProg.activeLearningSeconds, 420);
+  assert.equal(createProg.idleExcludedSeconds, 65);
+  assert.deepEqual(createProg.visitedPdfPages, [1, 2, 3]);
+  assert.equal(createProg.lastPdfPage, 3);
+  assert.equal(createProg.totalPdfPages, 5);
+  assert.equal(createProg.quizScore, 100);
+  assert.equal(createProg.quizPassed, true);
+  assert.equal(createProg.createdAt, "TS");
+  assert.equal(createProg.updatedAt, "TS");
+
+  const updateProg = buildFirestoreStudentProgressPayload({
+    userId: "stu-uid-999",
+    classId: "class-3",
+    progress: { activeSeconds: 120, completed: false },
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.ok(!("userId" in updateProg), "Progress update must not resend userId");
+  assert.ok(!("classId" in updateProg), "Progress update must not resend classId");
+  assert.ok(!("createdAt" in updateProg), "Progress update must not mutate createdAt");
+  assert.equal(updateProg.status, "IN_PROGRESS");
+
+  const attempt = buildFirestoreExamAttemptPayload({
+    attemptId: "web_stu_exam-mod-1_1760000000",
+    examId: "exam-mod-1",
+    moduleId: "mod-1",
+    studentId: "stu-uid-999",
+    studentAnswers: { "0": 2, "1": 0 },
+    scoreMarks: 15,
+    totalMarks: 20,
+    percentage: 75,
+    isPassed: true,
+    startTimeMs: 1760000000000,
+    submittedTimeMs: 1760000300000,
+    isAutoSubmittedOnTimeout: false,
+    serverTimestampToken: "TS"
+  });
+  assert.equal(attempt.examId, "exam-mod-1");
+  assert.equal(attempt.scoreMarks, 15);
+  assert.equal(attempt.isPassed, true);
+  assert.deepEqual(attempt.studentAnswers, { "0": 2, "1": 0 });
+  assert.equal(attempt.createdAt, "TS");
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("IDLE_THRESHOLD_MS") && appJs.includes("idleExcludedSeconds") && appJs.includes("isUserActivelyStudyingNow"));
+  assert.ok(appJs.includes("visitedPdfPages") && appJs.includes("getLectureVerificationStatus") && appJs.includes("maxPlaybackPercent"));
+  assert.ok(appJs.includes("syncStudentClassProgressToFirestore") && appJs.includes("syncExamAttemptToFirestore") && appJs.includes("pullOwnStudentProgressFromFirestore"));
+  assert.ok(appJs.includes("cloudProgressByStudentUid") && appJs.includes("cloudExamAttemptsByStudentUid"));
+  assert.ok(appJs.includes("openAdminStudentProgressModal") && appJs.includes('data-action="admin-view-student-progress"'));
+});
+

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   AVAILABLE_USERS,
+  DEFAULT_ABOUT_ISCEB,
   DEFAULT_DEVELOPER,
   DEFAULT_FOUNDER,
   DEFAULT_MEMBERS,
@@ -674,4 +675,40 @@ test("Genuine anti-idle study verification, material engagement tracking, and Fi
   assert.ok(appJs.includes("cloudProgressByStudentUid") && appJs.includes("cloudExamAttemptsByStudentUid"));
   assert.ok(appJs.includes("openAdminStudentProgressModal") && appJs.includes('data-action="admin-view-student-progress"'));
 });
+
+test("About ISCEB section in hamburger menu syncs via Firestore settings and incremental chunked upload protects startup rehydration", () => {
+  assert.ok(DEFAULT_ABOUT_ISCEB.organizationName.includes("Institute of Supply Chain Excellence Bangladesh"));
+  assert.ok(DEFAULT_ABOUT_ISCEB.overview && DEFAULT_ABOUT_ISCEB.mission && DEFAULT_ABOUT_ISCEB.vision);
+  assert.ok(DEFAULT_ABOUT_ISCEB.programsSummary && DEFAULT_ABOUT_ISCEB.contactEmail);
+
+  const customAbout = {
+    ...DEFAULT_ABOUT_ISCEB,
+    headline: "Supply Chain Excellence in Bangladesh",
+    mission: "Empowering supply chain leaders nationwide."
+  };
+  const catalogWithAbout = buildFirestoreCatalogPayload({
+    authorUid: "admin-uid-123",
+    versionCode: 125,
+    modules: INITIAL_MODULES,
+    classes: INITIAL_CLASSES,
+    aboutIsceb: customAbout,
+    isCreate: false,
+    serverTimestampToken: "TS"
+  });
+  assert.ok(typeof catalogWithAbout.settings.aboutIscebJson === "string");
+  const parsedAbout = JSON.parse(catalogWithAbout.settings.aboutIscebJson);
+  assert.equal(parsedAbout.headline, "Supply Chain Excellence in Bangladesh");
+  assert.equal(parsedAbout.mission, "Empowering supply chain leaders nationwide.");
+
+  const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  assert.ok(desktopHtml.includes('data-view="about"') && desktopHtml.includes("About ISCEB"));
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes("function renderAboutIsceb()") && appJs.includes("function openEditAboutIscebModal()"));
+  assert.ok(appJs.includes("aboutIscebEditForm") && appJs.includes("c.settings.aboutIscebJson"));
+  assert.ok(appJs.includes("writeChunkWithTimeout") && appJs.includes("isUploadingAdminMedia"));
+  assert.ok(appJs.includes("skipPendingSync") && appJs.includes("await rehydrateVerifiedAdminSession()"));
+  assert.ok(appJs.includes("adminUploadStatusBannerText"));
+});
+
 

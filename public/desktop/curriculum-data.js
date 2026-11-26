@@ -63,6 +63,26 @@ export const DEFAULT_DEVELOPER = {
   location: "Dhaka, Bangladesh"
 };
 
+export const DEFAULT_ABOUT_ISCEB = {
+  organizationName: "Institute of Supply Chain Excellence Bangladesh (ISCEB)",
+  shortName: "ISCEB",
+  tagline: "Connect. Learn. Achieve.",
+  establishedLabel: "Official PGD & Executive SCM Education Platform",
+  overview:
+    "Institute of Supply Chain Excellence Bangladesh (ISCEB) is dedicated to building globally competitive supply chain, procurement, commercial, logistics, and operations leaders through practical, industry-driven Post Graduate Diploma (PGD) education, executive mentorship, and real-world case workshops.",
+  mission:
+    "To equip professionals and aspiring leaders with end-to-end supply chain competence—bridging demand planning, strategic sourcing, import-export commercial compliance (LC & UCP 600), inventory optimization, warehouse operations, and leadership excellence.",
+  vision:
+    "To establish Bangladesh's premier benchmark ecosystem for supply chain education, corporate capability transformation, and lifelong executive networking.",
+  programsSummary:
+    "12 Structured Modules • 48 Live/Recorded Lectures (Part 1 Basic & Part 2 Advance) • Timed Examinations • Capstone Project • QR-Verified Official PGD Diploma.",
+  headquarters: "Dhaka, Bangladesh",
+  officialWebsite: "www.isceb.org",
+  registryWebsite: "www.scmglobal.org",
+  contactEmail: "info@isceb.org",
+  contactPhone: "+880 1715-282905"
+};
+
 export const DEFAULT_MEMBERS_ROSTER_VERSION = 4;
 
 export const DEFAULT_MEMBERS = [
@@ -531,6 +551,7 @@ export function buildFirestoreCatalogPayload({
   founderProfile,
   developerProfile,
   members,
+  aboutIsceb,
   isCreate = false,
   serverTimestampToken = null
 }) {
@@ -541,6 +562,7 @@ export function buildFirestoreCatalogPayload({
     founderProfileJson: JSON.stringify(founderProfile || DEFAULT_FOUNDER),
     developerProfileJson: JSON.stringify(developerProfile || DEFAULT_DEVELOPER),
     membersJson: JSON.stringify(members || DEFAULT_MEMBERS),
+    aboutIscebJson: JSON.stringify(aboutIsceb || DEFAULT_ABOUT_ISCEB),
     examsJson: JSON.stringify(Array.isArray(exams) && exams.length ? exams : INITIAL_EXAMS),
     assignmentsJson: JSON.stringify(Array.isArray(assignments) && assignments.length ? assignments : INITIAL_ASSIGNMENTS)
   };

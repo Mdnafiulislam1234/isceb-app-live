@@ -1,5 +1,6 @@
 import {
   AVAILABLE_USERS,
+  DEFAULT_ABOUT_ISCEB,
   DEFAULT_DEVELOPER,
   DEFAULT_FOUNDER,
   DEFAULT_MEMBERS,
@@ -118,6 +119,13 @@ function normalizeSettings(raw) {
   return s;
 }
 
+function normalizeAboutIsceb(raw) {
+  return {
+    ...structuredClone(DEFAULT_ABOUT_ISCEB),
+    ...(raw && typeof raw === "object" ? raw : {})
+  };
+}
+
 function sanitizeDeveloperProfile(raw, forceUpgrade = false) {
   const defaults = structuredClone(DEFAULT_DEVELOPER);
   const dev = { ...defaults, ...(raw || {}) };
@@ -194,6 +202,7 @@ function loadState() {
           parsed.developerProfile,
           savedRosterVer < DEFAULT_MEMBERS_ROSTER_VERSION
         ),
+        aboutIsceb: normalizeAboutIsceb(parsed.aboutIsceb),
         progressByUser: parsed.progressByUser || {},
         examAttemptsByUser: parsed.examAttemptsByUser || {},
         assignmentSubmissionsByUser: parsed.assignmentSubmissionsByUser || {},
@@ -243,6 +252,7 @@ function loadState() {
     membersRosterVersion: DEFAULT_MEMBERS_ROSTER_VERSION,
     founderProfile: structuredClone(DEFAULT_FOUNDER),
     developerProfile: structuredClone(DEFAULT_DEVELOPER),
+    aboutIsceb: structuredClone(DEFAULT_ABOUT_ISCEB),
     progressByUser: {},
     examAttemptsByUser: {},
     assignmentSubmissionsByUser: {},
@@ -275,6 +285,8 @@ let firebaseInitPromise = null;
 let liveCloudUnsubscribers = [];
 let lastAutoResumeSyncMs = 0;
 let isSyncingPendingMedia = false;
+let isUploadingAdminMedia = false;
+let adminSessionRehydratePromise = null;
 let deferredInstallPrompt = null;
 let activeTimerInterval = null;
 let examCountdownInterval = null;
@@ -601,15 +613,24 @@ function syncAccountSwitcherUi() {
 }
 
 async function rehydrateVerifiedAdminSession() {
-  try {
-    const verifiedId = await desktopAdminAuth.getValidatedSessionAdminId();
-    verifiedAdminSessionId = verifiedId || null;
-    if (verifiedAdminSessionId) {
-      render();
+  if (verifiedAdminSessionId) return verifiedAdminSessionId;
+  if (adminSessionRehydratePromise) return adminSessionRehydratePromise;
+  adminSessionRehydratePromise = (async () => {
+    try {
+      const verifiedId = await desktopAdminAuth.getValidatedSessionAdminId();
+      verifiedAdminSessionId = verifiedId || null;
+      if (verifiedAdminSessionId) {
+        render();
+      }
+      return verifiedAdminSessionId;
+    } catch (_) {
+      verifiedAdminSessionId = null;
+      return null;
+    } finally {
+      adminSessionRehydratePromise = null;
     }
-  } catch (_) {
-    verifiedAdminSessionId = null;
-  }
+  })();
+  return adminSessionRehydratePromise;
 }
 
 function inferMediaMimeType(media) {
@@ -964,7 +985,26 @@ function presentMediaPreviewModal(media, resolvedUrl, blob = null, options = {})
   }
 }
 
-async function uploadChunksWithRetry(fb, fileId, rawBytes, label = "file") {
+function isAuthorizedCloudAdminEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  return e === "www.mdnafiulislam@gmail.com" || e === "amirul.islam@isceb.org";
+}
+
+async function writeChunkWithTimeout(chunkRef, payload, timeoutMs = 25_000, setDocFn) {
+  let timer = null;
+  try {
+    await Promise.race([
+      setDocFn(chunkRef, payload),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Chunk upload timed out (slow network). Retrying...")), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function uploadChunksWithRetry(fb, fileId, rawBytes, label = "file", onProgress = null) {
   const { doc, setDoc, serverTimestamp } = fb.fsMod;
   const chunks = splitBytesIntoLessonFileChunks({
     fileId,
@@ -972,25 +1012,36 @@ async function uploadChunksWithRetry(fb, fileId, rawBytes, label = "file") {
     authorUid: cloudUser.uid,
     serverTimestampToken: serverTimestamp()
   });
-  for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
-    const chunk = chunks[cIdx];
-    let lastErr = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        if (chunks.length > 1 && (cIdx === 0 || (cIdx + 1) % 3 === 0 || cIdx === chunks.length - 1)) {
-          showToast(`Syncing ${label} (${cIdx + 1}/${chunks.length} parts)...`);
-        }
-        await setDoc(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload);
-        lastErr = null;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const msg = String(err?.code || err?.message || "").toLowerCase();
-        if (msg.includes("permission")) break;
-        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-      }
+  let completedChunks = 0;
+  const batchSize = 3;
+  for (let start = 0; start < chunks.length; start += batchSize) {
+    const end = Math.min(chunks.length, start + batchSize);
+    const batch = [];
+    for (let cIdx = start; cIdx < end; cIdx++) {
+      const chunk = chunks[cIdx];
+      batch.push(
+        (async () => {
+          let lastErr = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              await writeChunkWithTimeout(doc(fb.db, "lesson_files", chunk.chunkId), chunk.payload, 25_000, setDoc);
+              completedChunks += 1;
+              if (typeof onProgress === "function") {
+                onProgress(completedChunks, chunks.length);
+              }
+              return;
+            } catch (err) {
+              lastErr = err;
+              const msg = String(err?.code || err?.message || "").toLowerCase();
+              if (msg.includes("permission") || msg.includes("insufficient")) break;
+              await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+            }
+          }
+          throw lastErr;
+        })()
+      );
     }
-    if (lastErr) throw lastErr;
+    await Promise.all(batch);
   }
   return chunks.length;
 }
@@ -1430,10 +1481,10 @@ async function initFirebaseSdk() {
         }
         updateChromeBadges();
         if (user) {
+          await rehydrateVerifiedAdminSession();
+          await warmMediaIdbKeysCache();
           syncStudentAccountToFirestore(getActiveUser()).catch(() => {});
-          if (isAdminUser()) {
-            await syncAllPendingLocalMediaToCloud({ silentNoOp: true }).catch(() => {});
-          } else if (!isGuestUser()) {
+          if (!isAdminUser() && !isGuestUser()) {
             await pullOwnStudentProgressFromFirestore().catch(() => {});
           }
           await syncFromCloudFirestore(true);
@@ -1766,12 +1817,13 @@ async function fetchVersionJson() {
 
 function mergeRemoteClassesSafely(remoteClasses) {
   if (!Array.isArray(remoteClasses) || !remoteClasses.length) return;
+  if (isUploadingAdminMedia) return;
   const now = Date.now();
   for (const [k, ts] of recentlyUploadedMediaIds.entries()) {
-    if (now - ts > 180_000) recentlyUploadedMediaIds.delete(k);
+    if (now - ts > 600_000) recentlyUploadedMediaIds.delete(k);
   }
   for (const [k, ts] of recentlyDeletedMediaIds.entries()) {
-    if (now - ts > 180_000) recentlyDeletedMediaIds.delete(k);
+    if (now - ts > 600_000) recentlyDeletedMediaIds.delete(k);
   }
   const localById = new Map((state.classes || []).map((cls) => [cls.id, cls]));
   state.classes = remoteClasses.map((remoteCls) => {
@@ -1788,13 +1840,14 @@ function mergeRemoteClassesSafely(remoteClasses) {
     };
     if (!localCls) return cleanedRemoteCls;
 
-    const localPreserved = isAdminUser()
+    const canPreserveLocalAdminFiles = isAdminUser() || Boolean(desktopAdminAuth.getSummaries().some((s) => s.configured));
+    const localPreserved = canPreserveLocalAdminFiles
       ? (localCls.attachments || []).filter((lm) => {
           if (!lm || recentlyDeletedMediaIds.has(lm.id)) return false;
           const alreadySyncedInRemote = filteredRemoteList.some((rm) => rm.id === lm.id && isCloudSyncedMedia(rm));
           if (alreadySyncedInRemote) return false;
           if (recentlyUploadedMediaIds.has(lm.id)) return true;
-          if (!isCloudSyncedMedia(lm) && (localAttachmentBlobs.has(lm.id) || cachedMediaIdbKeys.has(lm.id))) {
+          if (localAttachmentBlobs.has(lm.id) || cachedMediaIdbKeys.has(lm.id)) {
             return true;
           }
           return false;
@@ -1825,6 +1878,7 @@ function applyRemoteCatalogData(c) {
     try {
       if (c.settings.founderProfileJson) state.founderProfile = JSON.parse(c.settings.founderProfileJson);
       if (c.settings.developerProfileJson) state.developerProfile = sanitizeDeveloperProfile(JSON.parse(c.settings.developerProfileJson));
+      if (c.settings.aboutIscebJson) state.aboutIsceb = normalizeAboutIsceb(JSON.parse(c.settings.aboutIscebJson));
       if (c.settings.examsJson) {
         const remoteExams = JSON.parse(c.settings.examsJson);
         if (Array.isArray(remoteExams) && remoteExams.length) {
@@ -1870,10 +1924,8 @@ async function syncFromCloudFirestore(silent = false) {
     return;
   }
   try {
+    await rehydrateVerifiedAdminSession();
     await warmMediaIdbKeysCache();
-    if (isAdminUser()) {
-      await syncAllPendingLocalMediaToCloud({ silentNoOp: true }).catch(() => {});
-    }
     const { doc, getDoc } = fb.fsMod;
     const manifestSnap = await getDoc(doc(fb.db, "curriculum_manifests", "live"));
     const catalogSnap = await getDoc(doc(fb.db, "curriculum_catalogs", "live"));
@@ -1888,7 +1940,7 @@ async function syncFromCloudFirestore(silent = false) {
       applyRemoteCatalogData(catalogSnap.data());
     }
     saveState();
-    if (isAdminUser() || ["www.mdnafiulislam@gmail.com", "amirul.islam@isceb.org"].includes(String(cloudUser.email || "").toLowerCase())) {
+    if (isAdminUser() || isAuthorizedCloudAdminEmail(cloudUser.email)) {
       await fetchCloudRegisteredUsers(false);
     }
     updateChromeBadges();
@@ -1899,7 +1951,7 @@ async function syncFromCloudFirestore(silent = false) {
   }
 }
 
-async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes, announcement, apkVersionName, apkVersionCode, apkUrl }) {
+async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes, announcement, apkVersionName, apkVersionCode, apkUrl, skipPendingSync = false }) {
   state.manifest = {
     ...state.manifest,
     versionCode: Number(versionCode),
@@ -1922,7 +1974,7 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
   }
 
   try {
-    if (isAdminUser()) {
+    if (isAdminUser() && !skipPendingSync) {
       await syncAllPendingLocalMediaToCloud({ skipPublish: true, silentNoOp: true }).catch(() => {});
     }
     const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = fb.fsMod;
@@ -1956,6 +2008,7 @@ async function pushCurriculumToFirestore({ versionTag, versionCode, releaseNotes
       founderProfile: state.founderProfile,
       developerProfile: state.developerProfile,
       members: state.members,
+      aboutIsceb: state.aboutIsceb,
       isCreate: !existingCatalog.exists(),
       serverTimestampToken: serverTimestamp()
     });
@@ -2607,7 +2660,8 @@ async function syncAssessmentsToCloudIfConnected(changeSummary) {
       announcement: state.manifest.announcement || "",
       apkVersionName: state.manifest.latestApkVersionName || "1.6",
       apkVersionCode: state.manifest.latestApkVersionCode || 7,
-      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+      skipPendingSync: true
     });
   } else {
     showToast(`${changeSummary} (Saved locally. Connect Google Cloud Sync to push to all students.)`);
@@ -3652,6 +3706,115 @@ function renderDirectory() {
   `;
 }
 
+function renderAboutIsceb() {
+  const about = normalizeAboutIsceb(state.aboutIsceb);
+  return `
+    <div class="card card-navy" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1 1 240px;">
+          <img src="./isceb-logo.webp" alt="ISCEB Logo" style="width: 56px; height: 56px; border-radius: 14px; background: #fff; padding: 4px; object-fit: contain; flex-shrink: 0; border: 2px solid var(--gold);" />
+          <div style="min-width: 0;">
+            <span class="badge badge-gold">${escapeHtml(about.tagline || "Connect. Learn. Achieve.")}</span>
+            <h2 style="margin: 6px 0 4px; color: #fff; font-size: 20px; line-height: 1.25;">${escapeHtml(about.organizationName)}</h2>
+            <p style="margin: 0; font-size: 12.5px; color: #CBD5E1;">${escapeHtml(about.establishedLabel)}</p>
+          </div>
+        </div>
+        ${
+          isAdminUser()
+            ? `<button type="button" class="btn btn-gold btn-sm" data-action="edit-about-isceb">Edit About ISCEB</button>`
+            : ""
+        }
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 16px;">
+      <span class="badge badge-navy">Institutional Overview</span>
+      <h3 style="margin: 8px 0 8px; color: var(--navy);">Who We Are</h3>
+      <p style="margin: 0; font-size: 14px; line-height: 1.65; color: #334155; white-space: pre-line;">${escapeHtml(about.overview)}</p>
+    </div>
+
+    <div class="two-col-grid" style="margin-bottom: 16px;">
+      <div class="card" style="margin-bottom: 0; border-top: 4px solid var(--navy);">
+        <span class="badge badge-navy">Our Mission</span>
+        <p style="margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.mission)}</p>
+      </div>
+      <div class="card" style="margin-bottom: 0; border-top: 4px solid var(--gold);">
+        <span class="badge badge-gold">Our Vision</span>
+        <p style="margin: 10px 0 0; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.vision)}</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 16px;">
+      <span class="badge badge-navy">Academic &amp; Executive Focus</span>
+      <h3 style="margin: 8px 0 8px; color: var(--navy);">Programs &amp; Credentialing</h3>
+      <p style="margin: 0 0 12px; font-size: 13.5px; line-height: 1.6; color: #334155; white-space: pre-line;">${escapeHtml(about.programsSummary)}</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; padding: 12px; background: var(--surface-muted); border-radius: 12px; border: 1px solid var(--border); font-size: 13px;">
+        <div><strong>Headquarters:</strong><br/><span style="color: #334155;">${escapeHtml(about.headquarters || "Dhaka, Bangladesh")}</span></div>
+        <div><strong>Official Website:</strong><br/><span style="color: var(--navy); font-weight: 700;">${escapeHtml(about.officialWebsite || "www.isceb.org")}</span></div>
+        <div><strong>Registry Portal:</strong><br/><span style="color: var(--navy); font-weight: 700;">${escapeHtml(about.registryWebsite || "www.scmglobal.org")}</span></div>
+        <div><strong>Contact Email &amp; Phone:</strong><br/><span style="color: #334155;">${escapeHtml(about.contactEmail || "info@isceb.org")}${about.contactPhone ? ` • ${escapeHtml(about.contactPhone)}` : ""}</span></div>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px;">
+        <button type="button" class="btn btn-primary btn-sm" data-nav="courses">Explore 12 Modules &amp; 48 Lectures</button>
+        <button type="button" class="btn btn-outline btn-sm" data-nav="directory">View ISCEB Leadership &amp; Members (${state.members.length})</button>
+      </div>
+    </div>
+  `;
+}
+
+function openEditAboutIscebModal() {
+  if (!isAdminUser()) {
+    showToast("Admin sign-in required to edit About ISCEB.", true);
+    return;
+  }
+  const about = normalizeAboutIsceb(state.aboutIsceb);
+  openModal(
+    "Edit About ISCEB",
+    `<form id="aboutIscebEditForm" style="display: grid; gap: 10px;">
+      <label style="font-size: 12px; font-weight: 700;">Organization Full Name
+        <input type="text" id="aboutOrgName" class="input" value="${escapeHtml(about.organizationName)}" required />
+      </label>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <label style="font-size: 12px; font-weight: 700;">Tagline / Motto
+          <input type="text" id="aboutTagline" class="input" value="${escapeHtml(about.tagline)}" required />
+        </label>
+        <label style="font-size: 12px; font-weight: 700;">Subtitle / Header Label
+          <input type="text" id="aboutEstLabel" class="input" value="${escapeHtml(about.establishedLabel)}" />
+        </label>
+      </div>
+      <label style="font-size: 12px; font-weight: 700;">Institutional Overview (Who We Are)
+        <textarea id="aboutOverview" class="textarea" rows="4" required>${escapeHtml(about.overview)}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Mission
+        <textarea id="aboutMission" class="textarea" rows="3" required>${escapeHtml(about.mission)}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Vision
+        <textarea id="aboutVision" class="textarea" rows="3" required>${escapeHtml(about.vision)}</textarea>
+      </label>
+      <label style="font-size: 12px; font-weight: 700;">Programs &amp; Credentialing Summary
+        <textarea id="aboutPrograms" class="textarea" rows="2">${escapeHtml(about.programsSummary)}</textarea>
+      </label>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <label style="font-size: 12px; font-weight: 700;">Headquarters / Location
+          <input type="text" id="aboutHQ" class="input" value="${escapeHtml(about.headquarters)}" />
+        </label>
+        <label style="font-size: 12px; font-weight: 700;">Official Website
+          <input type="text" id="aboutWeb" class="input" value="${escapeHtml(about.officialWebsite)}" />
+        </label>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <label style="font-size: 12px; font-weight: 700;">Contact Email
+          <input type="text" id="aboutEmail" class="input" value="${escapeHtml(about.contactEmail)}" />
+        </label>
+        <label style="font-size: 12px; font-weight: 700;">Contact Phone
+          <input type="text" id="aboutPhone" class="input" value="${escapeHtml(about.contactPhone)}" />
+        </label>
+      </div>
+      <button type="submit" class="btn btn-gold" style="margin-top: 6px; width: 100%;">Save &amp; Publish About ISCEB to Cloud</button>
+    </form>`
+  );
+}
+
 function renderAdmin() {
   const summaries = desktopAdminAuth.getSummaries();
   const anyConfigured = desktopAdminAuth.isAnyAdminConfigured();
@@ -4315,6 +4478,7 @@ function render() {
     exams: ["Timed Examinations & Assignments", "Official Module Assessments, 100-Mark Final Exam & Capstone Study"],
     learning: ["My Learning & Official PGD Certificate", "Academic Readiness, Printable Executive Diploma & Serial Verification"],
     directory: ["ISCEB Leadership & Directory", "Founder, App Developer & Verified Faculty Members"],
+    about: ["About ISCEB", "Institute of Supply Chain Excellence Bangladesh — Overview, Mission & Programs"],
     profile: ["Student Profile & Credentialing", "Direct Registration, Google Cloud Sync & Online APK Updates"],
     admin: ["Admin Governance & Cloud Publishing", "Live Curriculum OTA Sync & APK Release Metadata"]
   };
@@ -4327,6 +4491,7 @@ function render() {
   else if (state.currentView === "exams") container.innerHTML = renderExams();
   else if (state.currentView === "learning") container.innerHTML = renderLearning();
   else if (state.currentView === "directory") container.innerHTML = renderDirectory();
+  else if (state.currentView === "about") container.innerHTML = renderAboutIsceb();
   else if (state.currentView === "profile") container.innerHTML = renderProfile();
   else if (state.currentView === "admin") container.innerHTML = renderAdmin();
   else container.innerHTML = renderDashboard();
@@ -4944,7 +5109,8 @@ function setupListeners() {
           announcement: state.manifest.announcement || "",
           apkVersionName: state.manifest.latestApkVersionName || "1.6",
           apkVersionCode: state.manifest.latestApkVersionCode || 7,
-          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+          skipPendingSync: true
         });
       }
     } else if (action === "open-assignment") {
@@ -5086,12 +5252,15 @@ function setupListeners() {
           announcement: state.manifest.announcement || "",
           apkVersionName: state.manifest.latestApkVersionName || "1.6",
           apkVersionCode: state.manifest.latestApkVersionCode || 7,
-          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+          skipPendingSync: true
         });
       } else {
         showToast("Removed material locally. Connect Google Cloud Sync to update student devices.");
         render();
       }
+    } else if (action === "edit-about-isceb") {
+      openEditAboutIscebModal();
     } else if (action === "select-login-admin") {
       selectedLoginAdminId = actBtn.dataset.adminId;
       desktopAdminAuthMode = "login";
@@ -5454,7 +5623,8 @@ function setupListeners() {
           announcement: state.manifest.announcement || "",
           apkVersionName: state.manifest.latestApkVersionName || "1.6",
           apkVersionCode: state.manifest.latestApkVersionCode || 7,
-          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+          skipPendingSync: true
         });
       } else {
         showToast("Attached link locally. Sign in with 'Google Cloud Sync' to publish to student phones.");
@@ -5614,7 +5784,8 @@ function setupListeners() {
           announcement: state.manifest.announcement || "",
           apkVersionName: state.manifest.latestApkVersionName || "1.6",
           apkVersionCode: state.manifest.latestApkVersionCode || 7,
-          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+          skipPendingSync: true
         });
       } else {
         showToast("Removed locally.");
@@ -5842,6 +6013,39 @@ function setupListeners() {
       if (cloudUser) {
         syncStudentAccountToFirestore(updatedRecord, { allowEmptyPhoto: !updatedRecord.photoUrl });
       }
+    } else if (e.target.id === "aboutIscebEditForm") {
+      if (!isAdminUser()) return;
+      state.aboutIsceb = normalizeAboutIsceb({
+        ...state.aboutIsceb,
+        organizationName: document.getElementById("aboutOrgName")?.value.trim() || DEFAULT_ABOUT_ISCEB.organizationName,
+        tagline: document.getElementById("aboutTagline")?.value.trim() || DEFAULT_ABOUT_ISCEB.tagline,
+        establishedLabel: document.getElementById("aboutEstLabel")?.value.trim() || DEFAULT_ABOUT_ISCEB.establishedLabel,
+        overview: document.getElementById("aboutOverview")?.value.trim() || DEFAULT_ABOUT_ISCEB.overview,
+        mission: document.getElementById("aboutMission")?.value.trim() || DEFAULT_ABOUT_ISCEB.mission,
+        vision: document.getElementById("aboutVision")?.value.trim() || DEFAULT_ABOUT_ISCEB.vision,
+        programsSummary: document.getElementById("aboutPrograms")?.value.trim() || DEFAULT_ABOUT_ISCEB.programsSummary,
+        headquarters: document.getElementById("aboutHQ")?.value.trim() || DEFAULT_ABOUT_ISCEB.headquarters,
+        officialWebsite: document.getElementById("aboutWeb")?.value.trim() || DEFAULT_ABOUT_ISCEB.officialWebsite,
+        contactEmail: document.getElementById("aboutEmail")?.value.trim() || DEFAULT_ABOUT_ISCEB.contactEmail,
+        contactPhone: document.getElementById("aboutPhone")?.value.trim() || ""
+      });
+      saveState();
+      closeModal();
+      if (cloudUser) {
+        pushCurriculumToFirestore({
+          versionTag: state.manifest.versionTag || "v1.6.0",
+          versionCode: Number(state.manifest.versionCode || 106) + 1,
+          releaseNotes: "Updated About ISCEB profile",
+          announcement: state.manifest.announcement || "",
+          apkVersionName: state.manifest.latestApkVersionName || "1.6",
+          apkVersionCode: state.manifest.latestApkVersionCode || 7,
+          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+          skipPendingSync: true
+        });
+      } else {
+        showToast("Saved About ISCEB locally. Sign in with Google Cloud Sync to push to all devices.");
+        render();
+      }
     }
   });
 }
@@ -5903,93 +6107,114 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
 
   const fb = await initFirebaseSdk();
   const canCloudSync = Boolean(fb && cloudUser);
+  const isCloudAdminAccount = canCloudSync && isAuthorizedCloudAdminEmail(cloudUser.email);
   let cloudSyncedCount = 0;
   let largeLocalOnlyCount = 0;
   let cloudErrorMsg = "";
+  let isPermissionError = false;
 
-  for (const entry of stagedEntries) {
-    const { file, mediaObj, index } = entry;
-    if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
-      try {
-        const msg = `Uploading ${file.name} (${index + 1}/${files.length}) to Cloud...`;
-        adminUploadStatusBanner = { classId: cid, text: msg, isError: false, isDone: false };
-        const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
-        if (bannerTextEl) bannerTextEl.textContent = msg;
-        showToast(msg);
-
-        const rawBytes = new Uint8Array(await file.arrayBuffer());
-        const candidateId = `pc_${cid}_${index}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
-        mediaObj.cloudFileId = candidateId;
-        mediaObj.cloudChunkCount = chunkCount;
-        recentlyUploadedMediaIds.set(mediaObj.id, Date.now());
-        await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
-        saveState();
-        cloudSyncedCount += 1;
-      } catch (err) {
-        cloudErrorMsg = err?.message || "Firestore chunk upload denied";
-      }
-    } else if (file.size > MAX_CLOUD_FILE_BYTES) {
-      largeLocalOnlyCount += 1;
-    }
+  if (canCloudSync && !isCloudAdminAccount) {
+    cloudErrorMsg = `Connected Google account (${cloudUser.email}) is not an Admin Gmail. Sign in with www.mdnafiulislam@gmail.com or amirul.islam@isceb.org.`;
+    isPermissionError = true;
   }
 
-  if (canCloudSync && cloudSyncedCount > 0) {
-    const pubMsg = `Publishing ${cloudSyncedCount} file(s) to Student Panel...`;
-    adminUploadStatusBanner = { classId: cid, text: pubMsg, isError: false, isDone: false };
-    const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
-    if (bannerTextEl) bannerTextEl.textContent = pubMsg;
+  isUploadingAdminMedia = true;
+  try {
+    for (const entry of stagedEntries) {
+      if (isPermissionError) break;
+      const { file, mediaObj, index } = entry;
+      if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
+        try {
+          const updateBanner = (txt) => {
+            adminUploadStatusBanner = { classId: cid, text: txt, isError: false, isDone: false };
+            const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
+            if (bannerTextEl) bannerTextEl.textContent = txt;
+          };
+          const initialMsg = `Uploading ${file.name} (${index + 1}/${files.length}) to Cloud...`;
+          updateBanner(initialMsg);
+          showToast(initialMsg);
 
-    const published = await pushCurriculumToFirestore({
-      versionTag: state.manifest.versionTag || "v1.6.0",
-      versionCode: Number(state.manifest.versionCode || 106) + 1,
-      releaseNotes: `Uploaded ${cloudSyncedCount} cloud study file(s) to Lecture ${cls.lectureCode}`,
-      announcement: state.manifest.announcement || "",
-      apkVersionName: state.manifest.latestApkVersionName || "1.6",
-      apkVersionCode: state.manifest.latestApkVersionCode || 7,
-      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
-    });
-    if (published) {
-      adminUploadStatusBanner = {
-        classId: cid,
-        text: `Uploaded & Cloud Synced (${cloudSyncedCount} file(s)) — visible in Class Study Materials & all student phones!`,
-        isError: false,
-        isDone: true
-      };
-      showToast(`Uploaded & synced ${cloudSyncedCount} file(s)! All student phones can open them now.`);
-      render();
-    } else {
-      adminUploadStatusBanner = {
-        classId: cid,
-        text: "File added locally, but Firestore publish failed. Tap Sync Local Files to Cloud above to retry.",
-        isError: true,
-        isDone: false
-      };
-      render();
+          const rawBytes = new Uint8Array(await file.arrayBuffer());
+          const candidateId = `pc_${cid}_${index}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name, (done, total) => {
+            const pct = total > 0 ? Math.round((done / total) * 100) : 100;
+            updateBanner(`Uploading ${file.name} (${index + 1}/${files.length}) — Part ${done}/${total} (${pct}%)... Keep app open`);
+          });
+          mediaObj.cloudFileId = candidateId;
+          mediaObj.cloudChunkCount = chunkCount;
+          recentlyUploadedMediaIds.set(mediaObj.id, Date.now());
+          await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
+          saveState();
+
+          updateBanner(`Publishing ${file.name} (${index + 1}/${files.length}) to Student Panel...`);
+          const published = await pushCurriculumToFirestore({
+            versionTag: state.manifest.versionTag || "v1.6.0",
+            versionCode: Number(state.manifest.versionCode || 106) + 1,
+            releaseNotes: `Uploaded ${file.name} to Lecture ${cls.lectureCode}`,
+            announcement: state.manifest.announcement || "",
+            apkVersionName: state.manifest.latestApkVersionName || "1.6",
+            apkVersionCode: state.manifest.latestApkVersionCode || 7,
+            apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+            skipPendingSync: true
+          });
+          if (published) {
+            cloudSyncedCount += 1;
+          } else {
+            cloudErrorMsg = "Catalog update failed after uploading chunks. Tap 'Sync Local Files to Cloud' to retry.";
+          }
+        } catch (err) {
+          const rawMsg = String(err?.message || "Upload interrupted");
+          if (rawMsg.toLowerCase().includes("permission") || rawMsg.toLowerCase().includes("insufficient")) {
+            isPermissionError = true;
+          }
+          cloudErrorMsg = rawMsg;
+        }
+      } else if (file.size > MAX_CLOUD_FILE_BYTES) {
+        largeLocalOnlyCount += 1;
+      }
     }
+  } finally {
+    isUploadingAdminMedia = false;
+  }
+
+  if (cloudSyncedCount > 0 && !cloudErrorMsg && largeLocalOnlyCount === 0) {
+    adminUploadStatusBanner = {
+      classId: cid,
+      text: `Uploaded & Cloud Synced (${cloudSyncedCount} file(s)) — permanently saved in Cloud & visible to all students!`,
+      isError: false,
+      isDone: true
+    };
+    showToast(`Uploaded & synced ${cloudSyncedCount} file(s)! All student phones can open them now.`);
+    render();
   } else if (cloudErrorMsg) {
     adminUploadStatusBanner = {
       classId: cid,
-      text: `Cloud upload blocked (${cloudErrorMsg}). Connect Admin Google Sync above to push to students.`,
+      text: isPermissionError
+        ? `Cloud permission error (${cloudErrorMsg}). Connect Admin Gmail above.`
+        : `${cloudSyncedCount ? `${cloudSyncedCount} file(s) synced. ` : ""}Remaining file paused (${cloudErrorMsg}). Tap 'Sync Local Files to Cloud' above to finish.`,
       isError: true,
       isDone: false
     };
     render();
-    openModal(
-      "Google Admin Sync Required",
-      `<div style="display: grid; gap: 12px; font-size: 13.5px;">
-        <div style="background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 10px; padding: 12px; color: #991B1B;">
-          <strong>Cloud upload permission denied (${escapeHtml(cloudErrorMsg)}).</strong><br/>
-          Connected Google account: <strong>${escapeHtml(cloudUser?.email || "None")}</strong>
-        </div>
-        <p style="margin: 0; color: var(--muted);">
-          Your file is saved safely on this device. Connect <strong>Google Cloud Sync</strong> with your Admin email (<strong>www.mdnafiulislam@gmail.com</strong> or <strong>amirul.islam@isceb.org</strong>) so it uploads to every student's phone automatically.
-        </p>
-        <button type="button" class="btn btn-gold" data-modal-action="connect-google-and-sync-pending">
-          Connect Admin Google Account &amp; Sync Now
-        </button>
-      </div>`
-    );
+    if (isPermissionError) {
+      openModal(
+        "Google Admin Sync Required",
+        `<div style="display: grid; gap: 12px; font-size: 13.5px;">
+          <div style="background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 10px; padding: 12px; color: #991B1B;">
+            <strong>Cloud upload permission denied (${escapeHtml(cloudErrorMsg)}).</strong><br/>
+            Connected Google account: <strong>${escapeHtml(cloudUser?.email || "None")}</strong>
+          </div>
+          <p style="margin: 0; color: var(--muted);">
+            Your file is saved safely on this device. Connect <strong>Google Cloud Sync</strong> with your Admin email (<strong>www.mdnafiulislam@gmail.com</strong> or <strong>amirul.islam@isceb.org</strong>) so it uploads to every student's phone automatically.
+          </p>
+          <button type="button" class="btn btn-gold" data-modal-action="connect-google-and-sync-pending">
+            Connect Admin Google Account &amp; Sync Now
+          </button>
+        </div>`
+      );
+    } else {
+      showToast(`Upload note: ${cloudErrorMsg}. Tap 'Sync Local Files to Cloud' to finish.`, true);
+    }
   } else if (!canCloudSync) {
     adminUploadStatusBanner = {
       classId: cid,
@@ -6013,7 +6238,7 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
   } else if (largeLocalOnlyCount > 0) {
     adminUploadStatusBanner = {
       classId: cid,
-      text: "File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach Shared HTTPS Link' below for student phones.",
+      text: `${cloudSyncedCount ? `${cloudSyncedCount} file(s) synced. ` : ""}File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach Shared HTTPS Link' below.`,
       isError: true,
       isDone: false
     };
@@ -6032,8 +6257,13 @@ async function syncAllPendingLocalMediaToCloud(options = {}) {
     if (!silentNoOp) await signInWithGoogleCloud();
     return 0;
   }
+  if (!isAuthorizedCloudAdminEmail(cloudUser.email)) {
+    if (!silentNoOp) showToast(`Sign in with Admin Google account (www.mdnafiulislam@gmail.com) instead of ${cloudUser.email}.`, true);
+    return 0;
+  }
 
   isSyncingPendingMedia = true;
+  isUploadingAdminMedia = true;
   let synced = 0;
   let lastSyncedClassCode = "";
   try {
@@ -6048,9 +6278,21 @@ async function syncAllPendingLocalMediaToCloud(options = {}) {
         const blob = await findMediaBlobForAttachmentInIdb(m);
         if (!blob || blob.size === 0 || blob.size > MAX_CLOUD_FILE_BYTES) continue;
         try {
+          const updateSyncBanner = (txt) => {
+            if (!targetClassId || targetClassId === cls.id) {
+              adminUploadStatusBanner = { classId: cls.id, text: txt, isError: false, isDone: false };
+              const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
+              if (bannerTextEl) bannerTextEl.textContent = txt;
+            }
+          };
+          const fileLabel = m.fileName || m.title || "file";
+          updateSyncBanner(`Syncing ${fileLabel} (${i + 1}/${targets.length}) to Cloud...`);
           const rawBytes = new Uint8Array(await blob.arrayBuffer());
           const candidateId = `pc_${cls.id}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-          const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, m.fileName || m.title || "file");
+          const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, fileLabel, (done, total) => {
+            const pct = total > 0 ? Math.round((done / total) * 100) : 100;
+            updateSyncBanner(`Syncing ${fileLabel} — Part ${done}/${total} (${pct}%)... Keep app open`);
+          });
           const patchMedia = (item) => {
             if (!item || item.id !== m.id) return;
             item.cloudFileId = candidateId;
@@ -6062,27 +6304,42 @@ async function syncAllPendingLocalMediaToCloud(options = {}) {
           patchMedia(cls.audioMedia);
           patchMedia(cls.videoMedia);
           (cls.attachments || []).forEach(patchMedia);
+          recentlyUploadedMediaIds.set(m.id, Date.now());
           if (m.id) await saveMediaBlobToIdb(m.id, blob, { fileName: m.fileName, mimeType: blob.type });
           await saveMediaBlobToIdb(candidateId, blob, { fileName: m.fileName, mimeType: blob.type });
+          saveState();
           synced += 1;
           lastSyncedClassCode = cls.lectureCode || cls.id;
+          if (!skipPublish) {
+            updateSyncBanner(`Publishing ${fileLabel} to Student Panel...`);
+            await pushCurriculumToFirestore({
+              versionTag: state.manifest.versionTag || "v1.6.0",
+              versionCode: Number(state.manifest.versionCode || 106) + 1,
+              releaseNotes: `Synced ${fileLabel} (Lecture ${lastSyncedClassCode})`,
+              announcement: state.manifest.announcement || "",
+              apkVersionName: state.manifest.latestApkVersionName || "1.6",
+              apkVersionCode: state.manifest.latestApkVersionCode || 7,
+              apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+              skipPendingSync: true
+            });
+          }
         } catch (err) {
           if (!silentNoOp) showToast(`Cloud upload error: ${err?.message || err}`, true);
         }
       }
     }
     if (synced > 0) {
-      saveState();
-      if (!skipPublish) {
-        await pushCurriculumToFirestore({
-          versionTag: state.manifest.versionTag || "v1.6.0",
-          versionCode: Number(state.manifest.versionCode || 106) + 1,
-          releaseNotes: `Auto-synced ${synced} pending study file(s)${lastSyncedClassCode ? ` (Lecture ${lastSyncedClassCode})` : ""}`,
-          announcement: state.manifest.announcement || "",
-          apkVersionName: state.manifest.latestApkVersionName || "1.6",
-          apkVersionCode: state.manifest.latestApkVersionCode || 7,
-          apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
-        });
+      if (targetClassId) {
+        adminUploadStatusBanner = {
+          classId: targetClassId,
+          text: `Synced & published ${synced} pending file(s) to Cloud!`,
+          isError: false,
+          isDone: true
+        };
+      }
+      if (!silentNoOp) {
+        showToast(`Synced ${synced} pending file(s) to Cloud!`);
+        render();
       }
     } else if (!silentNoOp) {
       showToast("No cached local files <= 18 MB found on this device. Tap 'Re-upload & Sync' on any missing item.", true);
@@ -6090,6 +6347,7 @@ async function syncAllPendingLocalMediaToCloud(options = {}) {
     }
   } finally {
     isSyncingPendingMedia = false;
+    isUploadingAdminMedia = false;
   }
   return synced;
 }
@@ -6103,6 +6361,10 @@ async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
   const fb = await initFirebaseSdk();
   if (!fb || !cloudUser) {
     showToast("Sign in with Admin Google Cloud Sync first before repairing a cloud file.", true);
+    return;
+  }
+  if (!isAuthorizedCloudAdminEmail(cloudUser.email)) {
+    showToast(`Sign in with Admin Gmail (www.mdnafiulislam@gmail.com) instead of ${cloudUser.email}.`, true);
     return;
   }
   if (file.size === 0 || file.size > MAX_CLOUD_FILE_BYTES) {
@@ -6121,11 +6383,25 @@ async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
     return;
   }
 
+  isUploadingAdminMedia = true;
   try {
+    adminUploadStatusBanner = {
+      classId: targetCls.id,
+      text: `Uploading ${file.name} to Cloud...`,
+      isError: false,
+      isDone: false
+    };
+    render();
     showToast(`Uploading & repairing ${file.name} in Firebase Cloud...`);
     const rawBytes = new Uint8Array(await file.arrayBuffer());
     const candidateId = `pc_${targetCls.id}_rep_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
+    const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name, (done, total) => {
+      const pct = total > 0 ? Math.round((done / total) * 100) : 100;
+      const msg = `Uploading ${file.name} — Part ${done}/${total} (${pct}%)... Keep app open`;
+      adminUploadStatusBanner = { classId: targetCls.id, text: msg, isError: false, isDone: false };
+      const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
+      if (bannerTextEl) bannerTextEl.textContent = msg;
+    });
     const localBlobUrl = URL.createObjectURL(file);
     const applyPatch = (item) => {
       if (!item || (mediaId && item.id !== mediaId)) return;
@@ -6142,6 +6418,7 @@ async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
     applyPatch(targetCls.audioMedia);
     applyPatch(targetCls.videoMedia);
     (targetCls.attachments || []).forEach(applyPatch);
+    if (mediaId) recentlyUploadedMediaIds.set(mediaId, Date.now());
 
     if (mediaId) {
       localAttachmentUrls.set(mediaId, localBlobUrl);
@@ -6150,18 +6427,37 @@ async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
     await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
     saveState();
 
-    await pushCurriculumToFirestore({
+    const published = await pushCurriculumToFirestore({
       versionTag: state.manifest.versionTag || "v1.6.0",
       versionCode: Number(state.manifest.versionCode || 106) + 1,
       releaseNotes: `Synced ${file.name} to Lecture ${targetCls.lectureCode}`,
       announcement: state.manifest.announcement || "",
       apkVersionName: state.manifest.latestApkVersionName || "1.6",
       apkVersionCode: state.manifest.latestApkVersionCode || 7,
-      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
+      apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl,
+      skipPendingSync: true
     });
-    showToast(`${file.name} is now synced to Cloud and ready on all student phones!`);
+    if (published) {
+      adminUploadStatusBanner = {
+        classId: targetCls.id,
+        text: `${file.name} synced & published to Cloud!`,
+        isError: false,
+        isDone: true
+      };
+      showToast(`${file.name} is now synced to Cloud and ready on all student phones!`);
+      render();
+    }
   } catch (err) {
-    showToast(`Repair upload failed: ${err?.message || err}. Sign in as Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
+    adminUploadStatusBanner = {
+      classId: targetCls.id,
+      text: `Repair upload failed (${err?.message || err}). Retry above.`,
+      isError: true,
+      isDone: false
+    };
+    showToast(`Repair upload failed: ${err?.message || err}.`, true);
+    render();
+  } finally {
+    isUploadingAdminMedia = false;
   }
 }
 

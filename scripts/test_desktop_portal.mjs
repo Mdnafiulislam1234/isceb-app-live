@@ -368,6 +368,8 @@ test("Desktop chunked lesson_files helper complies with firestore.rules limits a
   assert.ok(appJs.includes("startLiveCloudListeners") && appJs.includes("onSnapshot"), "Web PWA must use real-time onSnapshot listeners");
   assert.ok(appJs.includes("authStateReady"), "Firebase init must await authStateReady before deciding cloudUser state");
   assert.ok(appJs.includes("syncAllPendingLocalMediaToCloud") && appJs.includes("repairSingleBrokenMedia"), "Admin must auto-sync pending IDB blobs and be able to repair broken entries");
+  assert.ok(appJs.includes("!isAdminUser()") && appJs.includes("promotePersonalAttachmentToCloud") && appJs.includes('data-action="promote-personal-attachment-to-cloud"'), "Admins must not be trapped by Attach Personal PDF and can promote personal attachments to cloud");
+  assert.ok(appJs.includes("recentlyUploadedMediaIds") && appJs.includes("recentlyDeletedMediaIds") && appJs.includes("adminUploadStatusBanner"), "Admin Media Upload Center must guard against snapshot races and show live upload progress");
 });
 
 test("GitHub Pages PWA setup configures permanent manifest, auto-updating Service Worker, and CI build stamping", () => {

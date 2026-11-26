@@ -290,6 +290,9 @@ let pendingEditStudentPhotoCleared = false;
 const localAttachmentUrls = new Map();
 const localAttachmentBlobs = new Map();
 const cachedMediaIdbKeys = new Set();
+const recentlyUploadedMediaIds = new Map();
+const recentlyDeletedMediaIds = new Map();
+let adminUploadStatusBanner = null;
 
 const MEDIA_IDB_NAME = "isceb_media_blobs";
 const MEDIA_IDB_STORE = "blobs";
@@ -1356,26 +1359,52 @@ async function fetchVersionJson() {
 
 function mergeRemoteClassesSafely(remoteClasses) {
   if (!Array.isArray(remoteClasses) || !remoteClasses.length) return;
+  const now = Date.now();
+  for (const [k, ts] of recentlyUploadedMediaIds.entries()) {
+    if (now - ts > 180_000) recentlyUploadedMediaIds.delete(k);
+  }
+  for (const [k, ts] of recentlyDeletedMediaIds.entries()) {
+    if (now - ts > 180_000) recentlyDeletedMediaIds.delete(k);
+  }
   const localById = new Map((state.classes || []).map((cls) => [cls.id, cls]));
   state.classes = remoteClasses.map((remoteCls) => {
     const localCls = localById.get(remoteCls.id);
-    if (!localCls) return remoteCls;
-    const remoteList = Array.isArray(remoteCls.attachments) ? remoteCls.attachments : [];
-    const localPendingUnsynced = isAdminUser()
+    const filteredRemoteList = (Array.isArray(remoteCls.attachments) ? remoteCls.attachments : []).filter(
+      (rm) => !recentlyDeletedMediaIds.has(rm?.id)
+    );
+    const cleanedRemoteCls = {
+      ...remoteCls,
+      attachments: filteredRemoteList,
+      pdfMedia: remoteCls.pdfMedia && !recentlyDeletedMediaIds.has(remoteCls.pdfMedia.id) ? remoteCls.pdfMedia : null,
+      audioMedia: remoteCls.audioMedia && !recentlyDeletedMediaIds.has(remoteCls.audioMedia.id) ? remoteCls.audioMedia : null,
+      videoMedia: remoteCls.videoMedia && !recentlyDeletedMediaIds.has(remoteCls.videoMedia.id) ? remoteCls.videoMedia : null
+    };
+    if (!localCls) return cleanedRemoteCls;
+
+    const localPreserved = isAdminUser()
       ? (localCls.attachments || []).filter((lm) => {
-          if (isCloudSyncedMedia(lm)) return false;
-          if (!localAttachmentBlobs.has(lm.id) && !cachedMediaIdbKeys.has(lm.id)) return false;
-          return !remoteList.some((rm) => rm.id === lm.id && isCloudSyncedMedia(rm));
+          if (!lm || recentlyDeletedMediaIds.has(lm.id)) return false;
+          const alreadySyncedInRemote = filteredRemoteList.some((rm) => rm.id === lm.id && isCloudSyncedMedia(rm));
+          if (alreadySyncedInRemote) return false;
+          if (recentlyUploadedMediaIds.has(lm.id)) return true;
+          if (!isCloudSyncedMedia(lm) && (localAttachmentBlobs.has(lm.id) || cachedMediaIdbKeys.has(lm.id))) {
+            return true;
+          }
+          return false;
         })
       : [];
-    if (!localPendingUnsynced.length) return remoteCls;
-    const mergedAttachments = [...remoteList, ...localPendingUnsynced];
+
+    if (!localPreserved.length) return cleanedRemoteCls;
+    const mergedAttachments = [
+      ...filteredRemoteList.filter((rm) => !localPreserved.some((lp) => lp.id === rm.id)),
+      ...localPreserved
+    ];
     return {
-      ...remoteCls,
+      ...cleanedRemoteCls,
       attachments: mergedAttachments,
-      pdfMedia: remoteCls.pdfMedia && isCloudSyncedMedia(remoteCls.pdfMedia) ? remoteCls.pdfMedia : localCls.pdfMedia || remoteCls.pdfMedia,
-      audioMedia: remoteCls.audioMedia && isCloudSyncedMedia(remoteCls.audioMedia) ? remoteCls.audioMedia : localCls.audioMedia || remoteCls.audioMedia,
-      videoMedia: remoteCls.videoMedia && isCloudSyncedMedia(remoteCls.videoMedia) ? remoteCls.videoMedia : localCls.videoMedia || remoteCls.videoMedia
+      pdfMedia: cleanedRemoteCls.pdfMedia && isCloudSyncedMedia(cleanedRemoteCls.pdfMedia) ? cleanedRemoteCls.pdfMedia : localCls.pdfMedia || cleanedRemoteCls.pdfMedia,
+      audioMedia: cleanedRemoteCls.audioMedia && isCloudSyncedMedia(cleanedRemoteCls.audioMedia) ? cleanedRemoteCls.audioMedia : localCls.audioMedia || cleanedRemoteCls.audioMedia,
+      videoMedia: cleanedRemoteCls.videoMedia && isCloudSyncedMedia(cleanedRemoteCls.videoMedia) ? cleanedRemoteCls.videoMedia : localCls.videoMedia || cleanedRemoteCls.videoMedia
     };
   });
 }
@@ -1882,7 +1911,9 @@ function renderCourses() {
                     .join("")}
                 </div>`
           }
-          <textarea id="lectureNotesBox" class="textarea" rows="3" placeholder="Record your study notes for Lecture ${escapeHtml(selectedClass.lectureCode)}...">${escapeHtml(prog.localNotes || "")}</textarea>
+          ${
+            !isAdminUser()
+              ? `<textarea id="lectureNotesBox" class="textarea" rows="3" placeholder="Record your study notes for Lecture ${escapeHtml(selectedClass.lectureCode)}...">${escapeHtml(prog.localNotes || "")}</textarea>
           <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap;">
             <button type="button" class="btn btn-primary btn-sm" data-action="save-notes" data-class-id="${escapeHtml(selectedClass.id)}">Save Notes</button>
             <label class="btn btn-outline btn-sm" style="cursor: pointer;">
@@ -1903,6 +1934,25 @@ function renderCourses() {
                     .join("")}
                 </div>`
               : ""
+          }`
+              : (prog.localAttachments || []).length
+              ? `<div style="margin-top: 8px; background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px;">
+                  <div style="font-size: 12px; color: #92400E; font-weight: 700;">
+                    Saved as Personal Note only (not visible to students yet). Tap <strong>Publish to Students</strong> to push to Cloud:
+                  </div>
+                  ${prog.localAttachments
+                    .map((att) => {
+                      return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 12.5px; flex-wrap: wrap;">
+                        <span><strong>${escapeHtml(att.name)}</strong> (${formatBytes(att.size)})</span>
+                        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                          <button type="button" class="btn btn-gold btn-sm" data-action="promote-personal-attachment-to-cloud" data-class-id="${escapeHtml(selectedClass.id)}" data-att-id="${escapeHtml(att.id)}">Publish to Students</button>
+                          <button type="button" class="btn btn-outline btn-sm" data-action="open-personal-attachment" data-class-id="${escapeHtml(selectedClass.id)}" data-att-id="${escapeHtml(att.id)}">Open File</button>
+                        </div>
+                      </div>`;
+                    })
+                    .join("")}
+                </div>`
+              : ""
           }
         </div>
 
@@ -1910,10 +1960,20 @@ function renderCourses() {
           isAdminUser()
             ? `
           <div class="upload-center-card" id="desktopAdminMediaUploadCenter" style="margin-bottom: 16px;">
-            <div class="flex-header-between" style="margin-bottom: 10px;">
+            <div class="flex-header-between" style="margin-bottom: 4px;">
               <strong style="font-size: 14.5px; color: #fff;">Admin Media Upload Center</strong>
               <span style="font-size: 11.5px; color: var(--gold-soft); font-weight: 700; white-space: nowrap;">Max 18MB Cloud Sync</span>
             </div>
+            <div style="font-size: 11.5px; color: #CBD5E1; margin-bottom: 10px;">
+              Upload PDF, Video, Audio, Image, or Documents here to publish directly to <strong>Class Study Materials</strong> for all students.
+            </div>
+            ${
+              adminUploadStatusBanner && adminUploadStatusBanner.classId === selectedClass.id
+                ? `<div id="adminUploadStatusBannerBox" style="background: ${adminUploadStatusBanner.isError ? "rgba(239, 68, 68, 0.2)" : adminUploadStatusBanner.isDone ? "rgba(16, 185, 129, 0.2)" : "rgba(212, 175, 55, 0.2)"}; border: 1px solid ${adminUploadStatusBanner.isError ? "rgba(248, 113, 113, 0.65)" : adminUploadStatusBanner.isDone ? "rgba(52, 211, 153, 0.65)" : "rgba(251, 191, 36, 0.65)"}; border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; font-size: 12px; font-weight: 700; color: #fff;">
+                    <span id="adminUploadStatusBannerText">${escapeHtml(adminUploadStatusBanner.text)}</span>
+                  </div>`
+                : ""
+            }
             ${
               !cloudUser
                 ? `<div style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(251, 191, 36, 0.55); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
@@ -1964,6 +2024,13 @@ function renderCourses() {
                 <button type="submit" class="btn btn-gold btn-sm">Attach HTTPS Link</button>
               </div>
             </form>
+          </div>
+          <div style="background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 16px;">
+            <div style="font-size: 12.5px; font-weight: 700; color: var(--navy); margin-bottom: 6px;">Instructor Private Notes (This Device Only)</div>
+            <textarea id="lectureNotesBox" class="textarea" rows="2" placeholder="Record private notes for Lecture ${escapeHtml(selectedClass.lectureCode)}...">${escapeHtml(prog.localNotes || "")}</textarea>
+            <div style="margin-top: 8px;">
+              <button type="button" class="btn btn-outline btn-sm" data-action="save-notes" data-class-id="${escapeHtml(selectedClass.id)}">Save Notes</button>
+            </div>
           </div>
         `
             : ""
@@ -4184,6 +4251,8 @@ function setupListeners() {
           type: String(att.name || "").toLowerCase().endsWith(".pdf") ? "PDF" : "DOCUMENT"
         });
       }
+    } else if (action === "promote-personal-attachment-to-cloud") {
+      promotePersonalAttachmentToCloud(actBtn.dataset.classId, actBtn.dataset.attId);
     } else if (action === "signin-and-open-pending-media") {
       closeModal();
       signInWithGoogleCloud();
@@ -4375,6 +4444,10 @@ function setupListeners() {
       const mid = actBtn.dataset.mediaId;
       const cls = state.classes.find((c) => c.id === cid);
       if (!cls) return;
+      if (mid) {
+        recentlyDeletedMediaIds.set(mid, Date.now());
+        recentlyUploadedMediaIds.delete(mid);
+      }
       if (cls.pdfMedia?.id === mid) cls.pdfMedia = null;
       if (cls.audioMedia?.id === mid) cls.audioMedia = null;
       if (cls.videoMedia?.id === mid) cls.videoMedia = null;
@@ -4570,6 +4643,10 @@ function setupListeners() {
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
+      if (isAdminUser()) {
+        handleAdminMediaFilesSelected(cid, "", [file]);
+        return;
+      }
       const attId = `att-${Date.now()}`;
       localAttachmentUrls.set(attId, URL.createObjectURL(file));
       saveMediaBlobToIdb(attId, file, { fileName: file.name, mimeType: file.type }).then(() => {
@@ -5130,15 +5207,9 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
     return;
   }
   const cls = state.classes.find((c) => c.id === cid);
-  if (!cls) return;
+  if (!cls || !files || !files.length) return;
 
-  const fb = await initFirebaseSdk();
-  const canCloudSync = Boolean(fb && cloudUser);
-  const newMediaList = [];
-  let cloudSyncedCount = 0;
-  let largeLocalOnlyCount = 0;
-  let cloudErrorMsg = "";
-
+  const stagedEntries = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const lower = file.name.toLowerCase();
@@ -5154,25 +5225,6 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
     localAttachmentUrls.set(mediaId, URL.createObjectURL(file));
     await saveMediaBlobToIdb(mediaId, file, { fileName: file.name, mimeType: file.type });
 
-    let cloudFileId = "";
-    let cloudChunkCount = 0;
-
-    if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
-      try {
-        showToast(`Uploading ${file.name} (${i + 1}/${files.length}) to Firebase Cloud...`);
-        const rawBytes = new Uint8Array(await file.arrayBuffer());
-        const candidateId = `pc_${cid}_${i}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-        cloudChunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
-        cloudFileId = candidateId;
-        await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
-        cloudSyncedCount += 1;
-      } catch (err) {
-        cloudErrorMsg = err?.message || "Firestore chunk upload denied";
-      }
-    } else if (file.size > MAX_CLOUD_FILE_BYTES) {
-      largeLocalOnlyCount += 1;
-    }
-
     const mediaObj = {
       id: mediaId,
       type: inferred,
@@ -5184,19 +5236,65 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       uploadTimestamp: Date.now(),
       description: "",
       mimeType: file.type || inferMediaMimeType({ type: inferred, fileName: file.name }),
-      cloudFileId,
-      cloudChunkCount
+      cloudFileId: "",
+      cloudChunkCount: 0
     };
+    recentlyUploadedMediaIds.set(mediaId, Date.now());
     if (inferred === "PDF") cls.pdfMedia = mediaObj;
     if (inferred === "AUDIO") cls.audioMedia = mediaObj;
     if (inferred === "VIDEO") cls.videoMedia = mediaObj;
-    newMediaList.push(mediaObj);
+    cls.attachments = [...(cls.attachments || []), mediaObj];
+    stagedEntries.push({ file, mediaObj, index: i });
   }
 
-  cls.attachments = [...(cls.attachments || []), ...newMediaList];
+  adminUploadStatusBanner = {
+    classId: cid,
+    text: `Preparing ${files.length} file(s) for Firebase Cloud Sync...`,
+    isError: false,
+    isDone: false
+  };
   saveState();
+  render();
+
+  const fb = await initFirebaseSdk();
+  const canCloudSync = Boolean(fb && cloudUser);
+  let cloudSyncedCount = 0;
+  let largeLocalOnlyCount = 0;
+  let cloudErrorMsg = "";
+
+  for (const entry of stagedEntries) {
+    const { file, mediaObj, index } = entry;
+    if (canCloudSync && file.size > 0 && file.size <= MAX_CLOUD_FILE_BYTES) {
+      try {
+        const msg = `Uploading ${file.name} (${index + 1}/${files.length}) to Cloud...`;
+        adminUploadStatusBanner = { classId: cid, text: msg, isError: false, isDone: false };
+        const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
+        if (bannerTextEl) bannerTextEl.textContent = msg;
+        showToast(msg);
+
+        const rawBytes = new Uint8Array(await file.arrayBuffer());
+        const candidateId = `pc_${cid}_${index}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const chunkCount = await uploadChunksWithRetry(fb, candidateId, rawBytes, file.name);
+        mediaObj.cloudFileId = candidateId;
+        mediaObj.cloudChunkCount = chunkCount;
+        recentlyUploadedMediaIds.set(mediaObj.id, Date.now());
+        await saveMediaBlobToIdb(candidateId, file, { fileName: file.name, mimeType: file.type });
+        saveState();
+        cloudSyncedCount += 1;
+      } catch (err) {
+        cloudErrorMsg = err?.message || "Firestore chunk upload denied";
+      }
+    } else if (file.size > MAX_CLOUD_FILE_BYTES) {
+      largeLocalOnlyCount += 1;
+    }
+  }
 
   if (canCloudSync && cloudSyncedCount > 0) {
+    const pubMsg = `Publishing ${cloudSyncedCount} file(s) to Student Panel...`;
+    adminUploadStatusBanner = { classId: cid, text: pubMsg, isError: false, isDone: false };
+    const bannerTextEl = document.getElementById("adminUploadStatusBannerText");
+    if (bannerTextEl) bannerTextEl.textContent = pubMsg;
+
     const published = await pushCurriculumToFirestore({
       versionTag: state.manifest.versionTag || "v1.6.0",
       versionCode: Number(state.manifest.versionCode || 106) + 1,
@@ -5207,9 +5305,30 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       apkUrl: state.manifest.apkDownloadUrl || FIREBASE_CONFIG.apkDownloadUrl
     });
     if (published) {
+      adminUploadStatusBanner = {
+        classId: cid,
+        text: `Uploaded & Cloud Synced (${cloudSyncedCount} file(s)) — visible in Class Study Materials & all student phones!`,
+        isError: false,
+        isDone: true
+      };
       showToast(`Uploaded & synced ${cloudSyncedCount} file(s)! All student phones can open them now.`);
+      render();
+    } else {
+      adminUploadStatusBanner = {
+        classId: cid,
+        text: "File added locally, but Firestore publish failed. Tap Sync Local Files to Cloud above to retry.",
+        isError: true,
+        isDone: false
+      };
+      render();
     }
   } else if (cloudErrorMsg) {
+    adminUploadStatusBanner = {
+      classId: cid,
+      text: `Cloud upload blocked (${cloudErrorMsg}). Connect Admin Google Sync above to push to students.`,
+      isError: true,
+      isDone: false
+    };
     render();
     openModal(
       "Google Admin Sync Required",
@@ -5227,6 +5346,12 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       </div>`
     );
   } else if (!canCloudSync) {
+    adminUploadStatusBanner = {
+      classId: cid,
+      text: "Saved in Class Study Materials on this device. Connect Google Cloud Sync above to push to students.",
+      isError: false,
+      isDone: false
+    };
     render();
     openModal(
       "Connect Google Cloud to Push to Students",
@@ -5241,6 +5366,12 @@ async function handleAdminMediaFilesSelected(cid, forcedType, files) {
       </div>`
     );
   } else if (largeLocalOnlyCount > 0) {
+    adminUploadStatusBanner = {
+      classId: cid,
+      text: "File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach Shared HTTPS Link' below for student phones.",
+      isError: true,
+      isDone: false
+    };
     showToast(`File(s) >18 MB cannot sync via Firestore chunks. Use 'Attach HTTPS Link' for student phones.`, true);
     render();
   } else {
@@ -5386,6 +5517,32 @@ async function repairSingleBrokenMedia(mediaId, file, explicitClassId = "") {
     showToast(`${file.name} is now synced to Cloud and ready on all student phones!`);
   } catch (err) {
     showToast(`Repair upload failed: ${err?.message || err}. Sign in as Admin Gmail (www.mdnafiulislam@gmail.com).`, true);
+  }
+}
+
+async function promotePersonalAttachmentToCloud(cid, attId) {
+  if (!isAdminUser()) return;
+  const cur = getClassProgress(cid);
+  const att = (cur.localAttachments || []).find((a) => a.id === attId);
+  if (!att) return;
+
+  const blob = localAttachmentBlobs.get(attId) || (await loadMediaBlobFromIdb(attId));
+  if (!blob) {
+    showToast("Cached file not found on this device. Upload it below in Admin Media Upload Center.", true);
+    return;
+  }
+
+  const mimeType = att.type || blob.type || inferMediaMimeType({ fileName: att.name });
+  const promotedFile = new File([blob], att.name || "study-material.pdf", { type: mimeType });
+  const beforeCount = (state.classes.find((c) => c.id === cid)?.attachments || []).length;
+  await handleAdminMediaFilesSelected(cid, "", [promotedFile]);
+  const afterCount = (state.classes.find((c) => c.id === cid)?.attachments || []).length;
+  if (afterCount > beforeCount) {
+    const latestProg = getClassProgress(cid);
+    updateClassProgress(cid, {
+      localAttachments: (latestProg.localAttachments || []).filter((a) => a.id !== attId)
+    });
+    render();
   }
 }
 

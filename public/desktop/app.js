@@ -17,6 +17,7 @@ import {
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
+  parseMcqQuestionsFromText,
   splitBytesIntoLessonFileChunks
 } from "./curriculum-data.js";
 import {
@@ -668,6 +669,63 @@ async function getPdfJsLib() {
     return pdfjsLib;
   })();
   return pdfJsLibPromise;
+}
+
+async function extractOrderedTextFromPdfBytes(bytes, onProgress = null) {
+  const pdfjsLib = await getPdfJsLib();
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const maxPages = Math.min(pdf.numPages, 60);
+  const pageTexts = [];
+
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    if (typeof onProgress === "function") onProgress(pageNum, maxPages);
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const rows = [];
+
+    for (const item of content.items || []) {
+      const str = String(item?.str || "");
+      if (!str.trim()) continue;
+      const tr = Array.isArray(item.transform) ? item.transform : [1, 0, 0, 1, 0, 0];
+      const x = Number(tr[4] || 0);
+      const y = Number(tr[5] || 0);
+      const h = Math.max(8, Math.abs(Number(tr[3] || item.height || 10)));
+      const w = Math.max(0, Number(item.width || 0));
+
+      let targetRow = rows.find((r) => Math.abs(r.y - y) <= Math.max(3.5, h * 0.45));
+      if (!targetRow) {
+        targetRow = { y, spans: [] };
+        rows.push(targetRow);
+      }
+      targetRow.spans.push({ x, w, str });
+    }
+
+    rows.sort((a, b) => b.y - a.y);
+    const lineStrings = rows.map((row) => {
+      row.spans.sort((a, b) => a.x - b.x);
+      let line = "";
+      let prevEnd = null;
+      for (const sp of row.spans) {
+        if (prevEnd !== null) {
+          const gap = sp.x - prevEnd;
+          if (gap > 12) line += "  ";
+          else if (gap > 1.5 && !line.endsWith(" ") && !sp.str.startsWith(" ")) line += " ";
+        }
+        line += sp.str;
+        prevEnd = sp.x + sp.w;
+      }
+      return line.trim();
+    }).filter(Boolean);
+
+    if (lineStrings.length) {
+      pageTexts.push(lineStrings.join("\n"));
+    }
+  }
+
+  return {
+    text: pageTexts.join("\n\n"),
+    numPages: pdf.numPages
+  };
 }
 
 function renderPdfPageToCanvasCrisp(page, canvas, targetWidthCssPx, zoomRatio = 1) {
@@ -2737,6 +2795,8 @@ function openAdminExamBuilderModal(examId = "") {
     )
     .join("");
 
+  const totalQuestionsMarks = questions.reduce((sum, q) => sum + Number(q.marks || 5), 0);
+
   const html = `
     <form id="adminExamBuilderForm" data-exam-id="${escapeHtml(existing?.id || "")}" style="display: grid; gap: 10px;">
       <label style="font-size: 12px; font-weight: 700;">Module
@@ -2769,19 +2829,179 @@ function openAdminExamBuilderModal(examId = "") {
         <div style="font-size: 11px; color: #78350F;">Countdown auto-submits when Exam Duration reaches 00:00, and new starts lock after the Closing Deadline.</div>
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px;">
-        <strong style="color: var(--navy); font-size: 13.5px;">MCQ Questions Builder</strong>
+      <div id="examPdfImporterBox" style="background: linear-gradient(135deg, #0F2342, #1D3B6B); color: #fff; border-radius: 12px; padding: 12px; display: grid; gap: 8px; border: 1px solid rgba(212,175,55,0.45);">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div>
+            <strong style="color: #F4D06F; font-size: 13px; display: block;">Auto-Import MCQ Questions from PDF</strong>
+            <span style="font-size: 11.5px; color: rgba(255,255,255,0.82);">Upload a Question PDF — numbered questions, Options A–D &amp; answers auto-fill below.</span>
+          </div>
+          <label class="btn btn-gold btn-sm" style="cursor: pointer; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;">
+            Upload Question PDF
+            <input type="file" id="examPdfImportInput" accept=".pdf,.txt,.md,application/pdf,text/plain" style="display: none;" />
+          </label>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <label style="font-size: 11.5px; font-weight: 700; display: flex; align-items: center; gap: 5px; color: #E2E8F0;">
+            Default Marks/Q:
+            <input type="number" id="aebImportDefaultMarks" class="input" min="1" max="50" value="5" style="width: 62px; padding: 4px 8px; color: #0F172A;" />
+          </label>
+          <button type="button" class="btn btn-outline btn-sm" data-modal-action="apply-default-marks-all" style="color: #F4D06F; border-color: rgba(244,208,111,0.5);">Apply Marks to All</button>
+          <select id="aebImportMode" class="select" style="width: auto; padding: 5px 10px; font-size: 11.5px; color: #0F172A;">
+            <option value="replace">Replace Questions Below</option>
+            <option value="append">Append to Existing</option>
+          </select>
+        </div>
+        <div id="aebImportStatus" style="display: none; padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,0.12); color: #F8FAFC;"></div>
+        <details style="font-size: 12px;">
+          <summary style="cursor: pointer; color: #F4D06F; font-weight: 700; user-select: none;">Or Paste Questions Text Directly (Word / Docs / WhatsApp)</summary>
+          <div style="display: grid; gap: 6px; margin-top: 8px;">
+            <textarea id="aebPasteQuestionsInput" class="textarea" rows="4" placeholder="1. What is FIFO?&#10;A. First In First Out&#10;B. Fast In Fast Out&#10;C. Fixed Input&#10;D. Final Order&#10;Answer: A" style="color: #0F172A; background: #fff;"></textarea>
+            <button type="button" class="btn btn-gold btn-sm" data-modal-action="parse-pasted-questions" style="justify-self: start;">Auto-Fill Questions from Text</button>
+          </div>
+        </details>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <strong style="color: var(--navy); font-size: 13.5px;">MCQ Questions Builder</strong>
+          <span id="aebQuestionCountBadge" class="badge badge-info">${questions.length} Question(s) &bull; ${totalQuestionsMarks} Marks</span>
+        </div>
         <button type="button" class="btn btn-primary btn-sm" data-modal-action="builder-add-question">+ Add Question</button>
       </div>
       <div id="examQuestionRowsHost" style="display: grid; gap: 10px;">
         ${questions.map((q, idx) => buildExamQuestionBuilderRowHtml(q, idx)).join("")}
       </div>
       <button type="submit" class="btn btn-gold" style="width: 100%; margin-top: 6px;">
-        Save Exam & Questions ${cloudUser ? "(+ Publish Cloud)" : "(Local + Publish Ready)"}
+        Save Exam &amp; Questions ${cloudUser ? "(+ Publish Cloud)" : "(Local + Publish Ready)"}
       </button>
     </form>
   `;
   openModal(existing ? `Edit Exam: ${existing.title}` : "Create Timed Exam & MCQ Questions", html);
+}
+
+function updateExamBuilderSummaryBadge() {
+  const host = document.getElementById("examQuestionRowsHost");
+  const badge = document.getElementById("aebQuestionCountBadge");
+  if (!host || !badge) return;
+  const rows = Array.from(host.querySelectorAll(".exam-q-builder-row"));
+  rows.forEach((row, i) => {
+    row.dataset.qIndex = String(i);
+    const lbl = row.querySelector(".exam-q-row-label");
+    if (lbl) lbl.textContent = `Question ${i + 1}`;
+  });
+  const totalMarks = rows.reduce((sum, row) => {
+    const val = Number(row.querySelector(".eq-marks-input")?.value || 5);
+    return sum + (Number.isFinite(val) && val > 0 ? val : 5);
+  }, 0);
+  badge.textContent = `${rows.length} Question(s) • ${totalMarks} Marks`;
+}
+
+function setExamImportStatus(message, isError = false) {
+  const el = document.getElementById("aebImportStatus");
+  if (!el) return;
+  el.style.display = "block";
+  el.style.background = isError ? "rgba(220,38,38,0.22)" : "rgba(16,185,129,0.22)";
+  el.style.border = isError ? "1px solid rgba(252,165,165,0.65)" : "1px solid rgba(110,231,183,0.65)";
+  el.style.color = isError ? "#FEE2E2" : "#ECFDF5";
+  el.textContent = message;
+}
+
+function applyImportedMcqQuestionsToBuilder(rawText, sourceName = "") {
+  const host = document.getElementById("examQuestionRowsHost");
+  if (!host) return;
+  const defaultMarks = Math.max(1, Math.min(50, Number(document.getElementById("aebImportDefaultMarks")?.value || 5)));
+  const mode = document.getElementById("aebImportMode")?.value || "replace";
+  const parsed = parseMcqQuestionsFromText(rawText, { defaultMarks });
+
+  if (!parsed.questions.length) {
+    setExamImportStatus(
+      "Could not find formatted MCQ questions (1. Question / A. B. C. D.). If this is a scanned image PDF, copy-paste text in the box below.",
+      true
+    );
+    showToast("No selectable MCQ questions found in this file.", true);
+    return;
+  }
+
+  const currentRows = Array.from(host.querySelectorAll(".exam-q-builder-row"));
+  const isSingleBlankRow =
+    currentRows.length === 1 &&
+    !currentRows[0].querySelector(".eq-question-input")?.value.trim() &&
+    Array.from(currentRows[0].querySelectorAll(".eq-opt-input")).every((inp) => !inp.value.trim());
+
+  if (mode === "replace" || isSingleBlankRow) {
+    host.innerHTML = parsed.questions.map((q, idx) => buildExamQuestionBuilderRowHtml(q, idx)).join("");
+  } else {
+    const startIdx = currentRows.length;
+    const appendedHtml = parsed.questions
+      .map((q, offset) => buildExamQuestionBuilderRowHtml(q, startIdx + offset))
+      .join("");
+    host.insertAdjacentHTML("beforeend", appendedHtml);
+  }
+
+  // Highlight any option inputs that were missing in the source PDF so admin spots them immediately
+  host.querySelectorAll(".eq-opt-input").forEach((inp) => {
+    if (!inp.value.trim()) {
+      inp.style.borderColor = "#F59E0B";
+      inp.style.background = "#FFFBEB";
+    }
+  });
+
+  // Prefill title from PDF filename if Exam Title is blank
+  const titleInput = document.getElementById("aebTitle");
+  if (titleInput && !titleInput.value.trim() && sourceName) {
+    const cleanTitle = sourceName
+      .replace(/\.[^.]+$/, "")
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleanTitle) titleInput.value = cleanTitle;
+  }
+
+  updateExamBuilderSummaryBadge();
+  const ansSummary = `${parsed.detectedAnswerCount}/${parsed.questions.length} right answer(s) auto-detected`;
+  const warnMissingOpts = parsed.incompleteOptionCount > 0
+    ? ` (${parsed.incompleteOptionCount} question(s) have empty C/D slots — review yellow fields).`
+    : "";
+  const msg = `Auto-filled ${parsed.questions.length} MCQ question(s) (${ansSummary})${sourceName ? ` from ${sourceName}` : ""}!${warnMissingOpts} Set Time/Marks/Deadline below & Save.`;
+  setExamImportStatus(msg, false);
+  showToast(`Imported ${parsed.questions.length} MCQ questions!`);
+}
+
+async function handleExamQuestionPdfFileSelected(file) {
+  if (!file) return;
+  const lower = String(file.name || "").toLowerCase();
+  const isPdf = lower.endsWith(".pdf") || file.type === "application/pdf";
+  try {
+    let extractedText = "";
+    if (isPdf) {
+      setExamImportStatus(`Reading ${file.name}... Please wait.`, false);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const res = await extractOrderedTextFromPdfBytes(bytes, (donePage, totalPages) => {
+        setExamImportStatus(`Studying ${file.name} (Page ${donePage}/${totalPages})...`, false);
+      });
+      extractedText = res.text || "";
+    } else {
+      extractedText = await file.text();
+    }
+
+    const pasteBox = document.getElementById("aebPasteQuestionsInput");
+    if (pasteBox && extractedText.trim()) {
+      pasteBox.value = extractedText;
+    }
+
+    if (!extractedText.trim()) {
+      setExamImportStatus(
+        `${file.name} has no selectable text (looks like a scanned image PDF). Export text-based PDF or paste text below.`,
+        true
+      );
+      showToast("No selectable text found in PDF (scanned image PDF).", true);
+      return;
+    }
+    applyImportedMcqQuestionsToBuilder(extractedText, file.name);
+  } catch (err) {
+    setExamImportStatus(`Could not read ${file.name}: ${err?.message || err}`, true);
+    showToast(`Failed to read ${file.name}.`, true);
+  }
 }
 
 function openAdminAssignmentBuilderModal(asgId = "") {
@@ -5730,8 +5950,10 @@ function setupListeners() {
       if (!host) return;
       const idx = host.querySelectorAll(".exam-q-builder-row").length;
       const wrapper = document.createElement("div");
-      wrapper.innerHTML = buildExamQuestionBuilderRowHtml({}, idx);
+      const defMarks = Math.max(1, Math.min(50, Number(document.getElementById("aebImportDefaultMarks")?.value || 5)));
+      wrapper.innerHTML = buildExamQuestionBuilderRowHtml({ marks: defMarks }, idx);
       host.appendChild(wrapper.firstElementChild);
+      updateExamBuilderSummaryBadge();
     } else if (modalAction === "builder-remove-question") {
       const host = document.getElementById("examQuestionRowsHost");
       const rows = host ? host.querySelectorAll(".exam-q-builder-row") : [];
@@ -5740,11 +5962,21 @@ function setupListeners() {
         return;
       }
       mAct.closest(".exam-q-builder-row")?.remove();
-      host.querySelectorAll(".exam-q-builder-row").forEach((row, i) => {
-        row.dataset.qIndex = String(i);
-        const lbl = row.querySelector(".exam-q-row-label");
-        if (lbl) lbl.textContent = `Question ${i + 1}`;
+      updateExamBuilderSummaryBadge();
+    } else if (modalAction === "apply-default-marks-all") {
+      const defMarks = Math.max(1, Math.min(50, Number(document.getElementById("aebImportDefaultMarks")?.value || 5)));
+      document.querySelectorAll("#examQuestionRowsHost .eq-marks-input").forEach((inp) => {
+        inp.value = String(defMarks);
       });
+      updateExamBuilderSummaryBadge();
+      showToast(`Applied ${defMarks} marks to every question.`);
+    } else if (modalAction === "parse-pasted-questions") {
+      const txt = document.getElementById("aebPasteQuestionsInput")?.value || "";
+      if (!txt.trim()) {
+        showToast("Paste your numbered questions & options A–D first.", true);
+        return;
+      }
+      applyImportedMcqQuestionsToBuilder(txt, "");
     } else if (modalAction === "builder-set-deadline-preset") {
       const inputId = mAct.dataset.targetInput;
       const hours = Number(mAct.dataset.hours || 0);
@@ -5794,8 +6026,22 @@ function setupListeners() {
     }
   });
 
+  document.getElementById("modalBody").addEventListener("input", (e) => {
+    if (e.target.classList?.contains("eq-marks-input")) {
+      updateExamBuilderSummaryBadge();
+    } else if (e.target.classList?.contains("eq-opt-input")) {
+      e.target.style.borderColor = "";
+      e.target.style.background = "";
+    }
+  });
+
   document.getElementById("modalBody").addEventListener("change", (e) => {
-    if (e.target.id === "repairBrokenMediaInput") {
+    if (e.target.id === "examPdfImportInput") {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      handleExamQuestionPdfFileSelected(file);
+    } else if (e.target.id === "repairBrokenMediaInput") {
       const file = e.target.files?.[0];
       const mid = e.target.dataset.mediaId || "";
       e.target.value = "";

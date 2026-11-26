@@ -19,6 +19,7 @@ import {
   buildFirestoreStudentProgressPayload,
   buildFirestoreUserAccountPayload,
   isCloudSyncedMedia,
+  parseMcqQuestionsFromText,
   splitBytesIntoLessonFileChunks
 } from "../public/desktop/curriculum-data.js";
 import {
@@ -710,5 +711,87 @@ test("About ISCEB section in hamburger menu syncs via Firestore settings and inc
   assert.ok(appJs.includes("skipPendingSync") && appJs.includes("await rehydrateVerifiedAdminSession()"));
   assert.ok(appJs.includes("adminUploadStatusBannerText"));
 });
+
+test("Question PDF / Smart Text Auto-Importer parses numbered English & Bengali MCQs, inline options, markers, and Answer Keys", () => {
+  const samplePdfText = `
+ISCEB SCM Module 4 Question Bank
+Page 1 of 2
+
+1. What does FIFO stand for in warehouse operations? (3 Marks)
+A. First In First Out *
+B. Fast In Fast Out
+C. Fixed Input Final Output
+D. Freight In Freight Out
+Explanation: FIFO ensures older stock moves first.
+
+2) Which document governs international Letters of Credit?
+(a) ISO 9001   (b) UCP 600   (c) HS Code   (d) Bill of Lading
+Ans: B
+
+3. Safety stock protects primarily against:
+A) Office rent increases
+B) Demand and lead time uncertainty (Correct)
+C) Employee holidays
+D) Currency printing
+
+৪. সাপ্লাই চেইন ম্যানেজমেন্টের মূল লক্ষ্য কী?
+ক) খরচ বাড়ানো
+খ) গ্রাহক সন্তুষ্টি ও দক্ষতা বৃদ্ধি
+গ) মজুদ নষ্ট করা
+ঘ) ডেলিভারি বিলম্ব করা
+উত্তর: খ
+
+5. ABC analysis classifies inventory items mainly by:
+A. Box color
+B. Weight only
+C. Annual consumption value
+D. Warehouse floor
+
+Answer Key:
+5. C
+  `;
+
+  const res = parseMcqQuestionsFromText(samplePdfText, { defaultMarks: 5 });
+  assert.equal(res.questions.length, 5);
+  assert.equal(res.detectedAnswerCount, 5);
+  assert.equal(res.incompleteOptionCount, 0);
+
+  assert.equal(res.questions[0].question, "What does FIFO stand for in warehouse operations?");
+  assert.equal(res.questions[0].marks, 3);
+  assert.equal(res.questions[0].options[0], "First In First Out");
+  assert.equal(res.questions[0].correctOptionIndex, 0);
+  assert.equal(res.questions[0].explanation, "FIFO ensures older stock moves first.");
+
+  assert.equal(res.questions[1].options[1], "UCP 600");
+  assert.equal(res.questions[1].correctOptionIndex, 1);
+
+  assert.equal(res.questions[2].options[1], "Demand and lead time uncertainty");
+  assert.equal(res.questions[2].correctOptionIndex, 1);
+
+  assert.equal(res.questions[3].question, "সাপ্লাই চেইন ম্যানেজমেন্টের মূল লক্ষ্য কী?");
+  assert.equal(res.questions[3].options[1], "গ্রাহক সন্তুষ্টি ও দক্ষতা বৃদ্ধি");
+  assert.equal(res.questions[3].correctOptionIndex, 1);
+  assert.equal(res.questions[3].marks, 5);
+
+  assert.equal(res.questions[4].correctOptionIndex, 2);
+
+  // Also ensure text-based Answer matching works (e.g. "Answer: Exact Option Text")
+  const textAnsRes = parseMcqQuestionsFromText(`
+1. Just-In-Time (JIT) inventory aims to reduce:
+A. Product quality
+B. Waste and excess inventory
+C. Customer orders
+D. Supplier reliability
+Answer: Waste and excess inventory
+  `);
+  assert.equal(textAnsRes.questions.length, 1);
+  assert.equal(textAnsRes.questions[0].correctOptionIndex, 1);
+
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  assert.ok(appJs.includes('id="examPdfImportInput"') && appJs.includes("extractOrderedTextFromPdfBytes"));
+  assert.ok(appJs.includes("applyImportedMcqQuestionsToBuilder") && appJs.includes("parseMcqQuestionsFromText"));
+  assert.ok(appJs.includes('id="aebPasteQuestionsInput"') && appJs.includes('id="aebQuestionCountBadge"'));
+});
+
 
 

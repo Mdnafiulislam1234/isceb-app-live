@@ -810,3 +810,400 @@ export function buildFirestoreExamAttemptPayload({
   return payload;
 }
 
+const BANGLA_DIGIT_MAP = {
+  "০": "0", "১": "1", "২": "2", "৩": "3", "৪": "4",
+  "৫": "5", "৬": "6", "৭": "7", "৮": "8", "৯": "9"
+};
+
+function normalizeQuestionDigits(str = "") {
+  return String(str).replace(/[০-৯]/g, (ch) => BANGLA_DIGIT_MAP[ch] || ch);
+}
+
+function mapMcqOptionTokenToIndex(token = "") {
+  const ch = String(token || "").trim().toLowerCase();
+  if (ch === "a" || ch === "ক") return 0;
+  if (ch === "b" || ch === "খ") return 1;
+  if (ch === "c" || ch === "গ") return 2;
+  if (ch === "d" || ch === "ঘ") return 3;
+  return -1;
+}
+
+function stripCorrectMarkerFromOptionText(raw = "") {
+  let text = String(raw || "").trim();
+  let isMarkedCorrect = false;
+
+  // Leading checkmark/star inside option text: "* Some text" or "✓ Some text"
+  if (/^[\*✓✔✅☑]+\s*/.test(text)) {
+    isMarkedCorrect = true;
+    text = text.replace(/^[\*✓✔✅☑]+\s*/, "").trim();
+  }
+  // Trailing marker like "(Correct)", "[Ans]", "(Right)", "✓", "*"
+  const trailingPatterns = [
+    /\s*[\(\[]\s*(?:correct(?:\s*answer)?|right(?:\s*answer)?|ans(?:wer)?|সঠিক(?:\s*উত্তর)?)\s*[\)\]]\s*$/i,
+    /\s*[\*✓✔✅☑]+\s*$/
+  ];
+  for (const re of trailingPatterns) {
+    if (re.test(text)) {
+      isMarkedCorrect = true;
+      text = text.replace(re, "").trim();
+    }
+  }
+  return { text, isMarkedCorrect };
+}
+
+function extractInlineAnswerTagFromText(raw = "") {
+  const re = /\s*(?:[\(\[]\s*)?(?:correct\s*answer|right\s*answer|answer|ans|সঠিক\s*উত্তর|উত্তর)\s*[:.\-–]\s*[\(\[]?(?:option\s*)?([A-Da-dকখগঘ])[\)\].]?(?:\s*[\)\]])?\s*$/i;
+  const m = String(raw || "").match(re);
+  if (!m) return { cleaned: String(raw || ""), answerIdx: -1 };
+  return {
+    cleaned: String(raw || "").slice(0, m.index).trim(),
+    answerIdx: mapMcqOptionTokenToIndex(m[1])
+  };
+}
+
+function splitInlineMcqOptions(line = "") {
+  const raw = String(line || "");
+  // Match markers like A. / A) / (A) / [A] / A: / ক) / (ক) preceded by start-of-line or whitespace
+  const markerRe = /(^|\s)(\*?\s*[\(\[]?([A-Da-dকখগঘ])[\)\].:]\s*\*?)(?=\s|$)/g;
+  const candidates = [];
+  let match;
+  while ((match = markerRe.exec(raw)) !== null) {
+    const leadingWs = match[1] || "";
+    const markerFull = match[2] || "";
+    const letter = match[3] || "";
+    const optIdx = mapMcqOptionTokenToIndex(letter);
+    if (optIdx < 0) continue;
+    const markerStart = match.index + leadingWs.length;
+    const textStart = match.index + match[0].length;
+    const hasParens = /[\(\[]/.test(markerFull);
+    const hasWideGap = leadingWs.length >= 2 || /\t/.test(leadingWs);
+    const hasStar = markerFull.includes("*");
+    candidates.push({
+      optIdx,
+      markerStart,
+      textStart,
+      hasParens,
+      hasWideGap,
+      hasStar
+    });
+  }
+
+  if (!candidates.length) {
+    return { prefixText: raw.trim(), optionSegments: [] };
+  }
+
+  const kept = [];
+  for (const cand of candidates) {
+    if (kept.length === 0) {
+      // If marker is right at start of line (or immediately after question colon), accept it;
+      // otherwise accept only if followed by next ascending option (e.g. "Question? A) ... B) ...")
+      if (cand.markerStart === 0) {
+        kept.push(cand);
+      } else {
+        const hasNextAscending = candidates.some(
+          (other) => other.markerStart > cand.markerStart && other.optIdx === cand.optIdx + 1
+        );
+        if (hasNextAscending) {
+          kept.push(cand);
+        }
+      }
+    } else {
+      const prev = kept[kept.length - 1];
+      if (cand.optIdx > prev.optIdx || cand.hasWideGap || cand.hasParens) {
+        kept.push(cand);
+      }
+    }
+  }
+
+  if (!kept.length) {
+    return { prefixText: raw.trim(), optionSegments: [] };
+  }
+
+  const prefixText = raw.slice(0, kept[0].markerStart).trim();
+  const optionSegments = kept.map((seg, idx) => {
+    const nextStart = idx + 1 < kept.length ? kept[idx + 1].markerStart : raw.length;
+    return {
+      optIdx: seg.optIdx,
+      text: raw.slice(seg.textStart, nextStart).trim(),
+      hasMarkerStar: seg.hasStar
+    };
+  });
+
+  return { prefixText, optionSegments };
+}
+
+function parseAnswerKeyBlock(lines = []) {
+  const map = new Map();
+  const joined = lines.join(" ");
+  const pairRe = /(?:Q(?:uestion)?\.?\s*#?\s*|প্রশ্ন\s*)?([0-9০-৯]{1,4})\s*[\)\].:\-–]?\s*[\(\[]?([A-Da-dকখগঘ])[\)\].]?/g;
+  let m;
+  while ((m = pairRe.exec(joined)) !== null) {
+    const qNum = Number(normalizeQuestionDigits(m[1]));
+    const optIdx = mapMcqOptionTokenToIndex(m[2]);
+    if (Number.isFinite(qNum) && qNum >= 1 && qNum <= 500 && optIdx >= 0) {
+      map.set(qNum, optIdx);
+    }
+  }
+  return map;
+}
+
+export function parseMcqQuestionsFromText(rawText, options = {}) {
+  const defaultMarks = Math.max(1, Math.min(50, Math.round(Number(options?.defaultMarks || 5))));
+  const normalizedInput = String(rawText || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00A0/g, " ");
+
+  const allLines = normalizedInput.split("\n");
+
+  // Detect optional Answer Key block near bottom
+  let answerKeyStartIdx = -1;
+  for (let i = 0; i < allLines.length; i++) {
+    const trimmed = allLines[i].trim();
+    if (/^(?:answer\s*key|answers\s*key|correct\s*answers?|key\s*to\s*answers?|উত্তরমালা|সঠিক\s*উত্তরসমূহ)\s*[:\-–.]?\s*(.*)$/i.test(trimmed)) {
+      answerKeyStartIdx = i;
+      break;
+    }
+  }
+
+  const bodyLines = answerKeyStartIdx >= 0 ? allLines.slice(0, answerKeyStartIdx) : allLines;
+  const answerKeyMap = answerKeyStartIdx >= 0
+    ? parseAnswerKeyBlock(allLines.slice(answerKeyStartIdx))
+    : new Map();
+
+  const parsedRawQuestions = [];
+  let currentQ = null;
+  let pendingStemLines = [];
+  let prevLineWasBlank = false;
+
+  const startNewQuestion = (qNum, firstPromptLine) => {
+    if (currentQ) {
+      parsedRawQuestions.push(currentQ);
+    }
+    const stem = [];
+    if (firstPromptLine) stem.push(firstPromptLine);
+    currentQ = {
+      number: qNum,
+      questionLines: stem,
+      options: ["", "", "", ""],
+      activeOptIdx: -1,
+      explicitAnswerIdx: -1,
+      explicitAnswerText: "",
+      explanationLines: [],
+      inExplanation: false,
+      marks: defaultMarks,
+      sawAnswerLine: false
+    };
+    pendingStemLines = [];
+  };
+
+  const extractMarksAnnotation = (prompt) => {
+    let text = String(prompt || "").trim();
+    let marks = defaultMarks;
+    const m = text.match(/[\(\[]\s*([0-9০-৯]{1,2})\s*(?:marks?|pts?|points?|নম্বর)\s*[\)\]]\s*$/i);
+    if (m) {
+      const val = Number(normalizeQuestionDigits(m[1]));
+      if (Number.isFinite(val) && val >= 1 && val <= 50) {
+        marks = val;
+        text = text.slice(0, m.index).trim();
+      }
+    }
+    return { text, marks };
+  };
+
+  const applyOptionSegment = (seg) => {
+    if (!currentQ) {
+      const nextNum = parsedRawQuestions.length + 1;
+      startNewQuestion(nextNum, pendingStemLines.join(" ").trim());
+    }
+    const { cleaned, answerIdx: inlineTagAns } = extractInlineAnswerTagFromText(seg.text);
+    const { text: cleanOpt, isMarkedCorrect } = stripCorrectMarkerFromOptionText(cleaned);
+    currentQ.options[seg.optIdx] = cleanOpt;
+    currentQ.activeOptIdx = seg.optIdx;
+    currentQ.inExplanation = false;
+    if (seg.hasMarkerStar || isMarkedCorrect) {
+      currentQ.explicitAnswerIdx = seg.optIdx;
+    } else if (inlineTagAns >= 0) {
+      currentQ.explicitAnswerIdx = inlineTagAns;
+    }
+  };
+
+  for (let i = 0; i < bodyLines.length; i++) {
+    const rawLine = bodyLines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      prevLineWasBlank = true;
+      continue;
+    }
+    // Skip PDF page headers/footers & divider rules
+    if (/^(?:page\s+\d+(?:\s*(?:of|\/)\s*\d+)?|[-_=]{3,})$/i.test(trimmed)) {
+      continue;
+    }
+
+    // Check explicit Explanation / Note line
+    const expMatch = trimmed.match(/^(?:explanation|rationale|note|solution|ব্যাখ্যা)\s*[:\-–.]\s*(.+)$/i);
+    if (expMatch && currentQ) {
+      currentQ.explanationLines.push(expMatch[1].trim());
+      currentQ.inExplanation = true;
+      prevLineWasBlank = false;
+      continue;
+    }
+
+    // Check explicit Answer line
+    const ansMatch = trimmed.match(/^(?:correct\s*answer|right\s*answer|answer|ans|সঠিক\s*উত্তর|উত্তর)\s*[:.\-–]?\s*(.+)$/i);
+    if (ansMatch && currentQ && (currentQ.options.some(Boolean) || currentQ.activeOptIdx >= 0)) {
+      const ansBody = ansMatch[1].trim();
+      const letterMatch = ansBody.match(/^(?:option\s*)?[\(\[]?([A-Da-dকখগঘ])(?:[\)\].:\s\-]|$)/i);
+      if (letterMatch) {
+        const idx = mapMcqOptionTokenToIndex(letterMatch[1]);
+        if (idx >= 0) currentQ.explicitAnswerIdx = idx;
+      } else {
+        currentQ.explicitAnswerText = ansBody;
+      }
+      currentQ.sawAnswerLine = true;
+      currentQ.inExplanation = false;
+      prevLineWasBlank = false;
+      continue;
+    }
+
+    // Check explicit numbered Question header
+    const qHeaderMatch = trimmed.match(/^(?:(Q(?:uestion)?\.?\s*#?\s*|প্রশ্ন\s*))?([0-9০-৯]{1,4})\s*[\)\].:\-]\s*(.*)$/i);
+    if (qHeaderMatch) {
+      const hasExplicitWord = Boolean(qHeaderMatch[1]);
+      const qNum = Number(normalizeQuestionDigits(qHeaderMatch[2]));
+      const restOfLine = (qHeaderMatch[3] || "").trim();
+      const expectedNextNum = parsedRawQuestions.length + (currentQ ? 2 : 1);
+      const currentHasOptions = Boolean(currentQ && currentQ.options.filter(Boolean).length >= 2);
+      const canStartQuestion =
+        Number.isFinite(qNum) &&
+        qNum >= 1 &&
+        qNum <= 500 &&
+        (!currentQ || currentHasOptions || hasExplicitWord || qNum === expectedNextNum || (currentQ.sawAnswerLine));
+
+      if (canStartQuestion) {
+        const { prefixText, optionSegments } = splitInlineMcqOptions(restOfLine);
+        const { text: cleanPrompt, marks } = extractMarksAnnotation(prefixText);
+        startNewQuestion(qNum, cleanPrompt);
+        currentQ.marks = marks;
+        if (optionSegments.length) {
+          optionSegments.forEach(applyOptionSegment);
+        }
+        prevLineWasBlank = false;
+        continue;
+      }
+    }
+
+    // Check for MCQ option(s) on this line (single or multi-column inline)
+    const { prefixText, optionSegments } = splitInlineMcqOptions(trimmed);
+    if (optionSegments.length > 0) {
+      if (prefixText) {
+        if (!currentQ || currentQ.sawAnswerLine || (currentQ.options[3] && prevLineWasBlank)) {
+          const nextNum = parsedRawQuestions.length + (currentQ ? 2 : 1);
+          const { text: cleanPrompt, marks } = extractMarksAnnotation(prefixText);
+          startNewQuestion(nextNum, cleanPrompt);
+          currentQ.marks = marks;
+        } else if (currentQ.activeOptIdx < 0) {
+          currentQ.questionLines.push(prefixText);
+        }
+      } else if (!currentQ) {
+        const nextNum = parsedRawQuestions.length + 1;
+        const combinedStem = pendingStemLines.join(" ").trim();
+        const { text: cleanPrompt, marks } = extractMarksAnnotation(combinedStem);
+        startNewQuestion(nextNum, cleanPrompt);
+        currentQ.marks = marks;
+      }
+      optionSegments.forEach(applyOptionSegment);
+      prevLineWasBlank = false;
+      continue;
+    }
+
+    // Continuation or unnumbered new question stem
+    if (currentQ && currentQ.inExplanation) {
+      currentQ.explanationLines.push(trimmed);
+    } else if (currentQ && currentQ.sawAnswerLine) {
+      // Previous question already had Answer line -> start accumulating next unnumbered question
+      pendingStemLines.push(trimmed);
+    } else if (currentQ && currentQ.activeOptIdx >= 0) {
+      const filledCount = currentQ.options.filter(Boolean).length;
+      if (filledCount >= 4 && prevLineWasBlank) {
+        pendingStemLines.push(trimmed);
+      } else {
+        const { cleaned, answerIdx: inlineTagAns } = extractInlineAnswerTagFromText(trimmed);
+        const { text: cleanCont, isMarkedCorrect } = stripCorrectMarkerFromOptionText(cleaned);
+        currentQ.options[currentQ.activeOptIdx] = `${currentQ.options[currentQ.activeOptIdx]} ${cleanCont}`.trim();
+        if (isMarkedCorrect) {
+          currentQ.explicitAnswerIdx = currentQ.activeOptIdx;
+        } else if (inlineTagAns >= 0) {
+          currentQ.explicitAnswerIdx = inlineTagAns;
+        }
+      }
+    } else if (currentQ && pendingStemLines.length === 0) {
+      const { text: cleanCont, marks } = extractMarksAnnotation(trimmed);
+      if (marks !== defaultMarks) currentQ.marks = marks;
+      currentQ.questionLines.push(cleanCont);
+    } else {
+      pendingStemLines.push(trimmed);
+    }
+    prevLineWasBlank = false;
+  }
+
+  if (currentQ) {
+    parsedRawQuestions.push(currentQ);
+  }
+
+  let detectedAnswerCount = 0;
+  let incompleteOptionCount = 0;
+  const nowBase = Date.now();
+
+  const questions = parsedRawQuestions
+    .map((q, idx) => {
+      const cleanPrompt = q.questionLines
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const opts = q.options.map((opt) => String(opt || "").replace(/\s+/g, " ").trim());
+      const nonEmptyOpts = opts.filter(Boolean).length;
+      if (!cleanPrompt || nonEmptyOpts < 2) return null;
+      if (nonEmptyOpts < 4) incompleteOptionCount += 1;
+
+      let resolvedAnswer = q.explicitAnswerIdx;
+      if (resolvedAnswer < 0 && q.explicitAnswerText) {
+        const needle = q.explicitAnswerText.toLowerCase();
+        const exactIdx = opts.findIndex((o) => o && o.toLowerCase() === needle);
+        if (exactIdx >= 0) {
+          resolvedAnswer = exactIdx;
+        } else {
+          const partialIdx = opts.findIndex((o) => o && (o.toLowerCase().includes(needle) || needle.includes(o.toLowerCase())));
+          if (partialIdx >= 0) resolvedAnswer = partialIdx;
+        }
+      }
+      if (resolvedAnswer < 0 && answerKeyMap.has(q.number)) {
+        resolvedAnswer = answerKeyMap.get(q.number);
+      }
+      if (resolvedAnswer < 0 && answerKeyMap.has(idx + 1)) {
+        resolvedAnswer = answerKeyMap.get(idx + 1);
+      }
+
+      const answerDetected = resolvedAnswer >= 0 && resolvedAnswer <= 3;
+      if (answerDetected) detectedAnswerCount += 1;
+
+      return {
+        id: `q-${nowBase}-${idx + 1}`,
+        question: cleanPrompt,
+        options: opts,
+        correctOptionIndex: answerDetected ? resolvedAnswer : 0,
+        marks: q.marks || defaultMarks,
+        explanation: q.explanationLines.join(" ").replace(/\s+/g, " ").trim(),
+        answerDetected
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    questions,
+    detectedAnswerCount,
+    incompleteOptionCount
+  };
+}
+
+

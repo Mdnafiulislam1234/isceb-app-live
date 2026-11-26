@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,6 +61,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.model.CourseModule
 import com.example.model.ExamQuestion
 import com.example.model.ModuleExam
+import com.example.util.BulkMcqQuestionParser
 import com.example.ui.theme.BgLight
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.GoldDark
@@ -140,6 +144,58 @@ fun ExamQuestionBuilderDialog(
     }
 
     var questionRenderTick by remember { mutableStateOf(0) }
+    var showBulkImport by remember { mutableStateOf(false) }
+    var bulkImportText by remember { mutableStateOf("") }
+    var bulkImportStatus by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    val applyBulkQuestions: (String) -> Unit = { rawText ->
+        val parsed = BulkMcqQuestionParser.parse(rawText, defaultMarks = 5)
+        if (parsed.questions.isEmpty()) {
+            bulkImportStatus = "No numbered MCQ questions (1. Question / A. B. C. D.) found."
+        } else {
+            val isBlankSingle = questionStates.size == 1 &&
+                questionStates[0].prompt.isBlank() &&
+                questionStates[0].optionA.isBlank()
+            if (isBlankSingle) questionStates.clear()
+            parsed.questions.forEachIndexed { idx, q ->
+                questionStates.add(
+                    EditableQuestionState(
+                        id = "q_${System.currentTimeMillis()}_${questionStates.size + idx}",
+                        prompt = q.prompt,
+                        optionA = q.options.getOrElse(0) { "" },
+                        optionB = q.options.getOrElse(1) { "" },
+                        optionC = q.options.getOrElse(2) { "" },
+                        optionD = q.options.getOrElse(3) { "" },
+                        correctIndex = q.correctIndex,
+                        marksText = q.marks.toString(),
+                        explanation = q.explanation
+                    )
+                )
+            }
+            questionRenderTick++
+            bulkImportStatus = "Auto-filled ${parsed.questions.size} questions (${parsed.detectedAnswerCount}/${parsed.questions.size} answers detected)."
+        }
+    }
+
+    val textFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val content = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            }.getOrDefault("")
+            if (content.isNotBlank()) {
+                bulkImportText = content
+                showBulkImport = true
+                applyBulkQuestions(content)
+            } else {
+                bulkImportStatus = "Could not read text from selected file. Paste question text below."
+                showBulkImport = true
+            }
+        }
+    }
+
     val computedMarks = remember(questionStates.size, questionRenderTick) {
         questionStates.sumOf { (it.marksText.toIntOrNull() ?: 5).coerceAtLeast(1) }
     }
@@ -324,6 +380,77 @@ fun ExamQuestionBuilderDialog(
                                     singleLine = true,
                                     modifier = Modifier.weight(1f)
                                 )
+                            }
+                        }
+                    }
+
+                    // Smart Bulk Question Importer (Paste / Text File)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = NavyPrimary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Auto-Import Questions (Paste / .txt)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = GoldMetallic
+                                    )
+                                    Text(
+                                        text = "Paste numbered MCQs & options A–D to auto-fill all rows below.",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.8f)
+                                    )
+                                }
+                                TextButton(onClick = { showBulkImport = !showBulkImport }) {
+                                    Text(
+                                        text = if (showBulkImport) "Hide" else "Open",
+                                        color = GoldMetallic,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            if (showBulkImport) {
+                                OutlinedTextField(
+                                    value = bulkImportText,
+                                    onValueChange = { bulkImportText = it },
+                                    label = { Text("Paste formatted MCQs (1. Question / A. B. C. D. / Answer: A)", color = Color.White.copy(alpha = 0.85f)) },
+                                    minLines = 4,
+                                    maxLines = 8,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.White, RoundedCornerShape(8.dp))
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = { applyBulkQuestions(bulkImportText) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("btn_bulk_import_apply")
+                                    ) {
+                                        Text("Auto-Fill", color = NavyPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { textFilePicker.launch(arrayOf("text/plain", "text/*")) },
+                                        modifier = Modifier.heightIn(min = 48.dp)
+                                    ) {
+                                        Text("Pick .txt File", color = GoldMetallic, fontSize = 12.sp)
+                                    }
+                                }
+                                bulkImportStatus?.let { msg ->
+                                    Text(text = msg, color = Color(0xFFBBF7D0), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }

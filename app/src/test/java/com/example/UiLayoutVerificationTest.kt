@@ -288,7 +288,7 @@ class UiLayoutVerificationTest {
                         progress = UserProgress(),
                         eligibility = eligibility,
                         issuedCertificates = emptyList(),
-                        isAdmin = false,
+                        isAdmin = true,
                         adminSettings = AdminCompletionSettings(
                             certificatesEnabled = true,
                             demoCertificateEnabled = true

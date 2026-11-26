@@ -1440,8 +1440,7 @@ class SupplyChainRepository(
         val active = _currentUser.value
         val dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
         val certId = CertificatePdfGenerator.DEMO_CERTIFICATE_ID
-        val studentLabel = active.fullName.takeIf { it.isNotBlank() && active.id != guestProfile.id }
-            ?: "Demo Executive Candidate"
+        val studentLabel = "ISCEB Sample Candidate"
         val rightSignerCombined = "${CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_NAME}, ${CertificatePdfGenerator.DEFAULT_RIGHT_SIGNER_TITLE}"
         val record = CertificateRecord(
             certificateId = certId,
@@ -2155,14 +2154,15 @@ class SupplyChainRepository(
             submitExamAttempt(exam.id, mockAnswers, isAutoSubmittedOnTimeout = false)
         }
 
-        // Submit final project
-        val finalProject = _moduleAssignments.value.find { it.isFinalProject }
-        if (finalProject != null) {
-            submitAssignment(
-                finalProject.id,
-                "ISCEB Capstone Project: End-to-End Multimodal SCM Optimization & Port Congestion Mitigation Strategy for Chattogram Port.",
-                "ISCEB_Capstone_Report_Final.pdf"
-            )
+        // Submit all assignments including final project
+        _moduleAssignments.value.forEach { asg ->
+            val subText = if (asg.isFinalProject) {
+                "ISCEB Capstone Project: End-to-End Multimodal SCM Optimization & Port Congestion Mitigation Strategy for Chattogram Port."
+            } else {
+                "Completed coursework submission for ${asg.title}."
+            }
+            val subFile = if (asg.isFinalProject) "ISCEB_Capstone_Report_Final.pdf" else "${asg.id}_submission.pdf"
+            submitAssignment(asg.id, subText, subFile)
         }
 
         _progress.value = _progress.value.copy(completedClassIds = allIds)

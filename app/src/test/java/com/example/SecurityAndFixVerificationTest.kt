@@ -24,6 +24,7 @@ import com.example.auth.AdminAuthManager
 import com.example.auth.AdminAuthResult
 import com.example.data.SupplyChainRepository
 import com.example.model.AdminCompletionSettings
+import com.example.model.AppUpdateConfig
 import com.example.model.CertificateEligibility
 import com.example.model.CertificationEligibilityStatus
 import com.example.model.CourseClass
@@ -36,6 +37,7 @@ import com.example.ui.components.PdfViewerCard
 import com.example.ui.screens.ClassDetailScreen
 import com.example.ui.screens.ModuleDetailScreen
 import com.example.ui.screens.MyLearningScreen
+import com.example.ui.screens.ProfileScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.util.MediaFileManager
 import org.junit.Assert.assertEquals
@@ -324,5 +326,77 @@ class SecurityAndFixVerificationTest {
         )
         val studentVisible = listOf(unpublished).filter { it.isPublished }
         assertTrue(studentVisible.isEmpty())
+    }
+
+    @Test
+    fun `student self deletion wipes account and progress cleanly while protecting admin accounts`() {
+        val student = repository.signInOrRegisterStudentAccount(
+            fullName = "Play Reviewer",
+            email = "reviewer@isceb.org",
+            organization = "ISCEB",
+            designation = "Learner",
+            mobileNumber = "01700000000"
+        )
+        repository.toggleComplete("class-1")
+        assertTrue(repository.registeredAccounts.value.any { it.id == student.id })
+        assertTrue(repository.studentProgressMap.value.containsKey("class-1"))
+
+        assertFalse("Admin accounts must never be deleted via student self-delete", repository.deleteStudentAccountAndData("admin-1"))
+        assertFalse("Guest profile cannot be deleted", repository.deleteStudentAccountAndData("guest-unauthenticated"))
+
+        assertTrue(repository.deleteStudentAccountAndData(student.id))
+        assertFalse(repository.registeredAccounts.value.any { it.id == student.id })
+        assertEquals("guest-unauthenticated", repository.currentUser.value.id)
+        assertTrue(repository.studentProgressMap.value.isEmpty())
+    }
+
+    @Test
+    fun `play store policy urls and ProfileScreen privacy & account deletion controls render cleanly`() {
+        assertTrue(AppUpdateConfig.DEFAULT_PRIVACY_POLICY_URL.endsWith("/privacy.html"))
+        assertTrue(AppUpdateConfig.DEFAULT_ACCOUNT_DELETION_URL.endsWith("/delete-account.html"))
+        assertEquals(
+            "https://play.google.com/store/apps/details?id=com.aistudio.supplychain.scm",
+            AppUpdateConfig.DEFAULT_PLAY_STORE_URL
+        )
+
+        val student = repository.signInOrRegisterStudentAccount(
+            fullName = "Policy Tester",
+            email = "policy@isceb.org"
+        )
+        var deletedTriggered = false
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                ProfileScreen(
+                    currentUser = student,
+                    availableUsers = repository.availableUsers,
+                    isAdmin = false,
+                    onSwitchUser = {},
+                    onAdminLoginClick = {},
+                    onAdminLogoutClick = {},
+                    onOpenVerification = {},
+                    onOpenSettings = {},
+                    onOpenFirebaseGuide = {},
+                    onResetDemoData = {},
+                    onDeleteStudentAccount = { deletedTriggered = true },
+                    isPlayStoreBuild = true
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        val listMatcher = hasScrollAction()
+        composeTestRule.onNode(listMatcher).performScrollToNode(hasTestTag("btn_profile_open_play_store"))
+        composeTestRule.onNodeWithTag("btn_profile_open_play_store").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_profile_download_apk").assertDoesNotExist()
+
+        composeTestRule.onNode(listMatcher).performScrollToNode(hasTestTag("card_profile_privacy_compliance"))
+        composeTestRule.onNodeWithTag("btn_profile_privacy_policy").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_profile_delete_account").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("btn_confirm_delete_account").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(deletedTriggered)
     }
 }

@@ -348,6 +348,57 @@ class CloudSyncRepository(
         }
     }
 
+    suspend fun deleteOwnAccountData(uid: String): Result<Unit> {
+        val callerUid = requireUserId()
+        val targetUid = sanitizeFirestoreId(uid.ifBlank { callerUid })
+        if (callerUid != targetUid) {
+            return Result.failure(SecurityException("Only the signed-in account owner can delete their cloud account data."))
+        }
+        return try {
+            val userDocRef = db.collection(COLLECTION_USERS).document(targetUid)
+
+            // 1. Delete per-user progress docs
+            val progressDocs = userDocRef.collection("progress").get().await()
+            for (doc in progressDocs.documents) {
+                doc.reference.delete().await()
+            }
+
+            // 2. Delete per-user certificate subcollection docs
+            val userCertDocs = userDocRef.collection("certificates").get().await()
+            for (doc in userCertDocs.documents) {
+                doc.reference.delete().await()
+            }
+
+            // 3. Delete student's own assignment submissions
+            val submissionDocs = db.collection(COLLECTION_SUBMISSIONS)
+                .whereEqualTo("studentId", targetUid)
+                .get()
+                .await()
+            for (doc in submissionDocs.documents) {
+                doc.reference.delete().await()
+            }
+
+            // 4. Delete user account profile document
+            userDocRef.delete().await()
+
+            // 5. Delete Firebase Auth account if session is recent enough, then sign out cleanly
+            try {
+                auth.currentUser?.delete()?.await()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                // If recent-login is required, Firestore personal records are already wiped; sign out cleanly.
+                auth.signOut()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "users/$targetUid")
+            Result.failure(e)
+        }
+    }
+
     fun observeAssignments(): Flow<List<ModuleAssignment>> {
         requireUserId()
         return db.collection(COLLECTION_ASSIGNMENTS)

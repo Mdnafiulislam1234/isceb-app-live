@@ -22,6 +22,7 @@ import com.example.model.AccountStatus
 import com.example.model.AdminCompletionSettings
 import com.example.model.ApkDownloadState
 import com.example.model.AppNotification
+import com.example.model.AppUpdateConfig
 import com.example.model.AppUpdateInfo
 import com.example.model.AssignmentSubmission
 import com.example.model.AuditLogEntry
@@ -694,6 +695,49 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
             _navigationStack.clear()
         }
         showNotification("Signed out safely.")
+    }
+
+    fun deleteStudentAccountAndData(onComplete: () -> Unit = {}) {
+        val current = repository.currentUser.value
+        if (current.id == "guest-unauthenticated" || current.role == UserRole.ADMIN) {
+            showNotification(
+                "Sign in with a Student or Faculty account first, or visit our Web Account Deletion page.",
+                isError = true
+            )
+            return
+        }
+        stopAudioPlayback()
+        stopVideoPlayback()
+        closeExam()
+        staffListenerJob?.cancel()
+        staffListenerJob = null
+
+        val targetAccountId = current.id
+        val cloudUid = current.authUid.ifBlank { cloudAuthUser.value?.uid.orEmpty() }
+
+        viewModelScope.launch {
+            var cloudNote = ""
+            if (cloudAuthUser.value != null && cloudUid.isNotBlank()) {
+                val cloudRes = cloudSyncRepository?.deleteOwnAccountData(cloudUid)
+                if (cloudRes?.isFailure == true) {
+                    cloudNote = " (Local data wiped; contact admin@isceb.com if cloud sync session expired.)"
+                }
+            }
+            val deleted = repository.deleteStudentAccountAndData(targetAccountId)
+            refreshAdminAuthState()
+            if (_currentScreen.value is Screen.AdminPanel || _currentScreen.value is Screen.TeacherPanel) {
+                _currentScreen.value = Screen.Main
+                _navigationStack.clear()
+            }
+            withContext(Dispatchers.Main) {
+                onComplete()
+            }
+            if (deleted) {
+                showNotification("Your ISCEB account and personal data have been deleted.$cloudNote")
+            } else {
+                showNotification("Unable to delete this account.", isError = true)
+            }
+        }
     }
 
     fun activateTeacherAccount(userId: String) {
@@ -2561,6 +2605,10 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun downloadLatestApk() {
+        if (!BuildConfig.DEBUG) {
+            showNotification("Updates for the Play Store release are delivered through Google Play.")
+            return
+        }
         val info = appUpdateInfo.value
         val targetUrl = info.apkDownloadUrl.trim()
         if (targetUrl.isBlank()) {
@@ -2620,6 +2668,9 @@ class SupplyChainViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun installDownloadedApk(): ApkInstallLaunchResult {
+        if (!BuildConfig.DEBUG) {
+            return ApkInstallLaunchResult.Failure("Play Store release builds update through Google Play.")
+        }
         val state = _apkDownloadState.value
         if (state !is ApkDownloadState.ReadyToInstall) {
             return ApkInstallLaunchResult.Failure("Download the APK first before installing.")

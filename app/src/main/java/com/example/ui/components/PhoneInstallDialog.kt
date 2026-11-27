@@ -66,6 +66,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.R
 import com.example.model.ApkDownloadState
 import com.example.model.AppUpdateConfig
@@ -98,7 +99,8 @@ fun PhoneInstallDialog(
     onDownloadLatestApk: () -> Unit = {},
     onCancelApkDownload: () -> Unit = {},
     onInstallDownloadedApk: () -> Unit = {},
-    onConnectGoogleSync: () -> Unit = {}
+    onConnectGoogleSync: () -> Unit = {},
+    isPlayStoreBuild: Boolean = !BuildConfig.DEBUG
 ) {
     val context = LocalContext.current
     var copiedLink by remember { mutableStateOf(false) }
@@ -223,7 +225,7 @@ fun PhoneInstallDialog(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "App Binary Updates (APK)",
+                                    text = if (isPlayStoreBuild) "App Updates (Google Play)" else "App Binary Updates (APK)",
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
                                     fontSize = 13.5.sp
@@ -542,7 +544,33 @@ fun PhoneInstallDialog(
                             }
                         }
 
-                        if (apkDownloadState !is ApkDownloadState.Downloading &&
+                        if (isPlayStoreBuild) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = onCheckUpdates,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f).testTag("btn_dialog_check_updates")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Check Updates", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = { onOpenApkDownloadUrl(AppUpdateConfig.DEFAULT_PLAY_STORE_URL) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = GoldMetallic, contentColor = NavyDark),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f).testTag("btn_open_play_store_listing")
+                                ) {
+                                    Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Google Play", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else if (apkDownloadState !is ApkDownloadState.Downloading &&
                             apkDownloadState !is ApkDownloadState.Verifying &&
                             apkDownloadState !is ApkDownloadState.ReadyToInstall
                         ) {

@@ -761,6 +761,58 @@ class SupplyChainRepository(
         loadStudentProgress(guestProfile.id)
     }
 
+    fun deleteStudentAccountAndData(accountId: String = _currentUser.value.id): Boolean {
+        val targetId = accountId.trim()
+        if (targetId.isBlank() || targetId == guestProfile.id) return false
+        val targetUser = _registeredAccounts.value.find { it.id == targetId }
+            ?: if (_currentUser.value.id == targetId) _currentUser.value else null
+        if (targetUser == null || targetUser.role == UserRole.ADMIN) return false
+
+        // Remove persisted user account entry
+        val updatedAccounts = _registeredAccounts.value.filterNot { it.id == targetId }
+        _registeredAccounts.value = updatedAccounts
+        persistUserAccounts(updatedAccounts)
+
+        // Remove per-user learning progress from SharedPreferences
+        prefs.edit().remove("student_progress_$targetId").apply()
+
+        // Remove student's local exam attempts, submissions, and certificates
+        val remainingAttempts = _examAttempts.value.filterNot { it.studentId == targetId }
+        if (remainingAttempts.size != _examAttempts.value.size) {
+            _examAttempts.value = remainingAttempts
+            persistExamAttempts(remainingAttempts)
+        }
+
+        val remainingSubmissions = _assignmentSubmissions.value.filterNot { it.studentId == targetId }
+        if (remainingSubmissions.size != _assignmentSubmissions.value.size) {
+            _assignmentSubmissions.value = remainingSubmissions
+            persistAssignmentSubmissions(remainingSubmissions)
+        }
+
+        val remainingCerts = _issuedCertificates.value.filterNot { it.studentId == targetId }
+        if (remainingCerts.size != _issuedCertificates.value.size) {
+            _issuedCertificates.value = remainingCerts
+            persistCertificates(remainingCerts)
+        }
+
+        // Delete internal app-stored profile photo if owned by app sandbox
+        val photoPath = targetUser.photoUrl.trim()
+        if (photoPath.startsWith("/")) {
+            try {
+                val photoFile = File(photoPath)
+                if (photoFile.exists() && photoFile.canonicalPath.startsWith(context.filesDir.canonicalPath)) {
+                    photoFile.delete()
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        if (_currentUser.value.id == targetId) {
+            signOutAccount()
+        }
+        return true
+    }
+
     fun switchUser(userId: String): Boolean {
         if (availableUsers.any { it.id == userId && it.role == UserRole.ADMIN }) return false
         val user = _registeredAccounts.value.find {

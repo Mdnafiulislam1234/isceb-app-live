@@ -710,6 +710,15 @@ fun MainAppContent(viewModel: SupplyChainViewModel) {
                                     viewModel.signOutStudentAccount()
                                     triggerGoogleSignOut()
                                 },
+                                onDeleteStudentAccount = {
+                                    viewModel.deleteStudentAccountAndData {
+                                        signOutCloudSync(
+                                            credentialManager = credentialManager,
+                                            scope = scope,
+                                            onSignOutComplete = {}
+                                        )
+                                    }
+                                },
                                 onActivateTeacher = { userId -> viewModel.activateTeacherAccount(userId) },
                                 onOpenTeacherPanel = { viewModel.navigateTo(Screen.TeacherPanel) },
                                 onOpenAdminPanel = { viewModel.navigateTo(Screen.AdminPanel) },

@@ -952,5 +952,27 @@ test("Strict certificate eligibility locks generation & PDF until 48/48 classes,
   assert.ok(stylesCss.includes(".no-download-media-surface"));
 });
 
+test("Google Play compliance isolates REQUEST_INSTALL_PACKAGES to debug APK builds and preserves permanent web links", () => {
+  const mainManifest = fs.readFileSync("./app/src/main/AndroidManifest.xml", "utf8");
+  const debugManifest = fs.readFileSync("./app/src/debug/AndroidManifest.xml", "utf8");
+  assert.ok(!mainManifest.includes("REQUEST_INSTALL_PACKAGES"), "main AndroidManifest must NOT declare REQUEST_INSTALL_PACKAGES for Play Store AAB");
+  assert.ok(debugManifest.includes("REQUEST_INSTALL_PACKAGES"), "debug AndroidManifest must keep REQUEST_INSTALL_PACKAGES for GitHub APK sideload auto-updates");
 
+  assert.ok(fs.existsSync("./public/privacy.html"), "Missing public/privacy.html");
+  assert.ok(fs.existsSync("./public/delete-account.html"), "Missing public/delete-account.html");
+
+  const privacyHtml = fs.readFileSync("./public/privacy.html", "utf8");
+  const deleteHtml = fs.readFileSync("./public/delete-account.html", "utf8");
+  const apkHtml = fs.readFileSync("./public/apk.html", "utf8");
+  const desktopHtml = fs.readFileSync("./public/desktop/index.html", "utf8");
+  const appJs = fs.readFileSync("./public/desktop/app.js", "utf8");
+  const firestoreRules = fs.readFileSync("./firestore.rules", "utf8");
+
+  assert.ok(privacyHtml.includes("com.aistudio.supplychain.scm") && privacyHtml.includes("./delete-account.html"));
+  assert.ok(deleteHtml.includes("com.aistudio.supplychain.scm") && deleteHtml.includes("admin@isceb.com"));
+  assert.ok(apkHtml.includes("./downloads/ISCEB-latest.apk") && apkHtml.includes("./privacy.html") && apkHtml.includes("./delete-account.html"));
+  assert.ok(desktopHtml.includes("../privacy.html") && desktopHtml.includes("../delete-account.html"));
+  assert.ok(appJs.includes('data-action="delete-student-account"') && appJs.includes("deleteDoc"));
+  assert.ok(firestoreRules.includes("allow delete: if isSignedIn() && request.auth.uid == userId && !isAdmin();"));
+});
 

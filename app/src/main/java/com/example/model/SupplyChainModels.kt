@@ -463,6 +463,12 @@ object AppUpdateConfig {
         get() = "$HOSTING_BASE/downloads/ISCEB-latest.apk"
     val DEFAULT_DESKTOP_PORTAL_URL: String
         get() = "$HOSTING_BASE/desktop/"
+    val DEFAULT_PRIVACY_POLICY_URL: String
+        get() = "$HOSTING_BASE/privacy.html"
+    val DEFAULT_ACCOUNT_DELETION_URL: String
+        get() = "$HOSTING_BASE/delete-account.html"
+    val DEFAULT_PLAY_STORE_URL: String
+        get() = "https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}"
 }
 
 data class CurriculumPublishManifest(

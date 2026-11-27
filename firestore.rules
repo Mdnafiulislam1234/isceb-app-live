@@ -302,7 +302,7 @@ service cloud.firestore {
                          )
                        );
 
-      allow delete: if false;
+      allow delete: if isSignedIn() && request.auth.uid == userId && !isAdmin();
     }
 
     // Per-User Student Progress Subcollection (Owner Read/Write + Teacher/Admin Oversight)
@@ -373,7 +373,7 @@ service cloud.firestore {
                        incoming().studentId == existing().studentId &&
                        incoming().certificateId == existing().certificateId &&
                        incoming().createdAt == existing().createdAt;
-      allow delete: if false;
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(certificateId);
     }
 
     // Global Verifiable Certificate Registry
@@ -473,7 +473,9 @@ service cloud.firestore {
                          )
                        );
 
-      allow delete: if isAdmin() && isValidId(submissionId);
+      allow delete: if isSignedIn() && isValidId(submissionId) && (
+        isAdmin() || existing().studentId == request.auth.uid
+      );
     }
 
     // Exams (Signed-in Read; Admin or Teacher assigned to moduleId Create/Update)

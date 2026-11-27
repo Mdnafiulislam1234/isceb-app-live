@@ -5042,6 +5042,24 @@ function renderProfile() {
           <button type="button" class="btn btn-outline btn-sm" data-nav="learning">Diploma &amp; Certificate</button>
         </div>
       </div>
+
+      <div class="card">
+        <div class="flex-header-between" style="margin-bottom: 8px;">
+          <div>
+            <div style="font-weight: 800; color: var(--navy); font-size: 14px;">Privacy Policy &amp; Account Data</div>
+            <div style="font-size: 12px; color: var(--muted);">Review our data practices or permanently delete your student account &amp; data</div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <a href="../privacy.html" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm">Privacy Policy</a>
+          <a href="../delete-account.html" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm">Account Deletion Guide</a>
+          ${
+            !isGuestUser() && !isAdminUser()
+              ? `<button type="button" class="btn btn-danger btn-sm" data-action="delete-student-account">Delete My Account &amp; Data</button>`
+              : ""
+          }
+        </div>
+      </div>
     </div>
   `;
 }
@@ -5933,6 +5951,49 @@ function setupListeners() {
       syncAccountSwitcherOptions();
       render();
       showToast("Signed out to Guest Preview.");
+    } else if (action === "delete-student-account") {
+      if (isGuestUser() || isAdminUser()) return;
+      const targetUser = getActiveUser();
+      const confirmed = window.confirm(
+        `Permanently delete account "${targetUser.fullName}" (${targetUser.email || targetUser.id}) and all saved course progress, submissions, and personal certificates from this device and Cloud Sync?`
+      );
+      if (!confirmed) return;
+      const targetId = targetUser.id;
+      const cloudUid = cloudUser?.uid || targetUser.authUid || "";
+      (async () => {
+        if (cloudUser && cloudUid && firebaseModules?.firestoreMod && firebaseModules?.db) {
+          try {
+            const { collection, doc, getDocs, deleteDoc, query, where } = firebaseModules.firestoreMod;
+            const db = firebaseModules.db;
+            const progressSnap = await getDocs(collection(db, "users", cloudUid, "progress"));
+            for (const d of progressSnap.docs) await deleteDoc(d.ref);
+            const certSnap = await getDocs(collection(db, "users", cloudUid, "certificates"));
+            for (const d of certSnap.docs) await deleteDoc(d.ref);
+            const subSnap = await getDocs(query(collection(db, "submissions"), where("studentId", "==", cloudUid)));
+            for (const d of subSnap.docs) await deleteDoc(d.ref);
+            await deleteDoc(doc(db, "users", cloudUid));
+            if (typeof firebaseModules.authMod?.deleteUser === "function") {
+              await firebaseModules.authMod.deleteUser(cloudUser).catch(() => null);
+            }
+          } catch (_) {}
+          try {
+            await firebaseModules.authMod?.signOut?.(firebaseModules.auth);
+          } catch (_) {}
+          cloudUser = null;
+        }
+        state.customStudents = (state.customStudents || []).filter((s) => s.id !== targetId);
+        if (state.progressByUser) delete state.progressByUser[targetId];
+        if (state.examAttemptsByUser) delete state.examAttemptsByUser[targetId];
+        if (state.assignmentSubmissionsByUser) delete state.assignmentSubmissionsByUser[targetId];
+        if (state.certificatesByUser) delete state.certificatesByUser[targetId];
+        state.activeUserId = GUEST_USER.id;
+        pendingStudentPhotoDataUrl = "";
+        saveState();
+        updateChromeBadges();
+        syncAccountSwitcherOptions();
+        render();
+        showToast("Your ISCEB account and personal data have been deleted.");
+      })();
     } else if (action === "quick-switch-student") {
       const sid = actBtn.dataset.studentId;
       if (getAllSelectableStudents().some((s) => s.id === sid)) {

@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
@@ -69,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.BuildConfig
 import com.example.R
 import com.example.model.AccountStatus
 import com.example.model.ApkDownloadState
@@ -201,6 +203,8 @@ fun ProfileScreen(
     onDownloadCertificatePdf: (CertificateRecord) -> Unit = onOpenCertificatePdf,
     onDownloadDemoCertificatePdf: () -> Unit = {},
     demoCertificateEnabled: Boolean = true,
+    onDeleteStudentAccount: () -> Unit = {},
+    isPlayStoreBuild: Boolean = !BuildConfig.DEBUG,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -213,6 +217,7 @@ fun ProfileScreen(
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showSecurityInfoDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountConfirmDialog by remember { mutableStateOf(false) }
     var showAllModulesInDashboard by remember { mutableStateOf(false) }
 
     // Student photo picker state for registration & editing
@@ -1262,7 +1267,7 @@ fun ProfileScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "App Updates & Online APK",
+                                    text = if (isPlayStoreBuild) "App Updates & Google Play" else "App Updates & Online APK",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = NavyPrimary)
                                 )
                                 Text(
@@ -1278,7 +1283,11 @@ fun ProfileScreen(
 
                         TextButton(
                             onClick = {
-                                val portalUrl = appUpdateInfo.downloadPageUrl.ifBlank { AppUpdateConfig.DEFAULT_DOWNLOAD_PAGE_URL }
+                                val portalUrl = if (isPlayStoreBuild) {
+                                    AppUpdateConfig.DEFAULT_DESKTOP_PORTAL_URL
+                                } else {
+                                    appUpdateInfo.downloadPageUrl.ifBlank { AppUpdateConfig.DEFAULT_DOWNLOAD_PAGE_URL }
+                                }
                                 onOpenWebDownloadPage(portalUrl)
                             },
                             modifier = Modifier.testTag("btn_profile_open_download_page")
@@ -1427,7 +1436,29 @@ fun ProfileScreen(
                         }
                     }
 
-                    if (apkDownloadState !is ApkDownloadState.Downloading &&
+                    if (isPlayStoreBuild) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = onCheckUpdates,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_profile_check_updates")
+                            ) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Check Updates", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                            }
+                            Button(
+                                onClick = { onOpenWebDownloadPage(AppUpdateConfig.DEFAULT_PLAY_STORE_URL) },
+                                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary, contentColor = GoldMetallic),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_profile_open_play_store")
+                            ) {
+                                Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Google Play", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } else if (apkDownloadState !is ApkDownloadState.Downloading &&
                         apkDownloadState !is ApkDownloadState.Verifying &&
                         apkDownloadState !is ApkDownloadState.ReadyToInstall
                     ) {
@@ -1715,6 +1746,78 @@ fun ProfileScreen(
                         }
                     }
                 }
+
+                // Privacy Policy & Self-Service Account Deletion (Google Play Compliance)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("card_profile_privacy_compliance"),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFF0F5FA)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Privacy Policy & Account Data", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NavyPrimary)
+                                Text(
+                                    text = "View data practices or permanently delete your account & learning data",
+                                    fontSize = 10.5.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { onOpenWebDownloadPage(AppUpdateConfig.DEFAULT_PRIVACY_POLICY_URL) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_profile_privacy_policy")
+                            ) {
+                                Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(14.dp), tint = NavyPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Privacy Policy", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    if (!isGuest && !isAdmin) {
+                                        showDeleteAccountConfirmDialog = true
+                                    } else {
+                                        onOpenWebDownloadPage(AppUpdateConfig.DEFAULT_ACCOUNT_DELETION_URL)
+                                    }
+                                },
+                                border = BorderStroke(1.dp, if (!isGuest && !isAdmin) DangerRed.copy(alpha = 0.55f) else Color(0xFFCBD5E1)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_profile_delete_account")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = if (!isGuest && !isAdmin) DangerRed else NavyPrimary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (!isGuest && !isAdmin) "Delete Account" else "Deletion Guide",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (!isGuest && !isAdmin) DangerRed else NavyPrimary
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1795,6 +1898,62 @@ fun ProfileScreen(
                 }
             },
             dismissButton = { TextButton(onClick = { showSecurityInfoDialog = false }) { Text("Close") } }
+        )
+    }
+
+    if (showDeleteAccountConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Delete Account & Personal Data?",
+                    fontWeight = FontWeight.Bold,
+                    color = DangerRed
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "This permanently deletes your ISCEB student profile (${currentUser.email.ifBlank { currentUser.fullName }}), saved profile photo, course progress, personal certificates, and assignment submissions from this device and Firebase Cloud Sync.",
+                        fontSize = 12.sp,
+                        color = Color(0xFF334155),
+                        lineHeight = 17.sp
+                    )
+                    Text(
+                        text = "This action cannot be undone. You can also review our web deletion guide anytime.",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF64748B)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteAccountConfirmDialog = false
+                        onDeleteStudentAccount()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DangerRed, contentColor = Color.White),
+                    modifier = Modifier.testTag("btn_confirm_delete_account")
+                ) {
+                    Text("Delete Permanently", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(
+                        onClick = {
+                            showDeleteAccountConfirmDialog = false
+                            onOpenWebDownloadPage(AppUpdateConfig.DEFAULT_ACCOUNT_DELETION_URL)
+                        }
+                    ) {
+                        Text("Web Guide", fontSize = 11.sp)
+                    }
+                    TextButton(onClick = { showDeleteAccountConfirmDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            }
         )
     }
 }

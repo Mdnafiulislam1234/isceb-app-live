@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delete Account &amp; Data — ISCEB</title>
+  <style>
+    :root {
+      --navy-dark: #041022;
+      --navy: #071A33;
+      --navy-mid: #102B4C;
+      --gold: #D4AF37;
+      --gold-soft: #F4E2A3;
+      --bg: #F5F7FA;
+      --card: #FFFFFF;
+      --text: #1E293B;
+      --muted: #5A6E85;
+      --danger: #B91C1C;
+      --border: #E2E8F0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .hero {
+      background: linear-gradient(135deg, var(--navy-dark), var(--navy-mid));
+      color: #fff;
+      padding: 28px 18px 34px;
+      text-align: center;
+      border-bottom: 3px solid var(--gold);
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(212, 175, 55, 0.16);
+      border: 1px solid var(--gold);
+      color: var(--gold-soft);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    h1 { margin: 4px 0 6px; font-size: 25px; }
+    .subtitle { margin: 0; color: #CBD5E1; font-size: 14px; }
+    .container {
+      max-width: 780px;
+      margin: -18px auto 40px;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 22px;
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 24px rgba(7, 26, 51, 0.06);
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: var(--navy);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    ol, ul { margin: 8px 0; padding-left: 20px; }
+    li { margin-bottom: 7px; }
+    .nav-links {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13.5px;
+      text-decoration: none;
+      border: 1px solid var(--navy);
+      color: var(--navy);
+      background: #fff;
+    }
+    .btn-primary {
+      background: var(--navy);
+      color: var(--gold-soft);
+    }
+    .btn-danger {
+      background: #FEF2F2;
+      color: var(--danger);
+      border-color: rgba(185, 28, 28, 0.45);
+    }
+    .footer-note {
+      text-align: center;
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="badge">ISCEB • Account &amp; Data Deletion</div>
+    <h1>Delete Your ISCEB Account &amp; Data</h1>
+    <p class="subtitle">Institute of Supply Chain Excellence Bangladesh (ISCEB) • Package: com.aistudio.supplychain.scm</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <p style="margin-top: 0;">
+        Students and users of the <strong>ISCEB</strong> Android app and Web portal can permanently delete their account and associated personal data at any time using either self-service deletion inside the app or via direct support request below.
+      </p>
+      <div class="nav-links">
+        <a class="btn btn-primary" href="./desktop/">Open ISCEB App Portal (Profile &rarr; Delete Account)</a>
+        <a class="btn" href="./privacy.html">Privacy Policy</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Option 1: Instant Self-Service Deletion (Inside Android App or Web Portal)</h2>
+      <ol>
+        <li>Open the <strong>ISCEB</strong> Android app (or <a href="./desktop/">ISCEB Web Portal</a>) while signed in to your student account.</li>
+        <li>Tap the <strong>Profile</strong> tab in the bottom or side navigation bar.</li>
+        <li>Scroll to the <strong>Privacy Policy &amp; Account Data</strong> card.</li>
+        <li>Tap <strong>Delete Account</strong> (or <strong>Delete My Account &amp; Data</strong> on Web) and confirm permanent deletion.</li>
+        <li>Your account session signs out immediately and your personal records are erased from this device and Firebase Cloud Firestore.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Option 2: Request Account Deletion by Email</h2>
+      <p>If you no longer have the app installed on your device, send a deletion request from your registered email address:</p>
+      <ul>
+        <li><strong>Email To:</strong> <a href="mailto:admin@isceb.com?subject=ISCEB%20Account%20Deletion%20Request">admin@isceb.com</a> or <a href="mailto:isceb25@gmail.com?subject=ISCEB%20Account%20Deletion%20Request">isceb25@gmail.com</a></li>
+        <li><strong>Include:</strong> Your registered full name, email address, and Student ID (if known).</li>
+        <li><strong>Processing Time:</strong> Requests are verified and completed within <strong>7 business days</strong>.</li>
+      </ul>
+      <div class="nav-links">
+        <a class="btn btn-danger" href="mailto:admin@isceb.com?subject=ISCEB%20Account%20Deletion%20Request&body=Please%20permanently%20delete%20my%20ISCEB%20account%20and%20associated%20personal%20data.%0A%0ARegistered%20Name%3A%20%0ARegistered%20Email%3A%20%0AStudent%20ID%20(optional)%3A%20">Send Deletion Email Request</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>What Data Is Deleted vs. Retained</h2>
+      <ul>
+        <li><strong>Deleted Immediately:</strong> Your student profile (name, email, mobile number, organization, designation, enrolled program, photo), Firebase Authentication user link, per-class learning progress, personal certificates subcollection, and assignment submissions.</li>
+        <li><strong>Academic Integrity &amp; Audit Retention:</strong> Non-revocable credential verification records in the global registry (when an official PGD Diploma has already been issued) or immutable exam audit timestamps may be retained solely for employer certificate verification unless revoked by an ISCEB Administrator.</li>
+      </ul>
+    </section>
+
+    <p class="footer-note">
+      &copy; 2026 Institute of Supply Chain Excellence Bangladesh (ISCEB). &bull; <a href="./privacy.html" style="color: #071A33;">Privacy Policy</a>
+    </p>
+  </main>
+</body>
+</html>
